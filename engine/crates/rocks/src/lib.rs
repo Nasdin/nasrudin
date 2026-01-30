@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use nasrudin_core::{Domain, ProofTree, Theorem, TheoremId, VerificationStatus};
-use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
+use rocksdb::{BlockBasedOptions, ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -66,10 +66,19 @@ impl TheoremDb {
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
 
+        // Point-lookup CFs benefit from Bloom filters to avoid unnecessary
+        // disk reads for non-existent keys.
+        const POINT_LOOKUP_CFS: &[&str] = &[CF_THEOREMS, CF_PROOFS, CF_LINEAGE];
+
         let cf_descriptors: Vec<ColumnFamilyDescriptor> = ALL_CFS
             .iter()
             .map(|name| {
-                let cf_opts = Options::default();
+                let mut cf_opts = Options::default();
+                if POINT_LOOKUP_CFS.contains(name) {
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits/key, full filter
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
                 ColumnFamilyDescriptor::new(*name, cf_opts)
             })
             .collect();
@@ -293,8 +302,8 @@ impl TheoremDb {
 
     // ── Secondary Index Queries ─────────────────────────────────────────
 
-    /// List theorem IDs for a given domain.
-    pub fn list_by_domain(&self, domain: &Domain) -> Result<Vec<TheoremId>> {
+    /// List theorem IDs for a given domain, up to `limit` results (0 = unlimited).
+    pub fn list_by_domain_limit(&self, domain: &Domain, limit: usize) -> Result<Vec<TheoremId>> {
         let cf = self
             .db
             .cf_handle(CF_BY_DOMAIN)
@@ -306,15 +315,22 @@ impl TheoremDb {
             .prefix_iterator_cf(&cf, prefix.as_bytes());
         for item in iter {
             let (key, value) = item.context("Failed to iterate by_domain")?;
-            // Stop if we've passed the prefix
             if !key.starts_with(prefix.as_bytes()) {
                 break;
             }
             let mut id = [0u8; 8];
             id.copy_from_slice(&value[..8]);
             ids.push(id);
+            if limit > 0 && ids.len() >= limit {
+                break;
+            }
         }
         Ok(ids)
+    }
+
+    /// List all theorem IDs for a given domain.
+    pub fn list_by_domain(&self, domain: &Domain) -> Result<Vec<TheoremId>> {
+        self.list_by_domain_limit(domain, 0)
     }
 
     // ── Stats ─────────────────────────────────────────────────────────
@@ -379,8 +395,8 @@ impl TheoremDb {
 
     // ── Query Methods ──────────────────────────────────────────────────
 
-    /// List theorem IDs at a given derivation depth.
-    pub fn list_by_depth(&self, depth: u32) -> Result<Vec<TheoremId>> {
+    /// List theorem IDs at a given derivation depth, up to `limit` (0 = unlimited).
+    pub fn list_by_depth_limit(&self, depth: u32, limit: usize) -> Result<Vec<TheoremId>> {
         let cf = self
             .db
             .cf_handle(CF_BY_DEPTH)
@@ -396,12 +412,20 @@ impl TheoremDb {
             let mut id = [0u8; 8];
             id.copy_from_slice(&value[..8]);
             ids.push(id);
+            if limit > 0 && ids.len() >= limit {
+                break;
+            }
         }
         Ok(ids)
     }
 
-    /// List theorem IDs from a given generation.
-    pub fn list_by_generation(&self, generation: u64) -> Result<Vec<TheoremId>> {
+    /// List all theorem IDs at a given derivation depth.
+    pub fn list_by_depth(&self, depth: u32) -> Result<Vec<TheoremId>> {
+        self.list_by_depth_limit(depth, 0)
+    }
+
+    /// List theorem IDs from a given generation, up to `limit` (0 = unlimited).
+    pub fn list_by_generation_limit(&self, generation: u64, limit: usize) -> Result<Vec<TheoremId>> {
         let cf = self
             .db
             .cf_handle(CF_BY_GENERATION)
@@ -417,12 +441,20 @@ impl TheoremDb {
             let mut id = [0u8; 8];
             id.copy_from_slice(&value[..8]);
             ids.push(id);
+            if limit > 0 && ids.len() >= limit {
+                break;
+            }
         }
         Ok(ids)
     }
 
-    /// List theorem IDs derived from a given parent/axiom.
-    pub fn list_by_axiom(&self, axiom_id: &TheoremId) -> Result<Vec<TheoremId>> {
+    /// List all theorem IDs from a given generation.
+    pub fn list_by_generation(&self, generation: u64) -> Result<Vec<TheoremId>> {
+        self.list_by_generation_limit(generation, 0)
+    }
+
+    /// List theorem IDs derived from a given parent/axiom, up to `limit` (0 = unlimited).
+    pub fn list_by_axiom_limit(&self, axiom_id: &TheoremId, limit: usize) -> Result<Vec<TheoremId>> {
         let cf = self
             .db
             .cf_handle(CF_BY_AXIOM)
@@ -438,13 +470,20 @@ impl TheoremDb {
             let mut id = [0u8; 8];
             id.copy_from_slice(&value[..8]);
             ids.push(id);
+            if limit > 0 && ids.len() >= limit {
+                break;
+            }
         }
         Ok(ids)
     }
 
-    /// Prefix search on the LaTeX index. Returns theorem IDs whose normalized
-    /// LaTeX starts with the given prefix.
-    pub fn search_latex(&self, prefix: &str) -> Result<Vec<TheoremId>> {
+    /// List all theorem IDs derived from a given parent/axiom.
+    pub fn list_by_axiom(&self, axiom_id: &TheoremId) -> Result<Vec<TheoremId>> {
+        self.list_by_axiom_limit(axiom_id, 0)
+    }
+
+    /// Prefix search on the LaTeX index, up to `limit` results (0 = unlimited).
+    pub fn search_latex_limit(&self, prefix: &str, limit: usize) -> Result<Vec<TheoremId>> {
         let cf = self
             .db
             .cf_handle(CF_LATEX_INDEX)
@@ -462,8 +501,16 @@ impl TheoremDb {
             let mut id = [0u8; 8];
             id.copy_from_slice(&value[..8]);
             ids.push(id);
+            if limit > 0 && ids.len() >= limit {
+                break;
+            }
         }
         Ok(ids)
+    }
+
+    /// Prefix search on the LaTeX index (unlimited).
+    pub fn search_latex(&self, prefix: &str) -> Result<Vec<TheoremId>> {
+        self.search_latex_limit(prefix, 0)
     }
 
     /// List the most recent theorems by generation (descending), up to `limit`.
@@ -492,22 +539,10 @@ impl TheoremDb {
         Ok(theorems)
     }
 
-    /// Count theorems per domain by scanning the by_domain CF.
+    /// Count theorems per domain using the pre-computed stats.
     pub fn count_by_domain(&self) -> Result<HashMap<String, u64>> {
-        let cf = self
-            .db
-            .cf_handle(CF_BY_DOMAIN)
-            .context("Missing by_domain CF")?;
-        let mut counts: HashMap<String, u64> = HashMap::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-        for item in iter {
-            let (key, _) = item.context("Failed to iterate by_domain")?;
-            let key_str = String::from_utf8_lossy(&key);
-            if let Some(domain) = key_str.split(':').next() {
-                *counts.entry(domain.to_string()).or_insert(0) += 1;
-            }
-        }
-        Ok(counts)
+        let stats = self.get_stats()?;
+        Ok(stats.domain_counts)
     }
 
     /// Delete a theorem and all its index entries.

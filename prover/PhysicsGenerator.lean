@@ -1,11 +1,11 @@
 import PhysicsGenerator.Basic
-import PhysicsGenerator.Axioms.Dimensions
-import PhysicsGenerator.Axioms.Mechanics
-import PhysicsGenerator.Axioms.SpecialRelativity
-import PhysicsGenerator.Axioms.Electromagnetism
-import PhysicsGenerator.Axioms.QuantumMechanics
-import PhysicsGenerator.Axioms.Thermodynamics
-import PhysicsGenerator.Axioms.GeneralRelativity
+import PhysicsGenerator.Generated.Dimensions
+import PhysicsGenerator.Generated.Mechanics
+import PhysicsGenerator.Generated.SpecialRelativity
+import PhysicsGenerator.Generated.Electromagnetism
+import PhysicsGenerator.Generated.QuantumMechanics
+import PhysicsGenerator.Generated.Thermodynamics
+-- No GeneralRelativity (PhysLean doesn't cover it)
 import PhysicsGenerator.Derived.EnergyMomentum
 import PhysicsGenerator.Derived.RestEnergy
 import PhysicsGenerator.Bridge.Types

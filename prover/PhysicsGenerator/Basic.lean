@@ -5,6 +5,9 @@ import Mathlib
 
 Foundation types used across the physics axiom modules.
 Uses Mathlib's ℝ (real numbers) for full algebraic reasoning.
+
+Domain-specific types (FourMomentum, QState, etc.) are in their
+respective Generated/ modules, not here.
 -/
 
 namespace PhysicsGenerator

@@ -85,6 +85,22 @@ db-logs:
 db-migrate:
     cd engine && cargo run --bin migrate
 
+# ── PhysLean Pipeline ──────────────────────────────────────
+
+# Extract theorems from PhysLean (requires Lean 4.16 via lean-toolchain)
+extract-physlean:
+    cd physlean-extract && lake build && lake exe extract
+
+# Generate .lean axiom files from PhysLean catalog
+generate-axioms:
+    cd engine && cargo run --bin generate_lean -- \
+        --catalog ../physlean-extract/output/catalog.json \
+        --output ../prover/PhysicsGenerator/Generated/
+
+# Full pipeline: extract → generate → build prover
+refresh-axioms: extract-physlean generate-axioms
+    cd prover && lake build
+
 # ── Utilities ────────────────────────────────────────────
 
 # Generate TypeScript types from Rust (via specta)

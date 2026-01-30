@@ -1,14 +1,18 @@
-//! Theorem importer for the Physics Generator.
+//! PhysLean catalog importer for the Physics Generator.
 //!
-//! This crate handles importing known physics theorems and identities from
-//! external sources to seed the genetic algorithm's initial population:
+//! Reads the `catalog.json` produced by the `physlean-extract` tool and:
+//! 1. Deserializes it into typed Rust structs ([`catalog`] module)
+//! 2. Validates and loads the catalog ([`loader`] module)
+//! 3. Generates `.lean` files for the prover ([`codegen`] module)
 //!
-//! - Classical mechanics axioms (Newton's laws, conservation laws)
-//! - Electromagnetism (Maxwell's equations)
-//! - Special relativity (Lorentz transformations, E=mc^2)
-//! - Quantum mechanics (Schrodinger equation, commutation relations)
-//! - Thermodynamics (laws of thermodynamics)
-//! - Mathematical identities (trig, calculus, algebra)
-//!
-//! Each imported theorem is converted to the `Expr` AST, assigned a canonical form,
-//! hashed for deduplication, and stored as an axiom-origin theorem.
+//! The generated Lean files re-axiomatize PhysLean theorems in our prover's
+//! Lean version (4.27), since `.olean` files are not cross-compatible between
+//! Lean versions.
+
+pub mod catalog;
+pub mod codegen;
+pub mod loader;
+
+pub use catalog::PhysLeanCatalog;
+pub use codegen::generate_all;
+pub use loader::load_catalog;

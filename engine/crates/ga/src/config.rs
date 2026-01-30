@@ -25,6 +25,8 @@ pub struct GaConfig {
     pub verification_batch_size: usize,
     /// How often (in generations) to send candidates for verification.
     pub verification_interval: u64,
+    /// Bloom filter capacity per island for deduplication (items).
+    pub bloom_capacity: usize,
 }
 
 impl Default for GaConfig {
@@ -41,6 +43,7 @@ impl Default for GaConfig {
             migration_size: 5,
             verification_batch_size: 10,
             verification_interval: 5,
+            bloom_capacity: 10_000_000,
         }
     }
 }

@@ -404,7 +404,7 @@ mod tests {
         );
 
         assert!(content.contains("import PhysicsGenerator.Basic"));
-        assert!(content.contains("import PhysicsGenerator.Axioms.SpecialRelativity"));
+        assert!(content.contains("import PhysicsGenerator.Generated.SpecialRelativity"));
         assert!(content.contains("theorem test_emc2"));
         assert!(content.contains("E m : ℝ"));
         assert!(content.contains("E = (m * (c ^ (2 : ℝ)))"));

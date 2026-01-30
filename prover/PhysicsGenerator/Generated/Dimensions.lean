@@ -2,6 +2,7 @@
 # SI Dimensions
 
 Physical dimensions for dimensional analysis.
+This file is NOT generated from PhysLean — it is our own dimensional analysis framework.
 -/
 
 namespace PhysicsGenerator.Dimensions

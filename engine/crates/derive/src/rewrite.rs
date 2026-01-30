@@ -124,6 +124,17 @@ pub fn apply_substitution(expr: &Expr, subst: &Substitution) -> Expr {
             lower: Box::new(apply_substitution(lower, subst)),
             upper: Box::new(apply_substitution(upper, subst)),
         },
+        Expr::Prod {
+            body,
+            var,
+            lower,
+            upper,
+        } => Expr::Prod {
+            body: Box::new(apply_substitution(body, subst)),
+            var: var.clone(),
+            lower: Box::new(apply_substitution(lower, subst)),
+            upper: Box::new(apply_substitution(upper, subst)),
+        },
         Expr::Limit {
             body,
             var,

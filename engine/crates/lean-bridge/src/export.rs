@@ -284,7 +284,7 @@ mod tests {
         let content = render_lean_file(&proof, &config);
 
         assert!(content.contains("import Mathlib"));
-        assert!(content.contains("import PhysicsGenerator.Axioms.SpecialRelativity"));
+        assert!(content.contains("import PhysicsGenerator.Generated.SpecialRelativity"));
         assert!(content.contains("theorem test_thm"));
         assert!(content.contains("E m : ℝ"));
         assert!(content.contains("grind"));

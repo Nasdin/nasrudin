@@ -1,0 +1,225 @@
+{
+  "physlean_version": "master",
+  "lean_version": "4.16.0",
+  "theorems": [
+    {
+      "name": "euler_lagrange",
+      "physlean_name": "PhysLean.ClassicalMechanics.EulerLagrange.euler_lagrange",
+      "domain": "ClassicalMechanics",
+      "type_signature": "∀ (L : LagrangianSystem), extremal L.action → euler_lagrange_eq L",
+      "source": "physlean",
+      "doc_string": "The Euler-Lagrange equation for a Lagrangian system"
+    },
+    {
+      "name": "hamilton_equations",
+      "physlean_name": "PhysLean.ClassicalMechanics.Hamilton.hamilton_equations",
+      "domain": "ClassicalMechanics",
+      "type_signature": "∀ (H : HamiltonianSystem), hamilton_eq_motion H",
+      "source": "physlean",
+      "doc_string": "Hamilton's equations of motion"
+    },
+    {
+      "name": "harmonic_oscillator_solution",
+      "physlean_name": "PhysLean.ClassicalMechanics.Oscillators.harmonic_oscillator_solution",
+      "domain": "ClassicalMechanics",
+      "type_signature": "∀ (ω : ℝ) (hω : 0 < ω), ∃ (A φ : ℝ), solution_is_sinusoidal ω A φ",
+      "source": "physlean",
+      "doc_string": "The solution to the simple harmonic oscillator is sinusoidal"
+    },
+    {
+      "name": "noether_theorem",
+      "physlean_name": "PhysLean.ClassicalMechanics.Symmetry.noether_theorem",
+      "domain": "ClassicalMechanics",
+      "type_signature": "∀ (S : SymmetryGroup) (L : LagrangianSystem), continuous_symmetry S L → conserved_quantity S L",
+      "source": "physlean",
+      "doc_string": "Noether's theorem: continuous symmetries yield conserved quantities"
+    },
+    {
+      "name": "lorentz_group_SL2C",
+      "physlean_name": "PhysLean.Relativity.Special.LorentzGroup.SL2C.lorentz_group_SL2C",
+      "domain": "SpecialRelativity",
+      "type_signature": "IsGroupHom (SL2C.toLorentz)",
+      "source": "physlean",
+      "doc_string": "The Lorentz group is homomorphic to SL(2,C)"
+    },
+    {
+      "name": "four_momentum_on_mass_shell",
+      "physlean_name": "PhysLean.Relativity.Special.FourMomentum.on_mass_shell",
+      "domain": "SpecialRelativity",
+      "type_signature": "∀ (p : FourMomentum) (m : ℝ), OnMassShell p m → p.energy ^ 2 - p.three_momentum_sq * c ^ 2 = (m * c ^ 2) ^ 2",
+      "source": "physlean",
+      "doc_string": "Mass-shell condition for a relativistic particle"
+    },
+    {
+      "name": "four_momentum_invariant",
+      "physlean_name": "PhysLean.Relativity.Special.FourMomentum.invariant",
+      "domain": "SpecialRelativity",
+      "type_signature": "∀ (p : FourMomentum) (Λ : LorentzGroup), (Λ • p).invariant_mass_energy = p.invariant_mass_energy",
+      "source": "physlean",
+      "doc_string": "The invariant mass-energy is Lorentz invariant"
+    },
+    {
+      "name": "pauli_matrices_algebra",
+      "physlean_name": "PhysLean.Relativity.Special.PauliMatrices.pauli_algebra",
+      "domain": "SpecialRelativity",
+      "type_signature": "σ_i * σ_j = δ_ij * I + i * ε_ijk * σ_k",
+      "source": "physlean",
+      "doc_string": "Pauli matrix algebra relations"
+    },
+    {
+      "name": "lorentz_boost_composition",
+      "physlean_name": "PhysLean.Relativity.Special.LorentzGroup.boost_composition",
+      "domain": "SpecialRelativity",
+      "type_signature": "∀ (v₁ v₂ : ℝ) (hv₁ : |v₁| < c) (hv₂ : |v₂| < c), boost_velocity v₁ v₂ = (v₁ + v₂) / (1 + v₁ * v₂ / c ^ 2)",
+      "source": "physlean",
+      "doc_string": "Relativistic velocity addition (boost composition)"
+    },
+    {
+      "name": "time_dilation",
+      "physlean_name": "PhysLean.Relativity.Special.TimeDilation.time_dilation",
+      "domain": "SpecialRelativity",
+      "type_signature": "∀ (Δt₀ v : ℝ) (hv : |v| < c), dilated_time Δt₀ v = Δt₀ / Real.sqrt (1 - v ^ 2 / c ^ 2)",
+      "source": "physlean",
+      "doc_string": "Time dilation formula"
+    },
+    {
+      "name": "length_contraction",
+      "physlean_name": "PhysLean.Relativity.Special.LengthContraction.length_contraction",
+      "domain": "SpecialRelativity",
+      "type_signature": "∀ (L₀ v : ℝ) (hv : |v| < c), contracted_length L₀ v = L₀ * Real.sqrt (1 - v ^ 2 / c ^ 2)",
+      "source": "physlean",
+      "doc_string": "Length contraction formula"
+    },
+    {
+      "name": "twin_paradox",
+      "physlean_name": "PhysLean.Relativity.Special.TwinParadox.twin_paradox",
+      "domain": "SpecialRelativity",
+      "type_signature": "∀ (journey : TwinJourney), proper_time_traveler journey < proper_time_stationary journey",
+      "source": "physlean",
+      "doc_string": "The twin paradox: the traveling twin ages less"
+    },
+    {
+      "name": "maxwell_field_tensor",
+      "physlean_name": "PhysLean.Electromagnetism.FieldTensor.maxwell_field_tensor",
+      "domain": "Electromagnetism",
+      "type_signature": "∀ (F : FieldStrengthTensor), maxwell_from_tensor F ↔ maxwell_equations F",
+      "source": "physlean",
+      "doc_string": "Maxwell's equations in tensor form"
+    },
+    {
+      "name": "electromagnetic_potential",
+      "physlean_name": "PhysLean.Electromagnetism.Potential.electromagnetic_potential",
+      "domain": "Electromagnetism",
+      "type_signature": "∀ (A : FourPotential), F_from_potential A = exterior_derivative A",
+      "source": "physlean",
+      "doc_string": "The field tensor as exterior derivative of the 4-potential"
+    },
+    {
+      "name": "plane_wave_solution",
+      "physlean_name": "PhysLean.Electromagnetism.PlaneWave.plane_wave_solution",
+      "domain": "Electromagnetism",
+      "type_signature": "∀ (k : WaveVector) (ω : ℝ), is_maxwell_solution (plane_wave k ω) → ω = c * |k|",
+      "source": "physlean",
+      "doc_string": "Plane wave dispersion relation from Maxwell's equations"
+    },
+    {
+      "name": "gauge_invariance",
+      "physlean_name": "PhysLean.Electromagnetism.Gauge.gauge_invariance",
+      "domain": "Electromagnetism",
+      "type_signature": "∀ (A : FourPotential) (χ : ScalarField), F_from_potential (A + gauge_transform χ) = F_from_potential A",
+      "source": "physlean",
+      "doc_string": "Gauge invariance of the electromagnetic field tensor"
+    },
+    {
+      "name": "harmonic_oscillator_qm",
+      "physlean_name": "PhysLean.QuantumMechanics.HarmonicOscillator.energy_levels",
+      "domain": "QuantumMechanics",
+      "type_signature": "∀ (n : ℕ) (ω : ℝ) (hω : 0 < ω), energy_eigenvalue n ω = hbar * ω * (n + 1/2)",
+      "source": "physlean",
+      "doc_string": "Energy levels of the quantum harmonic oscillator"
+    },
+    {
+      "name": "creation_annihilation_commutation",
+      "physlean_name": "PhysLean.QuantumMechanics.HarmonicOscillator.creation_annihilation",
+      "domain": "QuantumMechanics",
+      "type_signature": "commutator a a_dagger = 1",
+      "source": "physlean",
+      "doc_string": "Commutation relation for creation and annihilation operators"
+    },
+    {
+      "name": "ideal_gas_law",
+      "physlean_name": "PhysLean.Thermodynamics.IdealGas.ideal_gas_law",
+      "domain": "Thermodynamics",
+      "type_signature": "∀ (gas : IdealGas), gas.pressure * gas.volume = gas.moles * R * gas.temperature",
+      "source": "physlean",
+      "doc_string": "Ideal gas law: PV = nRT"
+    },
+    {
+      "name": "boltzmann_distribution",
+      "physlean_name": "PhysLean.StatisticalMechanics.Boltzmann.distribution",
+      "domain": "Thermodynamics",
+      "type_signature": "∀ (sys : CanonicalEnsemble) (E : ℝ), probability sys E = Real.exp (-E / (k_B * sys.temperature)) / partition_function sys",
+      "source": "physlean",
+      "doc_string": "Boltzmann distribution for canonical ensemble"
+    }
+  ],
+  "types": [
+    {
+      "name": "FourMomentum",
+      "physlean_name": "PhysLean.Relativity.Special.FourMomentum",
+      "kind": "structure",
+      "type_signature": "Type",
+      "fields": ["energy : ℝ", "px : ℝ", "py : ℝ", "pz : ℝ"]
+    },
+    {
+      "name": "LorentzGroup",
+      "physlean_name": "PhysLean.Relativity.Special.LorentzGroup",
+      "kind": "structure",
+      "type_signature": "Type",
+      "fields": ["matrix : Matrix (Fin 4) (Fin 4) ℝ"]
+    },
+    {
+      "name": "FieldStrengthTensor",
+      "physlean_name": "PhysLean.Electromagnetism.FieldStrengthTensor",
+      "kind": "structure",
+      "type_signature": "Type",
+      "fields": ["components : Matrix (Fin 4) (Fin 4) ℝ"]
+    },
+    {
+      "name": "FourPotential",
+      "physlean_name": "PhysLean.Electromagnetism.FourPotential",
+      "kind": "structure",
+      "type_signature": "Type",
+      "fields": ["φ : ℝ", "A : Fin 3 → ℝ"]
+    }
+  ],
+  "constants": [
+    {
+      "name": "c",
+      "type": "ℝ",
+      "positivity": "0 < c"
+    },
+    {
+      "name": "G",
+      "type": "ℝ",
+      "positivity": "0 < G"
+    },
+    {
+      "name": "hbar",
+      "type": "ℝ",
+      "positivity": "0 < hbar"
+    },
+    {
+      "name": "k_B",
+      "type": "ℝ",
+      "positivity": "0 < k_B"
+    }
+  ],
+  "domain_imports": {
+    "ClassicalMechanics": "PhysicsGenerator.Generated.Mechanics",
+    "SpecialRelativity": "PhysicsGenerator.Generated.SpecialRelativity",
+    "Electromagnetism": "PhysicsGenerator.Generated.Electromagnetism",
+    "QuantumMechanics": "PhysicsGenerator.Generated.QuantumMechanics",
+    "Thermodynamics": "PhysicsGenerator.Generated.Thermodynamics"
+  }
+}

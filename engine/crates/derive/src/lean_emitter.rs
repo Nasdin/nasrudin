@@ -37,7 +37,7 @@ pub fn emit_lean_file(ctx: &DerivationContext, config: &LeanEmitConfig) -> Strin
         out.push_str("import Mathlib\n");
     }
     out.push_str("import PhysicsGenerator.Basic\n");
-    out.push_str("import PhysicsGenerator.Axioms.SpecialRelativity\n\n");
+    out.push_str("import PhysicsGenerator.Generated.SpecialRelativity\n\n");
 
     // Header comment (after imports)
     out.push_str(&format!(

@@ -37,12 +37,20 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Hashing & encoding
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 hex = "0.4"
+bloomfilter = "1"
 
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
+axum-login = "0.18"
+tower-sessions = { version = "0.14", features = ["memory-store"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower_governor = "0.8"
+governor = "0.10"
+
+# Authentication
+password-auth = "1"
 
 # Database - RocksDB (embedded theorem store)
 rocksdb = { version = "0.24", features = ["multi-threaded-cf"] }
@@ -65,6 +73,9 @@ sea-orm-migration = { version = "2.0.0-rc.28", features = [
 uuid = { version = "1.20", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.9"
+
+# Env
+dotenvy = "0.15"
 
 # Protobuf
 prost = "0.14"

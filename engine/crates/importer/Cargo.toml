@@ -8,3 +8,8 @@ nasrudin-core = { path = "../core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+tracing = { workspace = true }
+
+[[bin]]
+name = "generate_lean"
+path = "src/bin/generate_lean.rs"

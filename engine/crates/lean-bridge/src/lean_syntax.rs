@@ -138,6 +138,17 @@ pub fn expr_to_lean4(expr: &Expr) -> String {
             expr_to_lean4(upper),
             expr_to_lean4(body)
         ),
+        Expr::Prod {
+            body,
+            var,
+            lower,
+            upper,
+        } => format!(
+            "(∏ {var} in Finset.Icc {} {}, {})",
+            expr_to_lean4(lower),
+            expr_to_lean4(upper),
+            expr_to_lean4(body)
+        ),
         Expr::Limit {
             body,
             var,
@@ -262,20 +273,22 @@ fn is_physics_constant(name: &str) -> bool {
 }
 
 /// Map a physics domain to its Lean4 import module path.
-pub fn domain_to_import(domain: &Domain) -> &'static str {
+///
+/// Returns `None` for domains without PhysLean coverage (e.g., GeneralRelativity).
+pub fn domain_to_import(domain: &Domain) -> Option<&'static str> {
     match domain {
-        Domain::ClassicalMechanics => "PhysicsGenerator.Axioms.Mechanics",
-        Domain::SpecialRelativity => "PhysicsGenerator.Axioms.SpecialRelativity",
-        Domain::Electromagnetism => "PhysicsGenerator.Axioms.Electromagnetism",
-        Domain::QuantumMechanics => "PhysicsGenerator.Axioms.QuantumMechanics",
-        Domain::Thermodynamics => "PhysicsGenerator.Axioms.Thermodynamics",
-        Domain::GeneralRelativity => "PhysicsGenerator.Axioms.GeneralRelativity",
-        Domain::PureMath => "PhysicsGenerator.Basic",
-        Domain::Optics => "PhysicsGenerator.Axioms.Electromagnetism",
-        Domain::FluidDynamics => "PhysicsGenerator.Axioms.Mechanics",
-        Domain::StatisticalMechanics => "PhysicsGenerator.Axioms.Thermodynamics",
-        Domain::QuantumFieldTheory => "PhysicsGenerator.Axioms.QuantumMechanics",
-        Domain::CrossDomain(_) => "PhysicsGenerator.Basic",
+        Domain::ClassicalMechanics => Some("PhysicsGenerator.Generated.Mechanics"),
+        Domain::SpecialRelativity => Some("PhysicsGenerator.Generated.SpecialRelativity"),
+        Domain::Electromagnetism => Some("PhysicsGenerator.Generated.Electromagnetism"),
+        Domain::QuantumMechanics => Some("PhysicsGenerator.Generated.QuantumMechanics"),
+        Domain::Thermodynamics => Some("PhysicsGenerator.Generated.Thermodynamics"),
+        Domain::StatisticalMechanics => Some("PhysicsGenerator.Generated.Thermodynamics"),
+        Domain::PureMath => Some("PhysicsGenerator.Basic"),
+        Domain::Optics => Some("PhysicsGenerator.Generated.Electromagnetism"),
+        Domain::FluidDynamics => Some("PhysicsGenerator.Generated.Mechanics"),
+        Domain::QuantumFieldTheory => Some("PhysicsGenerator.Generated.QuantumMechanics"),
+        Domain::GeneralRelativity => None, // PhysLean doesn't cover GR
+        Domain::CrossDomain(_) => Some("PhysicsGenerator.Basic"),
     }
 }
 
@@ -286,13 +299,17 @@ pub fn resolve_imports(domain: &Domain, _proof: &ProofTree) -> Vec<String> {
     // Always import Basic (foundation types + constants)
     imports.insert("PhysicsGenerator.Basic".to_string());
 
-    // Domain-specific import
-    imports.insert(domain_to_import(domain).to_string());
+    // Domain-specific import (if PhysLean covers it)
+    if let Some(imp) = domain_to_import(domain) {
+        imports.insert(imp.to_string());
+    }
 
     // For cross-domain, import all referenced domains
     if let Domain::CrossDomain(domains) = domain {
         for d in domains {
-            imports.insert(domain_to_import(d).to_string());
+            if let Some(imp) = domain_to_import(d) {
+                imports.insert(imp.to_string());
+            }
         }
     }
 
@@ -423,11 +440,15 @@ mod tests {
     fn domain_imports() {
         assert_eq!(
             domain_to_import(&Domain::SpecialRelativity),
-            "PhysicsGenerator.Axioms.SpecialRelativity"
+            Some("PhysicsGenerator.Generated.SpecialRelativity")
         );
         assert_eq!(
             domain_to_import(&Domain::Electromagnetism),
-            "PhysicsGenerator.Axioms.Electromagnetism"
+            Some("PhysicsGenerator.Generated.Electromagnetism")
+        );
+        assert_eq!(
+            domain_to_import(&Domain::GeneralRelativity),
+            None
         );
     }
 }

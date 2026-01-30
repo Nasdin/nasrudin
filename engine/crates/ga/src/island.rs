@@ -7,6 +7,7 @@ use nasrudin_core::{
     BinOp, Domain, Expr, FitnessScore, PhysConst, ProofTree, Theorem, TheoremOrigin,
     VerificationStatus, compute_theorem_id,
 };
+use nasrudin_rocks::TheoremDb;
 use rand::Rng;
 
 use crate::config::GaConfig;
@@ -32,10 +33,11 @@ impl Island {
     /// Create a new island for a given domain with a seed population.
     pub fn new(domain: Domain, config: GaConfig) -> Self {
         let pop = Population::with_capacity(domain, config.population_size);
+        let dedup = DedupFilter::with_capacity(config.bloom_capacity);
         Self {
             population: pop,
             config,
-            dedup: DedupFilter::new(),
+            dedup,
         }
     }
 
@@ -76,6 +78,24 @@ impl Island {
 
             self.population.add(Individual::new(theorem));
         }
+    }
+
+    /// Seed the population from existing theorems in the database.
+    ///
+    /// Loads theorems for this island's domain and fills remaining slots with random.
+    pub fn seed_from_db(&mut self, db: &TheoremDb, rng: &mut impl Rng) {
+        let domain_ids = db.list_by_domain(&self.population.domain).unwrap_or_default();
+        let target = self.config.population_size;
+        for id in domain_ids.iter().take(target) {
+            if let Ok(Some(thm)) = db.get_theorem(id) {
+                if !self.dedup.is_duplicate(&thm.id) {
+                    self.dedup.insert(thm.id);
+                    self.population.add(Individual::new(thm));
+                }
+            }
+        }
+        // Fill remainder with random expressions
+        self.seed(rng);
     }
 
     /// Run one generation: select → crossover → mutate → filter → evaluate → replace.

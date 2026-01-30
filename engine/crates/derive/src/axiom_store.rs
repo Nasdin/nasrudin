@@ -59,13 +59,61 @@ impl AxiomStore {
         self.axioms.is_empty()
     }
 
-    /// Load special relativity axioms.
+    /// Load axioms from a PhysLean catalog JSON file.
+    ///
+    /// Parses the catalog and converts each theorem to an `Axiom` registered
+    /// in the store. Returns the number of axioms loaded.
+    ///
+    /// This replaces the domain-specific `load_*()` methods.
+    pub fn load_from_catalog(&mut self, catalog_path: &std::path::Path) -> anyhow::Result<usize> {
+        let content = std::fs::read_to_string(catalog_path)?;
+        let catalog: serde_json::Value = serde_json::from_str(&content)?;
+
+        let mut count = 0;
+        if let Some(theorems) = catalog.get("theorems").and_then(|t| t.as_array()) {
+            for thm in theorems {
+                let name = thm.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                let domain_str = thm.get("domain").and_then(|d| d.as_str()).unwrap_or("PureMath");
+                let doc = thm.get("doc_string")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let domain = match domain_str {
+                    "ClassicalMechanics" => Domain::ClassicalMechanics,
+                    "SpecialRelativity" => Domain::SpecialRelativity,
+                    "Electromagnetism" => Domain::Electromagnetism,
+                    "QuantumMechanics" => Domain::QuantumMechanics,
+                    "Thermodynamics" => Domain::Thermodynamics,
+                    "StatisticalMechanics" => Domain::StatisticalMechanics,
+                    _ => Domain::PureMath,
+                };
+
+                // For catalog-loaded axioms, we store a placeholder Expr
+                // since the type signatures are in Lean syntax, not our AST.
+                // The GA engine will reference these by name.
+                self.register(Axiom {
+                    name: name.to_string(),
+                    domain,
+                    statement: Expr::Var(name.to_string()),
+                    description: doc,
+                });
+                count += 1;
+            }
+        }
+
+        tracing::info!("Loaded {count} axioms from catalog");
+        Ok(count)
+    }
+
+    /// Load special relativity axioms (legacy — prefer `load_from_catalog`).
     ///
     /// Registers:
     /// - `mass_shell_condition`: E² − p²c² = (mc²)²  (definition)
     /// - `energy_nonneg`: E ≥ 0
     /// - `mass_nonneg`: m ≥ 0
     /// - `c_positive`: c > 0
+    #[deprecated(note = "Use load_from_catalog() with the PhysLean catalog instead")]
     pub fn load_special_relativity(&mut self) {
         // Mass-shell condition: E² - p²c² = (mc²)²
         // As Expr: Eq(Sub(Pow(E,2), Mul(Pow(p,2), Pow(c,2))), Pow(Mul(m, Pow(c,2)), 2))

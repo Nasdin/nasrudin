@@ -61,6 +61,12 @@ fn count_positions(expr: &Expr) -> usize {
             lower,
             upper,
             ..
+        }
+        | Expr::Prod {
+            body,
+            lower,
+            upper,
+            ..
         } => 1 + count_positions(body) + count_positions(lower) + count_positions(upper),
         Expr::Limit {
             body, approaching, ..
@@ -95,6 +101,12 @@ fn extract_subtree(expr: &Expr, target: usize) -> Expr {
                 .or_else(|| lower.as_ref().and_then(|e| walk(e, pos, target)))
                 .or_else(|| upper.as_ref().and_then(|e| walk(e, pos, target))),
             Expr::Sum {
+                body,
+                lower,
+                upper,
+                ..
+            }
+            | Expr::Prod {
                 body,
                 lower,
                 upper,
@@ -187,6 +199,22 @@ fn replace_subtree(expr: &Expr, target: usize, replacement: &Expr) -> Expr {
                 let lower2 = walk(lower, pos, target, replacement);
                 let upper2 = walk(upper, pos, target, replacement);
                 Expr::Sum {
+                    body: Box::new(body2),
+                    var: var.clone(),
+                    lower: Box::new(lower2),
+                    upper: Box::new(upper2),
+                }
+            }
+            Expr::Prod {
+                body,
+                var,
+                lower,
+                upper,
+            } => {
+                let body2 = walk(body, pos, target, replacement);
+                let lower2 = walk(lower, pos, target, replacement);
+                let upper2 = walk(upper, pos, target, replacement);
+                Expr::Prod {
                     body: Box::new(body2),
                     var: var.clone(),
                     lower: Box::new(lower2),

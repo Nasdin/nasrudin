@@ -100,9 +100,9 @@ impl GaEngine {
 
         let mut rng = rand::rng();
 
-        // Seed all islands
+        // Seed all islands: first load from DB, then fill remainder with random
         for island in &mut self.islands {
-            island.seed(&mut rng);
+            island.seed_from_db(&self.db, &mut rng);
             tracing::info!(
                 "Seeded island {:?} with {} individuals",
                 island.population.domain,
@@ -149,12 +149,17 @@ impl GaEngine {
                         continue;
                     }
 
+                    // Update lineage: register this theorem as a child of each parent
+                    for parent_id in &theorem.parents {
+                        let _ = self.db.add_child(parent_id, theorem.id);
+                    }
+
                     // Broadcast discovery event
                     let event = DiscoveryEvent {
                         theorem_id: hex::encode(theorem.id),
                         canonical: theorem.canonical.clone(),
                         latex: theorem.latex.clone(),
-                        domain: format!("{:?}", theorem.domain),
+                        domain: theorem.domain.to_string(),
                         depth: theorem.depth,
                         generation: theorem.generation,
                         fitness: theorem.fitness.clone(),

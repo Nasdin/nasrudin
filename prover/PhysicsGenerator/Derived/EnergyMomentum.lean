@@ -1,4 +1,4 @@
-import PhysicsGenerator.Axioms.SpecialRelativity
+import PhysicsGenerator.Generated.SpecialRelativity
 
 /-!
 # Energy-Momentum Relation (Derived)

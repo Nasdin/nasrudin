@@ -25,7 +25,7 @@ fn test_render_lean_file_tactic_proof() {
         description: "E = mc² from mass-shell at rest".into(),
         imports: vec![
             "PhysicsGenerator.Basic".into(),
-            "PhysicsGenerator.Axioms.SpecialRelativity".into(),
+            "PhysicsGenerator.Generated.SpecialRelativity".into(),
         ],
         domain: Domain::SpecialRelativity,
         theorem_id: "abcdef0123456789".into(),
@@ -38,7 +38,7 @@ fn test_render_lean_file_tactic_proof() {
     assert!(lean.contains("import Mathlib"), "should import Mathlib");
     assert!(
         lean.contains("import PhysicsGenerator.Basic")
-            || lean.contains("import PhysicsGenerator.Axioms.SpecialRelativity"),
+            || lean.contains("import PhysicsGenerator.Generated.SpecialRelativity"),
         "should import axiom modules"
     );
     assert!(

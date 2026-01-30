@@ -173,8 +173,13 @@ Ingests existing theorems into RocksDB:
    all declarations. Export via Lean4 FFI as serialized theorem records.
 2. **Metamath**: Parse `set.mm` directly in Rust (well-defined text format).
    Map Metamath axioms to internal `Expr` representation.
-3. **PhysLean**: Import via Lean4 Lake dependency. Extract physics-specific
-   theorems and tag with `Domain` metadata.
+3. **PhysLean** (implemented): The `physlean-extract/` project (Lean 4.16.0) walks
+   PhysLean's environment and outputs `catalog.json`. The `physics-importer` crate
+   (`engine/crates/importer/`) reads this catalog and:
+   - Populates `AxiomStore` via `load_from_catalog()`
+   - Generates `prover/PhysicsGenerator/Generated/*.lean` files (re-axiomatized
+     for Lean 4.27 compatibility)
+   - Pipeline: `just refresh-axioms` (extract → generate → build prover)
 
 ---
 
@@ -563,40 +568,22 @@ Plus core mathematical structures:
 - Differential calculus, integration
 - Group theory, Lie groups
 
-### 9.2 Physics Postulates
+### 9.2 Physics Postulates (from PhysLean)
 
-Formalized in Lean4:
+All physics axioms are sourced from **PhysLean**, a formally verified physics library.
+No hand-coded axioms. See [PHYSICS-AXIOMS.md](./PHYSICS-AXIOMS.md) for full details.
 
-**Classical Mechanics**:
-- Newton's laws (F = ma, action-reaction, inertia)
-- Conservation of energy, momentum, angular momentum
-- Principle of least action
+| Domain | PhysLean Coverage | Key Theorems |
+|--------|------------------|--------------|
+| Classical Mechanics | Strong | Euler-Lagrange, Hamilton's equations, Noether's theorem, harmonic oscillator |
+| Special Relativity | Very Strong | Lorentz group (SL(2,C)), Pauli matrices, mass-shell, twin paradox, time dilation |
+| Electromagnetism | Strong | Maxwell field tensor, EM potential (F=dA), plane waves, gauge invariance |
+| Quantum Mechanics | Moderate | Harmonic oscillator (E_n = ℏω(n+½)), creation/annihilation commutation |
+| Thermodynamics | Shallow | Ideal gas law (PV=nRT), Boltzmann distribution |
+| General Relativity | **Absent** | No coverage — domain is empty until PhysLean adds it |
 
-**Special Relativity**:
-- Speed of light is constant in all inertial frames
-- Laws of physics are the same in all inertial frames
-- (From these two, the GA should derive Lorentz transformations, E=mc^2, etc.)
-
-**Electromagnetism**:
-- Maxwell's equations (differential form)
-- Lorentz force law
-- Gauge invariance (U(1))
-
-**Quantum Mechanics**:
-- States are vectors in Hilbert space
-- Observables are Hermitian operators
-- Born rule (measurement probability)
-- Schrodinger equation
-- Commutation relations
-
-**Thermodynamics**:
-- Laws of thermodynamics (0th through 3rd)
-- Entropy definition
-
-**General Relativity** (advanced):
-- Einstein field equations
-- Equivalence principle
-- Geodesic equation
+Domains grow automatically as PhysLean adds coverage. Re-run `just refresh-axioms`
+to pick up new theorems.
 
 ### 9.3 Inference Rules
 
@@ -656,8 +643,8 @@ by combining axioms. Lean4 verifies each step. The fitness function rewards:
 ### Phase 2: Knowledge Ingestion
 - [ ] Mathlib4 theorem extractor (via Lean4 Environment.fold)
 - [ ] Metamath set.mm parser in Rust
-- [ ] PhysLean importer
-- [ ] Physics axiom formalization in Lean4
+- [x] PhysLean importer (`physlean-extract/` + `engine/crates/importer/`)
+- [x] Physics axiom formalization in Lean4 (auto-generated from PhysLean catalog)
 - [ ] Populate RocksDB with seed knowledge
 - [ ] Build dedup pipeline (canonical form + xxHash64)
 
