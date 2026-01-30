@@ -1,4 +1,4 @@
-use physics_core::expr::*;
+use nasrudin_core::expr::*;
 
 #[test]
 fn test_var_node_count() {

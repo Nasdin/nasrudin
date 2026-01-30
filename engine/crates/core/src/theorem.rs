@@ -1,6 +1,7 @@
 use crate::dimension::Dimension;
 use crate::expr::Expr;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 pub type TheoremId = [u8; 8];
 
@@ -18,6 +19,28 @@ pub enum Domain {
     Optics,
     FluidDynamics,
     CrossDomain(Vec<Domain>),
+}
+
+impl fmt::Display for Domain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Domain::PureMath => write!(f, "pure_math"),
+            Domain::ClassicalMechanics => write!(f, "classical_mechanics"),
+            Domain::Electromagnetism => write!(f, "electromagnetism"),
+            Domain::SpecialRelativity => write!(f, "special_relativity"),
+            Domain::GeneralRelativity => write!(f, "general_relativity"),
+            Domain::QuantumMechanics => write!(f, "quantum_mechanics"),
+            Domain::QuantumFieldTheory => write!(f, "quantum_field_theory"),
+            Domain::StatisticalMechanics => write!(f, "statistical_mechanics"),
+            Domain::Thermodynamics => write!(f, "thermodynamics"),
+            Domain::Optics => write!(f, "optics"),
+            Domain::FluidDynamics => write!(f, "fluid_dynamics"),
+            Domain::CrossDomain(domains) => {
+                let keys: Vec<String> = domains.iter().map(|d| d.to_string()).collect();
+                write!(f, "cross:{}", keys.join("+"))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,7 +88,7 @@ pub struct FitnessScore {
     pub dimensional: f64,
     pub symmetry: f64,
     pub connectivity: f64,
-    pub physics_relevance: f64,
+    pub nasrudin_relevance: f64,
 }
 
 impl Default for FitnessScore {
@@ -77,7 +100,7 @@ impl Default for FitnessScore {
             dimensional: 0.0,
             symmetry: 0.0,
             connectivity: 0.0,
-            physics_relevance: 0.0,
+            nasrudin_relevance: 0.0,
         }
     }
 }

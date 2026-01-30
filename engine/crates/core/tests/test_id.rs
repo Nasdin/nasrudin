@@ -1,4 +1,4 @@
-use physics_core::id::*;
+use nasrudin_core::id::*;
 
 #[test]
 fn test_compute_theorem_id_deterministic() {

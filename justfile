@@ -14,9 +14,9 @@ dev: dev-frontend
 dev-frontend:
     cd nasrudin-frontend && pnpm dev
 
-# Start Rust engine
+# Start API server + GA engine daemon
 dev-engine:
-    cd engine && cargo run --release
+    cd engine && PROVER_ROOT=../prover cargo run --release --bin physics-api
 
 # ── Build ────────────────────────────────────────────────
 

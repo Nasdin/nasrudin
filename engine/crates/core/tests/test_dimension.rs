@@ -1,4 +1,4 @@
-use physics_core::dimension::Dimension;
+use nasrudin_core::dimension::Dimension;
 
 #[test]
 fn test_dimensionless() {

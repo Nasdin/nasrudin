@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-physics-core = { path = "../core" }
-physics-rocks = { path = "../rocks" }
-physics-pg = { path = "../pg" }
+nasrudin-core = { path = "../core" }
+nasrudin-rocks = { path = "../rocks" }
+nasrudin-pg = { path = "../pg" }
+nasrudin-ga = { path = "../ga" }
+nasrudin-derive = { path = "../derive" }
+nasrudin-lean-bridge = { path = "../lean-bridge" }
 axum = { workspace = true }
 axum-extra = { workspace = true }
 tokio = { workspace = true }

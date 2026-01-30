@@ -1,85 +1,108 @@
 //! PostgreSQL storage backend for user accounts, sessions, and worker state.
 //!
 //! This crate manages the relational data that complements the RocksDB theorem store:
-//! user accounts, authentication, worker coordination, and analytics.
+//! user accounts, authentication sessions, saved searches, user preferences,
+//! and distributed worker coordination.
 //!
 //! Uses SeaORM 2 as the PostgreSQL ORM layer.
 
-use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use sea_orm::{Database, DatabaseConnection};
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+pub mod entity;
+pub mod migrator;
+pub mod query;
 
-/// Create a SeaORM database connection.
-pub async fn create_connection(database_url: &str) -> Result<DatabaseConnection> {
-    let db = Database::connect(database_url)
+use anyhow::{Context, Result};
+use sea_orm::{ConnectOptions, Database, DatabaseConnection};
+use sea_orm_migration::MigratorTrait;
+use std::time::Duration;
+
+// Re-export key types for convenience.
+pub use entity::workers::WorkerStatus;
+pub use migrator::Migrator;
+pub use sea_orm;
+pub use sea_orm::DatabaseConnection as DbConn;
+
+/// Configuration for the PostgreSQL connection pool.
+#[derive(Debug, Clone)]
+pub struct PgConfig {
+    /// PostgreSQL connection URL (e.g. `postgres://user:pass@localhost:5432/physics_generator`).
+    pub database_url: String,
+    /// Maximum number of connections in the pool.
+    pub max_connections: u32,
+    /// Minimum number of idle connections maintained.
+    pub min_connections: u32,
+    /// Timeout for acquiring a connection from the pool.
+    pub connect_timeout: Duration,
+    /// Maximum lifetime of a connection before it is recycled.
+    pub max_lifetime: Duration,
+    /// Enable SQL statement logging.
+    pub sql_logging: bool,
+}
+
+impl Default for PgConfig {
+    fn default() -> Self {
+        Self {
+            database_url: String::new(),
+            max_connections: 10,
+            min_connections: 2,
+            connect_timeout: Duration::from_secs(5),
+            max_lifetime: Duration::from_secs(30 * 60),
+            sql_logging: false,
+        }
+    }
+}
+
+impl PgConfig {
+    /// Create a config from just a database URL with default pool settings.
+    pub fn new(database_url: impl Into<String>) -> Self {
+        Self {
+            database_url: database_url.into(),
+            ..Default::default()
+        }
+    }
+}
+
+/// Create a SeaORM database connection with pool configuration.
+pub async fn connect(config: &PgConfig) -> Result<DatabaseConnection> {
+    let mut opts = ConnectOptions::new(&config.database_url);
+    opts.max_connections(config.max_connections)
+        .min_connections(config.min_connections)
+        .connect_timeout(config.connect_timeout)
+        .max_lifetime(config.max_lifetime)
+        .sqlx_logging(config.sql_logging);
+
+    let db = Database::connect(opts)
         .await
-        .context("Failed to connect to PostgreSQL via SeaORM")?;
+        .context("Failed to connect to PostgreSQL")?;
+
+    tracing::info!("Connected to PostgreSQL");
     Ok(db)
 }
 
-/// User account.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub id: Uuid,
-    pub username: String,
-    pub email: String,
-    pub password_hash: String,
-    pub created_at: DateTime<Utc>,
-    pub last_login: Option<DateTime<Utc>>,
+/// Create a connection from a URL string with default pool settings.
+pub async fn connect_simple(database_url: &str) -> Result<DatabaseConnection> {
+    connect(&PgConfig::new(database_url)).await
 }
 
-/// Active session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Session {
-    pub id: Uuid,
-    pub user_id: Uuid,
-    pub token: String,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+/// Run all pending migrations.
+pub async fn run_migrations(db: &DatabaseConnection) -> Result<()> {
+    Migrator::up(db, None)
+        .await
+        .context("Failed to run database migrations")?;
+    tracing::info!("Database migrations complete");
+    Ok(())
 }
 
-/// GA worker status.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Worker {
-    pub id: Uuid,
-    pub name: String,
-    pub status: WorkerStatus,
-    pub generation: u64,
-    pub theorems_produced: u64,
-    pub last_heartbeat: DateTime<Utc>,
+/// Roll back the last applied migration.
+pub async fn rollback_last(db: &DatabaseConnection) -> Result<()> {
+    Migrator::down(db, Some(1))
+        .await
+        .context("Failed to roll back migration")?;
+    Ok(())
 }
 
-/// Worker status enum.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WorkerStatus {
-    Idle,
-    Running,
-    Paused,
-    Error(String),
-}
-
-/// Register a new user (stub).
-pub async fn register_user(
-    _db: &DatabaseConnection,
-    _username: &str,
-    _email: &str,
-    _password_hash: &str,
-) -> Result<User> {
-    anyhow::bail!("User registration not yet implemented")
-}
-
-/// Authenticate a user (stub).
-pub async fn login_user(
-    _db: &DatabaseConnection,
-    _username: &str,
-    _password_hash: &str,
-) -> Result<Session> {
-    anyhow::bail!("User login not yet implemented")
-}
-
-/// Get worker status (stub).
-pub async fn get_workers(_db: &DatabaseConnection) -> Result<Vec<Worker>> {
-    anyhow::bail!("Worker listing not yet implemented")
+/// Connect to PostgreSQL and run pending migrations in one call.
+pub async fn connect_and_migrate(config: &PgConfig) -> Result<DatabaseConnection> {
+    let db = connect(config).await?;
+    run_migrations(&db).await?;
+    Ok(db)
 }

@@ -44,47 +44,6 @@ continuously generates new theorems to fill the gap beyond 1M.
 ---
 
 ## 3. Architecture Overview
-
-### 3.1 Monorepo Structure
-
-```
-physics-generator/
-├── apps/
-│   └── web/                    # TanStack Start frontend
-│       ├── app/
-│       │   ├── routes/         # File-based routing
-│       │   ├── components/     # React components
-│       │   └── lib/            # Client utilities
-│       ├── app.config.ts
-│       └── package.json
-├── packages/
-│   ├── shared-types/           # TypeScript types (generated from Rust via specta)
-│   └── ui/                     # Shared UI components (KaTeX, React Flow nodes)
-├── engine/                     # Rust workspace
-│   ├── Cargo.toml              # Workspace root
-│   ├── crates/
-│   │   ├── core/               # GA engine, theorem representation, fitness
-│   │   ├── rocks/              # RocksDB interface, indexing, dedup (theorem engine)
-│   │   ├── pg/                 # PostgreSQL interface (users, auth, API data)
-│   │   ├── lean-bridge/        # FFI bridge to Lean4 (via C ABI)
-│   │   ├── api/                # Axum HTTP/SSE/WebSocket server
-│   │   ├── mcp/                # MCP server — exposes theorem DB, GA, Lean4 as tools
-│   │   └── importer/           # Mathlib/Metamath/PhysLean ingest pipeline
-│   └── build.rs
-├── prover/                     # Lean4 project
-│   ├── lakefile.lean
-│   ├── lean-toolchain
-│   ├── PhysicsGenerator/
-│   │   ├── Axioms/             # Physics axioms formalized in Lean4
-│   │   ├── Bridge/             # C FFI exports for Rust
-│   │   ├── Tactics/            # Custom tactics (GA-aware grind/simp wrappers)
-│   │   └── Verify.lean         # Main verification entry point
-│   └── PhysicsGenerator.lean
-├── docs/                       # This directory
-├── justfile                    # Top-level task runner
-├── pnpm-workspace.yaml
-├── turbo.json
-└── README.md
 ```
 
 ### 3.2 Build Tooling
@@ -175,7 +134,7 @@ pub struct FitnessScore {
     pub dimensional: f64,      // Dimensional analysis consistency
     pub symmetry: f64,         // Lorentz/gauge/rotational invariance score
     pub connectivity: f64,     // How many existing theorems it connects to
-    pub physics_relevance: f64 // Bonus for matching known physics patterns
+    pub nasrudin_relevance: f64 // Bonus for matching known physics patterns
 }
 ```
 
@@ -257,13 +216,13 @@ def verifyCandidate (stmt : String) : IO (Option String) := do
 -- Tactics/PhysicsTactic.lean
 
 /-- Physics-aware simplification that respects units and dimensions -/
-macro "physics_simp" : tactic => `(tactic|
+macro "nasrudin_simp" : tactic => `(tactic|
   simp only [Units.mul_assoc, Units.inv_cancel, Dimension.consistent]
   <;> ring
   <;> norm_num)
 
 /-- Grind with physics axioms in scope -/
-macro "physics_grind" : tactic => `(tactic|
+macro "nasrudin_grind" : tactic => `(tactic|
   grind [lorentz_invariance, energy_conservation, momentum_conservation])
 ```
 
@@ -583,7 +542,7 @@ eventSource.onmessage = (event) => {
   const theorem = JSON.parse(event.data);
   queryClient.setQueryData(['theorems', theorem.id], theorem);
   // Toast notification for significant discoveries
-  if (theorem.fitness.physics_relevance > 0.8) {
+  if (theorem.fitness.nasrudin_relevance > 0.8) {
     toast(`New discovery: ${theorem.latex}`);
   }
 };

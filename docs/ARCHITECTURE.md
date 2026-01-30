@@ -227,7 +227,7 @@ fn evaluate_fitness(theorem: &Theorem, population: &Population, db: &DB) -> Fitn
         connectivity: db.count_connections(theorem.id) as f64 / 100.0,
 
         // 7. Physics relevance: pattern matching against known physics structures
-        physics_relevance: physics_pattern_score(theorem),
+        nasrudin_relevance: physics_pattern_score(theorem),
     }
 }
 ```
@@ -702,7 +702,7 @@ No external dependencies required. The binary is self-contained.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  nasrudin-worker --server https://nasrudin.example.com              │
+│  nasrudin-worker --server https://nasrudin.org              │
 │                                                                      │
 │  1. REGISTER                                                         │
 │     POST /api/workers/register                                       │
@@ -800,11 +800,11 @@ and the proof hints from the worker accelerate the server's Lean4 pass.
 
 ```bash
 # Minimal: just point at the server
-./nasrudin-worker --server https://nasrudin.example.com
+./nasrudin-worker --server https://nasrudin.org
 
 # Full options
 ./nasrudin-worker \
-  --server https://nasrudin.example.com \
+  --server https://nasrudin.org \
   --threads 4 \                    # GA threads (default: num_cpus - 1)
   --data-dir ./nasrudin-data \     # Local RocksDB path (default: ./data)
   --domains mechanics,sr,em \      # Focus on specific physics domains

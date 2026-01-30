@@ -1,5 +1,5 @@
-use physics_core::expr::*;
-use physics_core::theorem::*;
+use nasrudin_core::expr::*;
+use nasrudin_core::theorem::*;
 
 #[test]
 fn test_fitness_score_default() {
@@ -10,7 +10,7 @@ fn test_fitness_score_default() {
     assert_eq!(f.dimensional, 0.0);
     assert_eq!(f.symmetry, 0.0);
     assert_eq!(f.connectivity, 0.0);
-    assert_eq!(f.physics_relevance, 0.0);
+    assert_eq!(f.nasrudin_relevance, 0.0);
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn test_theorem_construction() {
         )),
     );
     let canonical = stmt.to_canonical();
-    let id = physics_core::compute_theorem_id(&canonical);
+    let id = nasrudin_core::compute_theorem_id(&canonical);
 
     let thm = Theorem {
         id,
@@ -145,7 +145,7 @@ fn test_theorem_construction() {
         depth: 0,
         complexity: 7,
         domain: Domain::SpecialRelativity,
-        dimension: Some(physics_core::Dimension::ENERGY),
+        dimension: Some(nasrudin_core::Dimension::ENERGY),
         parents: vec![],
         children: vec![],
         verified: VerificationStatus::Pending,

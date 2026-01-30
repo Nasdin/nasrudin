@@ -15,25 +15,25 @@ axiom VectorField : Type
 axiom ScalarField : Type
 
 /-- Divergence operator -/
-axiom div_field : VectorField -> ScalarField
+axiom div_field : VectorField → ScalarField
 
 /-- Curl operator -/
-axiom curl_field : VectorField -> VectorField
+axiom curl_field : VectorField → VectorField
 
 /-- Time derivative of a vector field -/
-axiom time_deriv : VectorField -> Time -> VectorField
+axiom time_deriv : VectorField → Time → VectorField
 
 /-- Scale a vector field by a scalar -/
-axiom scale_field : R' -> VectorField -> VectorField
+axiom scale_field : ℝ → VectorField → VectorField
 
 /-- Add vector fields -/
-axiom add_field : VectorField -> VectorField -> VectorField
+axiom add_field : VectorField → VectorField → VectorField
 
 /-- Negate a vector field -/
-axiom neg_field : VectorField -> VectorField
+axiom neg_field : VectorField → VectorField
 
 /-- Divide scalar field by constant -/
-axiom div_scalar : ScalarField -> R' -> ScalarField
+axiom div_scalar : ScalarField → ℝ → ScalarField
 
 /-- Zero scalar field -/
 axiom zero_scalar : ScalarField
@@ -66,5 +66,16 @@ axiom ampere_maxwell (t : Time) :
   curl_field B_field = add_field
     (scale_field mu0 J_field)
     (scale_field (mu0 * eps0) (time_deriv E_field t))
+
+/-- Lorentz Force Law: F = q(E + v × B) -/
+axiom lorentz_force (q : ℝ) (v E_at_x B_at_x : Vec3) :
+  electromagnetic_force q v E_at_x B_at_x (Vec3.cross v B_at_x) =
+    Vec3.mk (q * (E_at_x.x + (Vec3.cross v B_at_x).x))
+            (q * (E_at_x.y + (Vec3.cross v B_at_x).y))
+            (q * (E_at_x.z + (Vec3.cross v B_at_x).z))
+
+/-- Coulomb's Law: F = (1/(4πε₀)) · q₁q₂/r² -/
+axiom coulomb_law (q1 q2 r : ℝ) (hr : r > 0) :
+  electrostatic_force q1 q2 r = (1 / (4 * Real.pi * eps0)) * q1 * q2 / r ^ 2
 
 end PhysicsGenerator.Electromagnetism

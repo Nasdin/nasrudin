@@ -1,5 +1,5 @@
 [package]
-name = "physics-core"
+name = "nasrudin-core"
 version.workspace = true
 edition.workspace = true
 

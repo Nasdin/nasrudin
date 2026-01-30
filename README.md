@@ -24,7 +24,7 @@ Nasrudin doesn't know what physics looks like. It generates candidate mathematic
 
 Every theorem carries its full Lean4 proof. Academics can inspect proofs in the web UI, download any theorem as a standalone `.lean` file, and independently re-verify it with `lake build` -- no trust in the server required.
 
-## Distributed Architecture
+## VISION: Distributed Architecture
 
 Nasrudin is designed as a **distributed compute network**. Anyone can contribute by running a worker node:
 
@@ -125,7 +125,7 @@ Download the latest release binary for your platform, then:
 
 ```bash
 # Connect to the Nasrudin network and start generating theorems
-./nasrudin-worker --server https://nasrudin.example.com
+./nasrudin-worker --server https://nasrudin.org
 ```
 
 The worker binary bundles the Rust GA engine and Lean4 prover. It runs locally on your machine, generates and verifies theorems, and submits discoveries to the central server. Your local RocksDB persists across restarts so no work is lost.

@@ -1,9 +1,15 @@
 [package]
-name = "physics-lean-bridge"
+name = "nasrudin-lean-bridge"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+lean-ffi = []
+
 [dependencies]
-physics-core = { path = "../core" }
+nasrudin-core = { path = "../core" }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+chrono = { workspace = true }
+hex = { workspace = true }

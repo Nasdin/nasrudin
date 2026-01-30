@@ -5,5 +5,8 @@ import PhysicsGenerator.Axioms.SpecialRelativity
 import PhysicsGenerator.Axioms.Electromagnetism
 import PhysicsGenerator.Axioms.QuantumMechanics
 import PhysicsGenerator.Axioms.Thermodynamics
+import PhysicsGenerator.Axioms.GeneralRelativity
+import PhysicsGenerator.Derived.EnergyMomentum
+import PhysicsGenerator.Derived.RestEnergy
 import PhysicsGenerator.Bridge.Types
 import PhysicsGenerator.Bridge.Verify

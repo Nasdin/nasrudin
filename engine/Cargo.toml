@@ -4,6 +4,8 @@ members = [
     "crates/rocks",
     "crates/pg",
     "crates/lean-bridge",
+    "crates/derive",
+    "crates/ga",
     "crates/api",
     "crates/mcp",
     "crates/importer",
@@ -22,7 +24,7 @@ serde_json = "1.0"
 
 # Async runtime
 tokio = { version = "1.49", features = ["full"] }
-tokio-stream = { version = "0.1", features = ["time"] }
+tokio-stream = { version = "0.1", features = ["time", "sync"] }
 
 # Error handling
 anyhow = "1.0"
@@ -53,6 +55,10 @@ sea-orm = { version = "2.0.0-rc.28", features = [
     "with-uuid",
     "with-chrono",
     "with-json",
+] }
+sea-orm-migration = { version = "2.0.0-rc.28", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
 ] }
 
 # Common types

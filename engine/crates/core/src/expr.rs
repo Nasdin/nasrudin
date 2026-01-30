@@ -103,6 +103,13 @@ pub enum Expr {
         lower: Box<Expr>,
         upper: Box<Expr>,
     },
+    /// Product: Pi_{i=a}^{b} f(i)
+    Prod {
+        body: Box<Expr>,
+        var: Symbol,
+        lower: Box<Expr>,
+        upper: Box<Expr>,
+    },
     /// Limit: lim_{x -> a} f(x)
     Limit {
         body: Box<Expr>,
@@ -137,6 +144,12 @@ impl Expr {
                     + upper.as_ref().map_or(0, |e| e.node_count())
             }
             Expr::Sum {
+                body,
+                lower,
+                upper,
+                ..
+            }
+            | Expr::Prod {
                 body,
                 lower,
                 upper,
@@ -236,6 +249,19 @@ impl Expr {
                     body.to_canonical()
                 )
             }
+            Expr::Prod {
+                body,
+                var,
+                lower,
+                upper,
+            } => {
+                format!(
+                    "(prod {var} {} {} {})",
+                    lower.to_canonical(),
+                    upper.to_canonical(),
+                    body.to_canonical()
+                )
+            }
             Expr::Limit {
                 body,
                 var,
@@ -265,5 +291,54 @@ impl Expr {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_prod() -> Expr {
+        Expr::Prod {
+            body: Box::new(Expr::Var("i".into())),
+            var: "i".into(),
+            lower: Box::new(Expr::Lit(1, 1)),
+            upper: Box::new(Expr::Var("n".into())),
+        }
+    }
+
+    #[test]
+    fn prod_node_count() {
+        let prod = make_prod();
+        // 1 (Prod) + 1 (body: Var) + 1 (lower: Lit) + 1 (upper: Var) = 4
+        assert_eq!(prod.node_count(), 4);
+    }
+
+    #[test]
+    fn prod_to_canonical() {
+        let prod = make_prod();
+        assert_eq!(prod.to_canonical(), "(prod i n:1 v:n v:i)");
+    }
+
+    #[test]
+    fn sum_node_count() {
+        let sum = Expr::Sum {
+            body: Box::new(Expr::Var("i".into())),
+            var: "i".into(),
+            lower: Box::new(Expr::Lit(0, 1)),
+            upper: Box::new(Expr::Var("n".into())),
+        };
+        assert_eq!(sum.node_count(), 4);
+    }
+
+    #[test]
+    fn sum_to_canonical() {
+        let sum = Expr::Sum {
+            body: Box::new(Expr::Var("i".into())),
+            var: "i".into(),
+            lower: Box::new(Expr::Lit(0, 1)),
+            upper: Box::new(Expr::Var("n".into())),
+        };
+        assert_eq!(sum.to_canonical(), "(sum i n:0 v:n v:i)");
     }
 }

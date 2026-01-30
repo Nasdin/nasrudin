@@ -317,7 +317,7 @@ pub struct FitnessScore {
 
     /// Pattern matching against known physics structures
     /// (does NOT reveal target theorems to the system)
-    pub physics_relevance: f64,
+    pub nasrudin_relevance: f64,
 }
 ```
 

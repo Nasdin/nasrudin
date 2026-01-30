@@ -18,19 +18,19 @@ axiom Observable : Type
 axiom Hamiltonian : Type
 
 /-- Apply Hamiltonian to a state -/
-axiom apply_hamiltonian : Hamiltonian -> QState -> QState
+axiom apply_hamiltonian : Hamiltonian → QState → QState
 
 /-- Time derivative of a state -/
-axiom state_time_deriv : (Time -> QState) -> Time -> QState
+axiom state_time_deriv : (Time → QState) → Time → QState
 
 /-- Scale a state by a real scalar (simplified from complex for now) -/
-axiom scale_state : R' -> QState -> QState
+axiom scale_state : ℝ → QState → QState
 
 /-- Measurement probability -/
-axiom measure_prob : Observable -> QState -> R' -> R'
+axiom measure_prob : Observable → QState → ℝ → ℝ
 
 /-- Commutator of two operators -/
-axiom commutator : Observable -> Observable -> Observable
+axiom commutator : Observable → Observable → Observable
 
 /-- Position operator -/
 axiom position_op : Observable
@@ -42,11 +42,11 @@ axiom momentum_op : Observable
 axiom identity_op : Observable
 
 /-- Imaginary unit times reduced Planck constant -/
-axiom ihbar : R'
+axiom ihbar : ℝ
 
 /-- Postulate: Schrodinger Equation
     ihbar * d(psi)/dt = H(psi) -/
-axiom schrodinger_equation (psi : Time -> QState) (H : Hamiltonian) (t : Time) :
+axiom schrodinger_equation (psi : Time → QState) (H : Hamiltonian) (t : Time) :
   scale_state ihbar (state_time_deriv psi t) = apply_hamiltonian H (psi t)
 
 /-- Canonical Commutation Relation: [x, p] = ihbar * I -/
@@ -55,7 +55,25 @@ axiom canonical_commutation :
   -- Simplified; in full form this should involve ihbar scaling
 
 /-- Born Rule: Measurement probabilities are non-negative -/
-axiom born_rule_nonneg (obs : Observable) (psi : QState) (eigenval : R') :
-  PhysReal.le PhysReal.zero (measure_prob obs psi eigenval)
+axiom born_rule_nonneg (obs : Observable) (psi : QState) (eigenval : ℝ) :
+  0 ≤ measure_prob obs psi eigenval
+
+/-- Postulate: States are unit vectors in a Hilbert space -/
+axiom qm_state_space (psi : QState) :
+  ∃ (H : HilbertSpace), psi ∈ unit_sphere H
+
+/-- Postulate: Observables are self-adjoint operators -/
+axiom qm_observables (obs : Observable) :
+  is_self_adjoint obs
+
+/-- Heisenberg Uncertainty Principle: ΔA·ΔB ≥ ½|⟨[A,B]⟩| -/
+axiom heisenberg_uncertainty (psi : QState) (A B : Observable) :
+  std_dev A psi * std_dev B psi ≥
+    (1/2) * |expected_value (commutator A B) psi|
+
+/-- Pauli Exclusion Principle: No two identical fermions share
+    the same set of quantum numbers -/
+axiom pauli_exclusion (sys : FermionSystem) :
+  ¬(∃ (f1 f2 : Fermion), f1 ≠ f2 ∧ quantum_numbers f1 = quantum_numbers f2)
 
 end PhysicsGenerator.QuantumMechanics

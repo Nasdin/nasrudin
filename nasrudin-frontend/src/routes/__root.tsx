@@ -60,6 +60,26 @@ function RootLayout() {
 			<main className="flex-1">
 				<Outlet />
 			</main>
+			<footer className="border-t border-slate-200 bg-slate-50 py-6 text-center text-sm text-slate-500">
+				<p>
+					Created by{" "}
+					<a
+						href="https://nasrudinsalim.com"
+						target="_blank"
+						rel="noopener noreferrer"
+						className="text-slate-700 underline hover:text-slate-900"
+					>
+						Nasrudin Salim
+					</a>{" "}
+					&middot;{" "}
+					<a
+						href="mailto:mail@nasrudinsalim.com"
+						className="text-slate-700 underline hover:text-slate-900"
+					>
+						mail@nasrudinsalim.com
+					</a>
+				</p>
+			</footer>
 		</div>
 	);
 }

@@ -1,13 +1,16 @@
 [package]
-name = "physics-pg"
+name = "nasrudin-pg"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+tracing = { workspace = true }
+async-trait = "0.1"

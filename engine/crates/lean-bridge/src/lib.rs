@@ -1,17 +1,30 @@
 //! Lean4 FFI bridge for formal proof verification.
 //!
-//! This crate will provide the interface between the Rust engine and the Lean4
-//! proof checker. Currently stubbed -- the FFI will be wired once the Lean4
-//! prover component (`lean/PhysicsProver`) is built.
+//! This crate provides the interface between the Rust engine and the Lean4
+//! proof checker. Two verification paths are available:
 //!
-//! The bridge will:
-//! - Convert `Expr` trees to Lean4 terms
-//! - Submit proof obligations to the Lean4 kernel
-//! - Return verification results (verified / rejected / timeout)
-//! - Optionally run Lean4 tactics for automated proof search
+//! 1. **Process-based** (`process` module): Generates `.lean` files and runs
+//!    `lake build`. This is the primary path and works out of the box.
+//!
+//! 2. **C FFI** (`ffi` module, feature-gated behind `lean-ffi`): Links against
+//!    the compiled Lean4 static library for in-process verification.
+//!    Requires `lake build` of the prover first.
+//!
+//! Supporting modules:
+//! - `lean_syntax`: Converts `Expr` AST → Lean4 source code
+//! - `tactic`: Tactic cascade configuration (omega → grind)
+//! - `export`: Standalone `.lean` file generation for academic verification
+
+pub mod export;
+pub mod ffi;
+pub mod lean_syntax;
+pub mod process;
+pub mod tactic;
 
 use anyhow::Result;
-use physics_core::Expr;
+use nasrudin_core::{Expr, Theorem};
+
+pub use process::{ProcessVerifier, ProcessVerifyConfig};
 
 /// Result of a Lean4 verification attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,58 +55,141 @@ pub enum VerifyResult {
 
 /// Bridge to the Lean4 proof verification kernel.
 ///
-/// This struct manages the lifecycle of the Lean4 environment and provides
-/// methods for proof verification and expression simplification.
+/// Provides both process-based and (optionally) FFI-based verification.
+/// Use `LeanBridge::new()` for the default process-based path, or
+/// `LeanBridge::with_ffi()` when the `lean-ffi` feature is enabled.
 pub struct LeanBridge {
-    // Will hold the Lean4 environment handle once FFI is implemented.
-    _initialized: bool,
+    process_verifier: Option<ProcessVerifier>,
+    #[cfg(feature = "lean-ffi")]
+    ffi_initialized: bool,
 }
 
 impl LeanBridge {
-    /// Create a new Lean4 bridge.
-    ///
-    /// In the future this will initialize the Lean4 runtime and load the
-    /// `PhysicsProver` library. Currently returns a stub instance.
+    /// Create a Lean4 bridge using process-based verification.
     pub fn new() -> Result<Self> {
-        tracing::warn!("LeanBridge: using stub implementation -- Lean4 FFI not yet wired");
+        let config = ProcessVerifyConfig::from_env();
+        let verifier = ProcessVerifier::new(config);
+
+        if verifier.check_available()? {
+            tracing::info!("LeanBridge: process-based verification available");
+        } else {
+            tracing::warn!("LeanBridge: lake/prover not found — verification will fail");
+        }
+
         Ok(Self {
-            _initialized: false,
+            process_verifier: Some(verifier),
+            #[cfg(feature = "lean-ffi")]
+            ffi_initialized: false,
         })
     }
 
-    /// Verify a proof obligation.
+    /// Create a bridge with FFI verification (requires `lean-ffi` feature).
+    #[cfg(feature = "lean-ffi")]
+    pub fn with_ffi() -> Result<Self> {
+        ffi::safe::init().map_err(|e| anyhow::anyhow!(e))?;
+        tracing::info!("LeanBridge: FFI verification initialized");
+
+        Ok(Self {
+            process_verifier: Some(ProcessVerifier::new(ProcessVerifyConfig::from_env())),
+            ffi_initialized: true,
+        })
+    }
+
+    /// Verify a theorem using the best available method.
     ///
-    /// Takes a theorem statement and a proof term, and asks the Lean4 kernel
-    /// to check the proof. Returns `VerifyResult::Verified` if the proof is
-    /// valid.
-    ///
-    /// Currently always returns `FfiError` since Lean4 is not yet connected.
-    pub fn verify(&self, _statement: &Expr, _proof_term: &[u8]) -> VerifyResult {
-        // TODO: Wire up Lean4 FFI
-        // 1. Convert Expr -> Lean4 Expr via lean_sys
-        // 2. Submit to Lean4 kernel
-        // 3. Parse result
-        VerifyResult::FfiError {
-            message: "Lean4 FFI not yet implemented".to_string(),
+    /// Tries FFI first (if available), then falls back to process-based.
+    pub fn verify_theorem(&self, theorem: &Theorem) -> Result<VerifyResult> {
+        // FFI path (if compiled with lean-ffi feature)
+        #[cfg(feature = "lean-ffi")]
+        if self.ffi_initialized {
+            let result = ffi::safe::verify(&theorem.canonical);
+            return Ok(result);
         }
+
+        // Process-based path
+        if let Some(ref verifier) = self.process_verifier {
+            return verifier.verify_theorem(theorem);
+        }
+
+        Ok(VerifyResult::FfiError {
+            message: "No verification backend available".to_string(),
+        })
+    }
+
+    /// Verify a raw expression by statement and domain.
+    pub fn verify_expr(
+        &self,
+        statement: &Expr,
+        domain: &nasrudin_core::Domain,
+    ) -> Result<VerifyResult> {
+        let canonical = statement.to_canonical();
+
+        #[cfg(feature = "lean-ffi")]
+        if self.ffi_initialized {
+            return Ok(ffi::safe::verify(&canonical));
+        }
+
+        if let Some(ref verifier) = self.process_verifier {
+            return verifier.verify_canonical(&canonical, statement, domain);
+        }
+
+        Ok(VerifyResult::FfiError {
+            message: "No verification backend available".to_string(),
+        })
     }
 
     /// Attempt to simplify an expression using Lean4 tactics.
     ///
-    /// Uses Lean4's `simp` and custom physics tactics to reduce expressions.
-    /// Returns `None` if no simplification was found.
-    ///
-    /// Currently always returns `None` since Lean4 is not yet connected.
-    pub fn simplify(&self, _expr: &Expr) -> Option<Expr> {
-        // TODO: Wire up Lean4 FFI for simplification
+    /// Only available with the `lean-ffi` feature. Returns `None` otherwise.
+    pub fn simplify(&self, expr: &Expr) -> Option<String> {
+        #[cfg(feature = "lean-ffi")]
+        if self.ffi_initialized {
+            let canonical = expr.to_canonical();
+            return ffi::safe::simplify(&canonical).ok();
+        }
+
+        let _ = expr;
         None
+    }
+
+    /// Verify a proof via `lake build` (legacy convenience method).
+    pub fn verify_via_lake(
+        &self,
+        prover_root: &std::path::Path,
+        module_path: &str,
+    ) -> Result<bool> {
+        export::verify_via_lake(prover_root, module_path)
+    }
+
+    /// Check if any verification backend is available.
+    pub fn is_available(&self) -> bool {
+        #[cfg(feature = "lean-ffi")]
+        if self.ffi_initialized {
+            return true;
+        }
+
+        self.process_verifier
+            .as_ref()
+            .and_then(|v| v.check_available().ok())
+            .unwrap_or(false)
     }
 }
 
 impl Default for LeanBridge {
     fn default() -> Self {
         Self {
-            _initialized: false,
+            process_verifier: None,
+            #[cfg(feature = "lean-ffi")]
+            ffi_initialized: false,
+        }
+    }
+}
+
+impl Drop for LeanBridge {
+    fn drop(&mut self) {
+        #[cfg(feature = "lean-ffi")]
+        if self.ffi_initialized {
+            ffi::safe::shutdown();
         }
     }
 }

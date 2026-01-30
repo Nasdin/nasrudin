@@ -1,0 +1,17 @@
+[package]
+name = "nasrudin-ga"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nasrudin-core = { path = "../core" }
+nasrudin-derive = { path = "../derive" }
+nasrudin-rocks = { path = "../rocks" }
+rand = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+xxhash-rust = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
