@@ -1,6 +1,6 @@
 # Nasrudin
 
-**Derive physics from pure logic.** A distributed theorem generation engine that starts from mathematical axioms and physics postulates, then uses genetic algorithms to evolve new theorems -- eventually rediscovering known physics (like E=mc^2) without being told what to find.
+**Derive physics from pure logic.** Nasrudin discovers theorems by generating candidates and formally proving them in Lean4A distributed theorem generation engine that starts from mathematical axioms and physics postulates, then uses genetic algorithms to evolve new theorems -- eventually rediscovering known physics (like E=mc^2) without being told what to find. Synthetic theorem generation with formal verification
 
 Named after [Nasrudin](https://en.wikipedia.org/wiki/Nasreddin), the wise fool of Sufi tradition who found truth through unconventional paths.
 
@@ -21,6 +21,8 @@ Mathematical Axioms (350K+ from Mathlib) + Physics Postulates (~43 axioms)
 ```
 
 Nasrudin doesn't know what physics looks like. It generates candidate mathematical statements by combining and mutating existing theorems, then uses Lean4 to formally prove or reject them. Over time, the system builds up a corpus of verified mathematical truths -- some of which turn out to be real physics.
+
+Every theorem carries its full Lean4 proof. Academics can inspect proofs in the web UI, download any theorem as a standalone `.lean` file, and independently re-verify it with `lake build` -- no trust in the server required.
 
 ## Distributed Architecture
 
@@ -144,7 +146,7 @@ just clean           # Remove all build artifacts
 | **GA Engine** | Rust | 2024 edition |
 | **Formal Prover** | Lean4 + Mathlib | v4.27.0 |
 | **Theorem Store** | RocksDB (embedded) | 0.24 |
-| **User Database** | PostgreSQL + SeaORM 2 | 17 / 2.0.0-rc |
+| **User Database** | PostgreSQL + SeaORM 2 | 18 / 2.0.0-rc |
 | **API Server** | Axum | 0.8 |
 | **Frontend** | TanStack Start + React 19 | v1 |
 | **Math Rendering** | KaTeX | 0.16 |

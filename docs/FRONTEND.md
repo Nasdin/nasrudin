@@ -191,6 +191,19 @@ axioms, with every step formally verified.
 - **Minimap** → overview navigation (bottom-right of canvas)
 - **Filters** → domain toggles, depth range slider, complexity slider
 
+**Detail panel tabs:**
+
+The right-side detail panel has three tabs when a node is selected:
+
+| Tab | Contents |
+|-----|----------|
+| **Overview** | KaTeX formula, domain badge, depth, generation, fitness scores, parent/child counts |
+| **Proof** | Tactic script (syntax-highlighted), proof tree visualization, verification metadata (timestamp, tactic, duration, Lean4 version), "Download .lean" button, "Copy proof term" button |
+| **Lineage** | List of parent theorems (clickable), list of child theorems (clickable), axiom ancestors (transitive roots) |
+
+The **Proof tab** is the primary interface for academic validation. It shows
+exactly how the theorem was verified and provides a one-click `.lean` export.
+
 **Node types:**
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
@@ -320,7 +333,15 @@ App
 │   │   │   ├── TheoremNode (domain-colored, KaTeX, stats)
 │   │   │   ├── DerivationEdge (solid/dashed/thick)
 │   │   │   └── MiniMap
-│   │   ├── DetailPanel (right sidebar: proof, metadata, actions)
+│   │   ├── DetailPanel (right sidebar, tabbed)
+│   │   │   ├── OverviewTab (formula, domain, depth, fitness)
+│   │   │   ├── ProofTab (tactic script, proof tree, download .lean)
+│   │   │   │   ├── TacticDisplay (syntax-highlighted Lean4 tactic)
+│   │   │   │   ├── ProofTreeView (collapsible step-by-step derivation)
+│   │   │   │   ├── VerificationMeta (timestamp, tactic, duration, Lean4 version)
+│   │   │   │   ├── DownloadLeanButton (GET /api/theorems/:id/proof.lean)
+│   │   │   │   └── CopyProofTermButton (raw proof term to clipboard)
+│   │   │   └── LineageTab (parent list, child list, axiom ancestors)
 │   │   └── FilterBar (domain toggles, depth slider)
 │   ├── DomainsPage (/domains)
 │   │   └── DomainCard[] (name, count, sample formula, rate)
@@ -399,6 +420,20 @@ Nav → Timeline → scroll through history → click entry → explore
 ```
 Nav → Engine → see stats, workers, generation info → understand the system
 ```
+
+### Flow 5: Academic Proof Validation
+
+```
+Search/browse → find theorem → /explore/:theoremId → click node
+  → Detail panel "Proof" tab → view tactic script + proof tree
+  → click "Download .lean" → save standalone Lean4 file
+  → run `lake build` locally → independent re-verification
+```
+
+This flow requires no login. All proofs are publicly accessible. The
+downloaded `.lean` file is self-contained — it imports the Nasrudin axiom
+definitions and includes the full proof term, so `lake build` can verify
+it from scratch without trusting the server.
 
 ---
 
@@ -558,6 +593,7 @@ fully public — no authentication needed to search, explore, or browse.
 | Frontend Feature | Database | Endpoint |
 |-----------------|----------|----------|
 | Theorem search, explore, lineage | RocksDB | `/api/theorems/*`, `/api/search` |
+| Proof viewer, proof export | RocksDB | `/api/theorems/:id/proof`, `/api/theorems/:id/proof.lean` |
 | Live stats, SSE streams | RocksDB | `/api/stats`, `/api/events/*` |
 | Login, register, session | PostgreSQL | `/api/auth/*` |
 | Saved searches | PostgreSQL | `/api/saved-searches` |

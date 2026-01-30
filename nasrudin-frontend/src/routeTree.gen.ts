@@ -11,10 +11,13 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimelineRouteImport } from './routes/timeline'
 import { Route as SearchRouteImport } from './routes/search'
+import { Route as EngineRouteImport } from './routes/engine'
 import { Route as AxiomsRouteImport } from './routes/axioms'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DomainsIndexRouteImport } from './routes/domains/index'
+import { Route as TheoremTheoremIdRouteImport } from './routes/theorem/$theoremId'
 import { Route as ExploreTheoremIdRouteImport } from './routes/explore/$theoremId'
+import { Route as DomainsDomainRouteImport } from './routes/domains/$domain'
 import { Route as DemoStartServerFuncsRouteImport } from './routes/demo/start.server-funcs'
 import { Route as DemoStartApiRequestRouteImport } from './routes/demo/start.api-request'
 import { Route as DemoApiNamesRouteImport } from './routes/demo/api.names'
@@ -33,6 +36,11 @@ const SearchRoute = SearchRouteImport.update({
   path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EngineRoute = EngineRouteImport.update({
+  id: '/engine',
+  path: '/engine',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AxiomsRoute = AxiomsRouteImport.update({
   id: '/axioms',
   path: '/axioms',
@@ -48,9 +56,19 @@ const DomainsIndexRoute = DomainsIndexRouteImport.update({
   path: '/domains/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TheoremTheoremIdRoute = TheoremTheoremIdRouteImport.update({
+  id: '/theorem/$theoremId',
+  path: '/theorem/$theoremId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExploreTheoremIdRoute = ExploreTheoremIdRouteImport.update({
   id: '/explore/$theoremId',
   path: '/explore/$theoremId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DomainsDomainRoute = DomainsDomainRouteImport.update({
+  id: '/domains/$domain',
+  path: '/domains/$domain',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DemoStartServerFuncsRoute = DemoStartServerFuncsRouteImport.update({
@@ -92,9 +110,12 @@ const DemoStartSsrDataOnlyRoute = DemoStartSsrDataOnlyRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/axioms': typeof AxiomsRoute
+  '/engine': typeof EngineRoute
   '/search': typeof SearchRoute
   '/timeline': typeof TimelineRoute
+  '/domains/$domain': typeof DomainsDomainRoute
   '/explore/$theoremId': typeof ExploreTheoremIdRoute
+  '/theorem/$theoremId': typeof TheoremTheoremIdRoute
   '/domains/': typeof DomainsIndexRoute
   '/demo/api/names': typeof DemoApiNamesRoute
   '/demo/start/api-request': typeof DemoStartApiRequestRoute
@@ -107,9 +128,12 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/axioms': typeof AxiomsRoute
+  '/engine': typeof EngineRoute
   '/search': typeof SearchRoute
   '/timeline': typeof TimelineRoute
+  '/domains/$domain': typeof DomainsDomainRoute
   '/explore/$theoremId': typeof ExploreTheoremIdRoute
+  '/theorem/$theoremId': typeof TheoremTheoremIdRoute
   '/domains': typeof DomainsIndexRoute
   '/demo/api/names': typeof DemoApiNamesRoute
   '/demo/start/api-request': typeof DemoStartApiRequestRoute
@@ -123,9 +147,12 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/axioms': typeof AxiomsRoute
+  '/engine': typeof EngineRoute
   '/search': typeof SearchRoute
   '/timeline': typeof TimelineRoute
+  '/domains/$domain': typeof DomainsDomainRoute
   '/explore/$theoremId': typeof ExploreTheoremIdRoute
+  '/theorem/$theoremId': typeof TheoremTheoremIdRoute
   '/domains/': typeof DomainsIndexRoute
   '/demo/api/names': typeof DemoApiNamesRoute
   '/demo/start/api-request': typeof DemoStartApiRequestRoute
@@ -140,9 +167,12 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/axioms'
+    | '/engine'
     | '/search'
     | '/timeline'
+    | '/domains/$domain'
     | '/explore/$theoremId'
+    | '/theorem/$theoremId'
     | '/domains/'
     | '/demo/api/names'
     | '/demo/start/api-request'
@@ -155,9 +185,12 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/axioms'
+    | '/engine'
     | '/search'
     | '/timeline'
+    | '/domains/$domain'
     | '/explore/$theoremId'
+    | '/theorem/$theoremId'
     | '/domains'
     | '/demo/api/names'
     | '/demo/start/api-request'
@@ -170,9 +203,12 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/axioms'
+    | '/engine'
     | '/search'
     | '/timeline'
+    | '/domains/$domain'
     | '/explore/$theoremId'
+    | '/theorem/$theoremId'
     | '/domains/'
     | '/demo/api/names'
     | '/demo/start/api-request'
@@ -186,9 +222,12 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AxiomsRoute: typeof AxiomsRoute
+  EngineRoute: typeof EngineRoute
   SearchRoute: typeof SearchRoute
   TimelineRoute: typeof TimelineRoute
+  DomainsDomainRoute: typeof DomainsDomainRoute
   ExploreTheoremIdRoute: typeof ExploreTheoremIdRoute
+  TheoremTheoremIdRoute: typeof TheoremTheoremIdRoute
   DomainsIndexRoute: typeof DomainsIndexRoute
   DemoApiNamesRoute: typeof DemoApiNamesRoute
   DemoStartApiRequestRoute: typeof DemoStartApiRequestRoute
@@ -215,6 +254,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/engine': {
+      id: '/engine'
+      path: '/engine'
+      fullPath: '/engine'
+      preLoaderRoute: typeof EngineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/axioms': {
       id: '/axioms'
       path: '/axioms'
@@ -236,11 +282,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DomainsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/theorem/$theoremId': {
+      id: '/theorem/$theoremId'
+      path: '/theorem/$theoremId'
+      fullPath: '/theorem/$theoremId'
+      preLoaderRoute: typeof TheoremTheoremIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/explore/$theoremId': {
       id: '/explore/$theoremId'
       path: '/explore/$theoremId'
       fullPath: '/explore/$theoremId'
       preLoaderRoute: typeof ExploreTheoremIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/domains/$domain': {
+      id: '/domains/$domain'
+      path: '/domains/$domain'
+      fullPath: '/domains/$domain'
+      preLoaderRoute: typeof DomainsDomainRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/demo/start/server-funcs': {
@@ -298,9 +358,12 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AxiomsRoute: AxiomsRoute,
+  EngineRoute: EngineRoute,
   SearchRoute: SearchRoute,
   TimelineRoute: TimelineRoute,
+  DomainsDomainRoute: DomainsDomainRoute,
   ExploreTheoremIdRoute: ExploreTheoremIdRoute,
+  TheoremTheoremIdRoute: TheoremTheoremIdRoute,
   DomainsIndexRoute: DomainsIndexRoute,
   DemoApiNamesRoute: DemoApiNamesRoute,
   DemoStartApiRequestRoute: DemoStartApiRequestRoute,

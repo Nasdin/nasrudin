@@ -444,7 +444,9 @@ Built with Axum. Exposes:
 GET  /api/theorems/:id              # Get theorem by ID
 GET  /api/theorems?q=<latex>&limit=N # Search by LaTeX expression
 GET  /api/theorems/:id/lineage      # Get derivation graph (parents + children)
-GET  /api/theorems/:id/proof        # Get full proof tree
+GET  /api/theorems/:id/proof        # Get full proof tree (JSON)
+GET  /api/theorems/:id/proof.lean   # Standalone .lean file for independent verification
+GET  /api/theorems/:id/proof/tree   # Rendered proof tree (parent chain to axioms)
 GET  /api/stats                     # Engine statistics (count, rate, generation)
 GET  /api/domains                   # List physics domains with counts
 GET  /api/axioms                    # List seed axioms
@@ -713,6 +715,8 @@ by combining axioms. Lean4 verifies each step. The fitness function rewards:
 ### Phase 4: API Server
 - [ ] Axum REST endpoints — theorems, search, lineage, stats (from RocksDB)
 - [ ] Axum REST endpoints — auth, register, login, sessions (from PostgreSQL)
+- [ ] Proof endpoints — proof tree JSON, standalone .lean export, proof tree rendering
+- [ ] Lean export generator (ProofTree → standalone .lean file with imports)
 - [ ] Ingest endpoint for remote worker theorem submission
 - [ ] Worker registration and heartbeat endpoints
 - [ ] SSE event streams (discoveries, stats, progress)
@@ -726,6 +730,9 @@ by combining axioms. Lean4 verifies each step. The fitness function rewards:
 - [ ] React Flow canvas for derivation graph exploration
 - [ ] Domain browser
 - [ ] Timeline view
+- [ ] Proof viewer in explore detail panel (tactic display, proof tree, metadata)
+- [ ] Download .lean button (calls GET /api/theorems/:id/proof.lean)
+- [ ] Copy proof term button
 
 ### Phase 6: LLM Integration
 - [ ] Tactic advisor: LLM predicts which Lean4 tactic to try first (5x verification speedup)
@@ -772,3 +779,6 @@ See [LLM-INTEGRATION.md](./LLM-INTEGRATION.md) for full architecture.
 4. **Explore**: User can search any LaTeX formula and see its derivation graph
 5. **Scale**: Database reaches 1M+ verified theorems
 6. **Type Safe**: Full end-to-end type safety from Lean4 through Rust to TypeScript
+7. **Validate**: Any theorem's proof is downloadable as a standalone `.lean` file
+   that an academic can independently verify with `lake build` — no trust in the
+   server required

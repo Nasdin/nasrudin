@@ -415,7 +415,51 @@ interface TheoremResponse {
   origin: TheoremOrigin;
   parent_ids: string[];
   child_count: number;
+  has_proof: boolean;            // true if proof term is available
+  verification_tactic: string | null; // tactic that verified (e.g. "grind", "simp")
 }
+```
+
+### ProofResponse
+
+```typescript
+interface ProofResponse {
+  theorem_id: string;
+  proof_tree: ProofTreeNode;       // structured derivation tree
+  tactic: string;                  // Lean4 tactic that verified (e.g. "grind")
+  tactic_script: string;           // full tactic invocation with lemma args
+  proof_term_bytes: number;        // size of raw proof term in bytes
+  verified_at: number;             // unix timestamp of verification
+  verification_duration_ms: number; // how long Lean4 took to verify
+  lean_version: string;            // Lean4 version used (e.g. "4.27.0")
+  axiom_dependencies: string[];    // axiom IDs used in the proof
+}
+
+interface ProofTreeNode {
+  type: 'axiom' | 'modus_ponens' | 'univ_inst' | 'substitute'
+      | 'rewrite' | 'eq_chain' | 'tactic' | 'algebraic';
+  label: string;                   // human-readable step description
+  theorem_id?: string;             // reference to axiom/theorem (for 'axiom' type)
+  latex?: string;                  // LaTeX of the expression at this step
+  children: ProofTreeNode[];       // sub-proofs
+}
+```
+
+### LeanExportResponse
+
+```typescript
+// Response from GET /api/theorems/:id/proof.lean
+// Content-Type: text/x-lean4
+// Content-Disposition: attachment; filename="<theorem_name>.lean"
+//
+// The response body is a standalone Lean4 source file containing:
+// - Metadata header comment (theorem name, domain, depth, verification date)
+// - Import statements for required axiom modules
+// - Theorem statement with type signature
+// - Proof body (tactic or term mode)
+//
+// Academics verify by placing the file in the Nasrudin prover project
+// and running `lake build`.
 ```
 
 ### LineageResponse
