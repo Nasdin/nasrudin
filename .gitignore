@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.output/
+target/
+
+# Lean4
+prover/build/
+prover/lake-packages/
+prover/.lake/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# RocksDB data
+data/
+*.sst
+*.log
+MANIFEST-*
+CURRENT
+LOCK
+
+# Cache
+.tldr/
+.claude/cache/
+
+.env

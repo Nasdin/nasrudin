@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: physics-pg
+    env_file: .env
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-physics} -d ${POSTGRES_DB:-physics_generator}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_data:

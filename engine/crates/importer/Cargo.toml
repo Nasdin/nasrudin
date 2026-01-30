@@ -1,0 +1,10 @@
+[package]
+name = "physics-importer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+physics-core = { path = "../core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

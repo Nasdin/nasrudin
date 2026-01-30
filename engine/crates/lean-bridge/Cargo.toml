@@ -1,0 +1,9 @@
+[package]
+name = "physics-lean-bridge"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+physics-core = { path = "../core" }
+anyhow = { workspace = true }
+tracing = { workspace = true }

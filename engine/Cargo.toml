@@ -1,0 +1,65 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/rocks",
+    "crates/pg",
+    "crates/lean-bridge",
+    "crates/api",
+    "crates/mcp",
+    "crates/importer",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async runtime
+tokio = { version = "1.49", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["time"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Hashing & encoding
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+hex = "0.4"
+
+# Web framework
+axum = { version = "0.8", features = ["ws"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Database - RocksDB (embedded theorem store)
+rocksdb = { version = "0.24", features = ["multi-threaded-cf"] }
+
+# Database - SeaORM 2 (PostgreSQL ORM for users/auth/workers)
+sea-orm = { version = "2.0.0-rc.28", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+    "macros",
+    "with-uuid",
+    "with-chrono",
+    "with-json",
+] }
+
+# Common types
+uuid = { version = "1.20", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.9"
+
+# Protobuf
+prost = "0.14"
+bytes = "1.11"
