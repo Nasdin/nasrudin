@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useRef } from "react";
 import DomainBadge from "../../components/DomainBadge";
 import { RouteError } from "../../components/RouteError";
 import TheoremCard from "../../components/TheoremCard";
@@ -108,9 +108,7 @@ function DomainDetailPage() {
 
 			<div className="mb-8">
 				<div className="flex items-center gap-3 mb-2">
-					<h1 className="text-2xl font-bold text-slate-900">
-						{decodedDomain}
-					</h1>
+					<h1 className="text-2xl font-bold text-slate-900">{decodedDomain}</h1>
 					<DomainBadge domain={decodedDomain} />
 				</div>
 				<p className="text-sm text-slate-500">{info.description}</p>
@@ -161,7 +159,9 @@ function DomainDetailPage() {
 
 function VirtualDomainList({
 	theorems,
-}: { theorems: import("../../lib/types").ApiTheorem[] }) {
+}: {
+	theorems: import("../../lib/types").ApiTheorem[];
+}) {
 	const parentRef = useRef<HTMLDivElement>(null);
 	const virtualizer = useVirtualizer({
 		count: theorems.length,

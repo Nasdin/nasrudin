@@ -98,11 +98,7 @@ function TheoremNode({ data }: NodeProps<Node<TheoremNodeData>>) {
 		<div
 			className={`${bgColor} border ${borderColor} rounded-lg p-3 min-w-[240px] max-w-[280px] shadow-sm`}
 		>
-			<Handle
-				type="target"
-				position={Position.Top}
-				className="!bg-slate-400"
-			/>
+			<Handle type="target" position={Position.Top} className="!bg-slate-400" />
 			<div className="overflow-x-auto mb-2 text-sm">
 				<BlockMath math={data.latex} />
 			</div>

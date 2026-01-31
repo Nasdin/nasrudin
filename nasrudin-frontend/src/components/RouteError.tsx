@@ -1,7 +1,10 @@
 export function RouteError({
 	error,
 	reset,
-}: { error: Error; reset: () => void }) {
+}: {
+	error: Error;
+	reset: () => void;
+}) {
 	return (
 		<div className="p-8 max-w-xl mx-auto text-center">
 			<h2 className="text-xl font-bold text-slate-900 mb-2">

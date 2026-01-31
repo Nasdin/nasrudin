@@ -2,8 +2,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Search as SearchIcon } from "lucide-react";
 import { useState } from "react";
 import "katex/dist/katex.min.css";
-import { BlockMath } from "react-katex";
 import { useDebouncedValue } from "@tanstack/react-pacer/debouncer";
+import { BlockMath } from "react-katex";
 import DomainBadge from "../components/DomainBadge";
 import { RouteError } from "../components/RouteError";
 import TheoremCard from "../components/TheoremCard";
@@ -66,8 +66,9 @@ function LandingPage() {
 			: { limit: 0 },
 	);
 
-	const filteredResults =
-		debouncedQuery.trim() ? (searchData?.theorems ?? []) : [];
+	const filteredResults = debouncedQuery.trim()
+		? (searchData?.theorems ?? [])
+		: [];
 
 	// Merge API domain counts with client-side descriptions
 	const domains = Object.entries(domainDescriptions).map(([name, info]) => {
@@ -88,10 +89,8 @@ function LandingPage() {
 					Search formally verified physics theorems
 				</h1>
 				<p className="text-slate-500 mb-8">
-					{stats
-						? stats.total_theorems.toLocaleString()
-						: "..."}{" "}
-					theorems discovered by genetic algorithm
+					{stats ? stats.total_theorems.toLocaleString() : "..."} theorems
+					discovered by genetic algorithm
 				</p>
 
 				<div className="relative max-w-2xl mx-auto">

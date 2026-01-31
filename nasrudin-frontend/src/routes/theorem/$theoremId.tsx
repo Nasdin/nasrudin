@@ -123,9 +123,7 @@ function TheoremDetailPage() {
 			<div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
 				<div className="flex items-center gap-3 mb-4">
 					<DomainBadge domain={display} />
-					<span className="text-xs text-slate-500">
-						depth {theorem.depth}
-					</span>
+					<span className="text-xs text-slate-500">depth {theorem.depth}</span>
 					<span className="text-xs text-slate-500">
 						gen {theorem.generation}
 					</span>
@@ -154,16 +152,11 @@ function TheoremDetailPage() {
 			</div>
 
 			{calc && (
-				<Calculator
-					variables={calc.variables}
-					computation={calc.computation}
-				/>
+				<Calculator variables={calc.variables} computation={calc.computation} />
 			)}
 
 			<div className="bg-slate-50 border border-slate-200 rounded-xl p-6 mb-6">
-				<h2 className="text-sm font-semibold text-slate-900 mb-3">
-					Metadata
-				</h2>
+				<h2 className="text-sm font-semibold text-slate-900 mb-3">Metadata</h2>
 				<dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
 					<dt className="text-slate-500">Fitness</dt>
 					<dd className="text-slate-900 font-medium">
@@ -176,9 +169,7 @@ function TheoremDetailPage() {
 					<dt className="text-slate-500">Depth</dt>
 					<dd className="text-slate-900 font-medium">{theorem.depth}</dd>
 					<dt className="text-slate-500">Complexity</dt>
-					<dd className="text-slate-900 font-medium">
-						{theorem.complexity}
-					</dd>
+					<dd className="text-slate-900 font-medium">{theorem.complexity}</dd>
 					<dt className="text-slate-500">Operator</dt>
 					<dd className="text-slate-900 font-medium">{operator}</dd>
 					<dt className="text-slate-500">Discovered</dt>
@@ -218,9 +209,7 @@ function TheoremDetailPage() {
 			{/* Parents / Children */}
 			{(theorem.parents.length > 0 || theorem.children.length > 0) && (
 				<div className="bg-slate-50 border border-slate-200 rounded-xl p-6 mb-6">
-					<h2 className="text-sm font-semibold text-slate-900 mb-3">
-						Lineage
-					</h2>
+					<h2 className="text-sm font-semibold text-slate-900 mb-3">Lineage</h2>
 					{theorem.parents.length > 0 && (
 						<div className="mb-3">
 							<p className="text-xs text-slate-500 mb-1">Parents</p>
@@ -311,9 +300,7 @@ function Calculator({
 
 	return (
 		<div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
-			<h2 className="text-sm font-semibold text-slate-900 mb-4">
-				Calculator
-			</h2>
+			<h2 className="text-sm font-semibold text-slate-900 mb-4">Calculator</h2>
 
 			<div className="space-y-3 mb-5">
 				{variables.map((v) => (

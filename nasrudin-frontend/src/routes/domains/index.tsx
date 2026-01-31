@@ -57,8 +57,7 @@ function DomainsPage() {
 	// Merge API counts with client-side descriptions
 	const domains = Object.entries(domainDescriptions).map(([name, info]) => {
 		const apiKey = name.replace(/\s+/g, "");
-		const count =
-			apiCounts?.[apiKey] ?? apiCounts?.[name] ?? info.theoremCount;
+		const count = apiCounts?.[apiKey] ?? apiCounts?.[name] ?? info.theoremCount;
 		return { name, description: info.description, theoremCount: count };
 	});
 

@@ -23,7 +23,10 @@ export default function RateLimitToast() {
 			setRetryAfter(null);
 			return;
 		}
-		const t = setTimeout(() => setRetryAfter((s) => (s != null ? s - 1 : null)), 1000);
+		const t = setTimeout(
+			() => setRetryAfter((s) => (s != null ? s - 1 : null)),
+			1000,
+		);
 		return () => clearTimeout(t);
 	}, [retryAfter]);
 

@@ -101,6 +101,19 @@ export interface LineageRecord {
 	axiom_ancestors: TheoremId[];
 }
 
+/** Axiom from /api/axioms */
+export interface ApiAxiom {
+	name: string;
+	domain: string;
+	description: string;
+}
+
+/** Response from /api/axioms */
+export interface AxiomsResponse {
+	axioms: ApiAxiom[];
+	total: number;
+}
+
 /** Health check response from /api/health */
 export interface HealthResponse {
 	status: string;

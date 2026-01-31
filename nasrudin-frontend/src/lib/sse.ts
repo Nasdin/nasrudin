@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { engineUIStore } from "./stores";
-import type { DiscoveryEvent } from "./types";
+import type { DiscoveryEvent, GaStatus } from "./types";
 
 const SSE_URL = "/api/events/discoveries";
+const STATS_SSE_URL = "/api/events/stats";
 const MAX_EVENTS = 20;
 const INITIAL_RECONNECT_MS = 1000;
 const MAX_RECONNECT_MS = 30_000;
@@ -81,4 +82,58 @@ export function useDiscoveryStream(): DiscoveryEvent[] {
 	}, []);
 
 	return events;
+}
+
+/**
+ * SSE hook for live GA engine stats.
+ * Receives GaStatus snapshots every 5 seconds from the server.
+ * Reconnects on error with exponential backoff.
+ */
+export function useStatsStream(): GaStatus | null {
+	const [status, setStatus] = useState<GaStatus | null>(null);
+	const reconnectDelay = useRef(INITIAL_RECONNECT_MS);
+
+	useEffect(() => {
+		let es: EventSource | null = null;
+		let timeout: ReturnType<typeof setTimeout> | null = null;
+		let cancelled = false;
+
+		function connect() {
+			if (cancelled) return;
+
+			es = new EventSource(STATS_SSE_URL);
+
+			es.addEventListener("stats", (e: MessageEvent) => {
+				try {
+					const data: GaStatus = JSON.parse(e.data);
+					setStatus(data);
+					reconnectDelay.current = INITIAL_RECONNECT_MS;
+				} catch {
+					// Ignore malformed events
+				}
+			});
+
+			es.addEventListener("open", () => {
+				reconnectDelay.current = INITIAL_RECONNECT_MS;
+			});
+
+			es.addEventListener("error", () => {
+				es?.close();
+				if (cancelled) return;
+				const delay = reconnectDelay.current;
+				reconnectDelay.current = Math.min(delay * 2, MAX_RECONNECT_MS);
+				timeout = setTimeout(connect, delay);
+			});
+		}
+
+		connect();
+
+		return () => {
+			cancelled = true;
+			es?.close();
+			if (timeout) clearTimeout(timeout);
+		};
+	}, []);
+
+	return status;
 }

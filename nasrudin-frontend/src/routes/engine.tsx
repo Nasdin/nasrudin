@@ -11,6 +11,7 @@ import {
 	useRecentTheorems,
 	useStats,
 } from "../lib/queries";
+import { useStatsStream } from "../lib/sse";
 
 export const Route = createFileRoute("/engine")({
 	loader: ({ context: { queryClient } }) => {
@@ -57,8 +58,10 @@ function EnginePage() {
 		error: statsError,
 	} = useStats();
 	const { data: gaStatus } = useGaStatus();
-	const { data: recentData, isLoading: recentLoading } =
-		useRecentTheorems(4);
+	const liveStatus = useStatsStream();
+	// Prefer live SSE data over polled query data
+	const effectiveGaStatus = liveStatus ?? gaStatus;
+	const { data: recentData, isLoading: recentLoading } = useRecentTheorems(4);
 
 	const stats = [
 		{
@@ -74,8 +77,8 @@ function EnginePage() {
 		},
 		{
 			label: "Population",
-			value: gaStatus
-				? gaStatus.total_population.toLocaleString()
+			value: effectiveGaStatus
+				? effectiveGaStatus.total_population.toLocaleString()
 				: "...",
 			icon: Activity,
 			color: "text-emerald-600",
@@ -139,9 +142,7 @@ function EnginePage() {
 									<Icon size={16} className={stat.color} />
 								</div>
 							</div>
-							<p className={`text-2xl font-bold ${stat.color}`}>
-								{stat.value}
-							</p>
+							<p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
 						</div>
 					);
 				})}
@@ -184,10 +185,10 @@ function EnginePage() {
 				<p className="text-sm text-slate-600 leading-relaxed">
 					The Nasrudin engine uses a genetic algorithm to discover and verify
 					physics theorems. Starting from seed axioms in each domain, it applies
-					crossover, mutation, and selection operators to evolve new mathematical
-					relationships. Each candidate theorem is formally verified before being
-					added to the corpus. The fitness score reflects how well a theorem
-					integrates with known physics.
+					crossover, mutation, and selection operators to evolve new
+					mathematical relationships. Each candidate theorem is formally
+					verified before being added to the corpus. The fitness score reflects
+					how well a theorem integrates with known physics.
 				</p>
 			</div>
 		</div>

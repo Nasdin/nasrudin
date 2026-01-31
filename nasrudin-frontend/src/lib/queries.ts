@@ -1,6 +1,7 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { RateLimitError } from "./api";
 import {
+	fetchAxioms,
 	fetchDomains,
 	fetchGaStatus,
 	fetchHealth,
@@ -13,6 +14,7 @@ import {
 } from "./server-fns";
 import type {
 	ApiTheorem,
+	AxiomsResponse,
 	DbStats,
 	GaStatus,
 	HealthResponse,
@@ -117,8 +119,7 @@ export const recentTheoremsQueryOptions = (limit = 20) =>
 export const lineageQueryOptions = (id: string) =>
 	queryOptions({
 		queryKey: ["lineage", id],
-		queryFn: () =>
-			fetchLineage({ data: { id } }) as Promise<LineageRecord>,
+		queryFn: () => fetchLineage({ data: { id } }) as Promise<LineageRecord>,
 		staleTime: 60_000,
 		enabled: !!id,
 		retry: shouldRetry,
@@ -179,4 +180,16 @@ export function useProof(id: string) {
 
 export function useDomains() {
 	return useQuery(domainsQueryOptions());
+}
+
+export const axiomsQueryOptions = (domain?: string) =>
+	queryOptions({
+		queryKey: ["axioms", domain],
+		queryFn: () => fetchAxioms({ data: { domain } }) as Promise<AxiomsResponse>,
+		staleTime: 5 * 60_000,
+		retry: shouldRetry,
+	});
+
+export function useAxioms(domain?: string) {
+	return useQuery(axiomsQueryOptions(domain));
 }

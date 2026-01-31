@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Search as SearchIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import "katex/dist/katex.min.css";
-import { BlockMath } from "react-katex";
 import { useDebouncedValue } from "@tanstack/react-pacer/debouncer";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { BlockMath } from "react-katex";
 import { RouteError } from "../components/RouteError";
 import TheoremCard from "../components/TheoremCard";
 import { domainDisplay, theoremHexId, totalFitness } from "../lib/api";
@@ -127,7 +127,9 @@ function SearchPage() {
 
 function VirtualTheoremList({
 	results,
-}: { results: import("../lib/types").ApiTheorem[] }) {
+}: {
+	results: import("../lib/types").ApiTheorem[];
+}) {
 	const parentRef = useRef<HTMLDivElement>(null);
 	const virtualizer = useVirtualizer({
 		count: results.length,

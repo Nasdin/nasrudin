@@ -95,10 +95,7 @@ function TimelinePage() {
 						const iso = epochToIso(event.timestamp);
 
 						return (
-							<div
-								key={`live-${event.theorem_id}`}
-								className="relative pl-12"
-							>
+							<div key={`live-${event.theorem_id}`} className="relative pl-12">
 								<div className="absolute left-2.5 top-5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white animate-pulse" />
 
 								<Link
@@ -108,9 +105,7 @@ function TimelinePage() {
 								>
 									<div className="flex items-center justify-between mb-3 flex-wrap gap-2">
 										<div className="flex items-center gap-2 text-xs text-slate-500">
-											<span className="text-emerald-700 font-medium">
-												LIVE
-											</span>
+											<span className="text-emerald-700 font-medium">LIVE</span>
 											<span className="text-slate-300">|</span>
 											<span className="font-mono">{formatTime(iso)}</span>
 										</div>
@@ -160,9 +155,7 @@ function TimelinePage() {
 												<div className="flex items-center gap-2 text-xs text-slate-500">
 													<span>{formatDate(iso)}</span>
 													<span className="text-slate-300">|</span>
-													<span className="font-mono">
-														{formatTime(iso)}
-													</span>
+													<span className="font-mono">{formatTime(iso)}</span>
 												</div>
 												<div className="flex items-center gap-2">
 													<span
@@ -179,8 +172,8 @@ function TimelinePage() {
 											<div className="mt-2 flex items-center gap-3 text-xs text-slate-500">
 												<span>depth {thm.depth}</span>
 												<span>
-													fitness{" "}
-													{(totalFitness(thm.fitness) * 100).toFixed(1)}%
+													fitness {(totalFitness(thm.fitness) * 100).toFixed(1)}
+													%
 												</span>
 												<span>gen {thm.generation}</span>
 											</div>

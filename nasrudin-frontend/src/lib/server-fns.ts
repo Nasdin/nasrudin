@@ -2,7 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 
 const API_BASE = "http://localhost:3001/api";
 
-async function apiFetchServer<T>(path: string): Promise<T> {
+// biome-ignore lint/complexity/noBannedTypes: TanStack Start handler requires return type extending {}
+async function apiFetchServer<T extends {} = {}>(path: string): Promise<T> {
 	const res = await fetch(`${API_BASE}${path}`);
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({}));
@@ -21,8 +22,8 @@ export const fetchGaStatus = createServerFn({ method: "GET" }).handler(
 	async () => apiFetchServer("/ga/status"),
 );
 
-export const fetchHealth = createServerFn({ method: "GET" }).handler(
-	async () => apiFetchServer("/health"),
+export const fetchHealth = createServerFn({ method: "GET" }).handler(async () =>
+	apiFetchServer("/health"),
 );
 
 export const fetchTheorem = createServerFn({ method: "GET" })
@@ -44,16 +45,19 @@ export const fetchRecentTheorems = createServerFn({ method: "GET" })
 
 export const fetchLineage = createServerFn({ method: "GET" })
 	.inputValidator((input: { id: string }) => input)
-	.handler(async ({ data }) =>
-		apiFetchServer(`/theorems/${data.id}/lineage`),
-	);
+	.handler(async ({ data }) => apiFetchServer(`/theorems/${data.id}/lineage`));
 
 export const fetchProof = createServerFn({ method: "GET" })
 	.inputValidator((input: { id: string }) => input)
-	.handler(async ({ data }) =>
-		apiFetchServer(`/theorems/${data.id}/proof`),
-	);
+	.handler(async ({ data }) => apiFetchServer(`/theorems/${data.id}/proof`));
 
 export const fetchDomains = createServerFn({ method: "GET" }).handler(
 	async () => apiFetchServer("/domains"),
 );
+
+export const fetchAxioms = createServerFn({ method: "GET" })
+	.inputValidator((input: { domain?: string }) => input)
+	.handler(async ({ data }) => {
+		const qs = data.domain ? `?domain=${data.domain}` : "";
+		return apiFetchServer(`/axioms${qs}`);
+	});
