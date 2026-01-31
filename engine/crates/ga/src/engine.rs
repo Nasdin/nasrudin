@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use nasrudin_core::{Domain, Theorem};
+use nasrudin_derive::AxiomStore;
 use nasrudin_rocks::TheoremDb;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -73,13 +74,17 @@ pub struct GaEngine {
     islands: Vec<Island>,
     config: GaConfig,
     db: Arc<TheoremDb>,
+    axiom_store: AxiomStore,
     candidates_sent: u64,
     verified_discoveries: u64,
 }
 
 impl GaEngine {
     /// Create a new GA engine.
-    pub fn new(config: GaConfig, db: Arc<TheoremDb>) -> Self {
+    ///
+    /// The `axiom_store` provides PhysLean-sourced axioms used to seed each
+    /// island with domain-relevant starting material before random fill.
+    pub fn new(config: GaConfig, db: Arc<TheoremDb>, axiom_store: AxiomStore) -> Self {
         let domains = default_domains();
         let islands: Vec<Island> = domains
             .into_iter()
@@ -91,6 +96,7 @@ impl GaEngine {
             islands,
             config,
             db,
+            axiom_store,
             candidates_sent: 0,
             verified_discoveries: 0,
         }
@@ -113,8 +119,9 @@ impl GaEngine {
 
         let mut rng = rand::rng();
 
-        // Seed all islands: first load from DB, then fill remainder with random
+        // Seed all islands: axioms first → DB second → random fill
         for island in &mut self.islands {
+            island.seed_from_axioms(&self.axiom_store, &mut rng);
             island.seed_from_db(&self.db, &mut rng);
             tracing::info!(
                 "Seeded island {:?} with {} individuals",
@@ -266,8 +273,9 @@ impl GaEngine {
 
         let mut rng = rand::rng();
 
-        // Seed all islands
+        // Seed all islands: axioms first → DB second → random fill
         for island in &mut self.islands {
+            island.seed_from_axioms(&self.axiom_store, &mut rng);
             island.seed_from_db(&self.db, &mut rng);
             tracing::info!(
                 "Seeded island {:?} with {} individuals",

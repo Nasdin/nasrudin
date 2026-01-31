@@ -131,6 +131,64 @@ pub fn infer_dimension(
     }
 }
 
+/// Known variable dimensions for a given physics domain.
+///
+/// Returns a mapping of variable names to their expected physical dimensions.
+/// Falls back to SR dimensions for unrecognized domains.
+pub fn domain_variable_dimensions(domain: &nasrudin_core::Domain) -> HashMap<String, Dimension> {
+    use nasrudin_core::Domain;
+    let mut dims = HashMap::new();
+    match domain {
+        Domain::SpecialRelativity => {
+            dims.insert("E".into(), Dimension::ENERGY);
+            dims.insert("m".into(), Dimension::MASS);
+            dims.insert("p".into(), Dimension::MOMENTUM);
+            dims.insert("v".into(), Dimension::VELOCITY);
+            dims.insert("t".into(), Dimension::TIME);
+            dims.insert("F".into(), Dimension::FORCE);
+        }
+        Domain::ClassicalMechanics => {
+            dims.insert("F".into(), Dimension::FORCE);
+            dims.insert("m".into(), Dimension::MASS);
+            dims.insert("a".into(), Dimension::ACCELERATION);
+            dims.insert("v".into(), Dimension::VELOCITY);
+            dims.insert("x".into(), Dimension::LENGTH);
+            dims.insert("t".into(), Dimension::TIME);
+            dims.insert("E".into(), Dimension::ENERGY);
+            dims.insert("p".into(), Dimension::MOMENTUM);
+        }
+        Domain::Electromagnetism => {
+            dims.insert("E".into(), Dimension::ENERGY);
+            dims.insert("q".into(), Dimension::CHARGE);
+            dims.insert("I".into(), Dimension::CURRENT);
+            dims.insert("V".into(), Dimension::VOLTAGE);
+            dims.insert("F".into(), Dimension::FORCE);
+            dims.insert("r".into(), Dimension::LENGTH);
+        }
+        Domain::QuantumMechanics => {
+            dims.insert("E".into(), Dimension::ENERGY);
+            dims.insert("p".into(), Dimension::MOMENTUM);
+            dims.insert("x".into(), Dimension::LENGTH);
+            dims.insert("t".into(), Dimension::TIME);
+            dims.insert("m".into(), Dimension::MASS);
+        }
+        Domain::Thermodynamics => {
+            dims.insert("T".into(), Dimension::TEMPERATURE);
+            dims.insert("S".into(), Dimension::ENTROPY);
+            dims.insert("U".into(), Dimension::ENERGY);
+            dims.insert("P".into(), Dimension::PRESSURE);
+            dims.insert("V".into(), Dimension::VOLUME);
+            dims.insert("Q".into(), Dimension::ENERGY);
+            dims.insert("W".into(), Dimension::ENERGY);
+        }
+        _ => {
+            // Default: SR-like
+            return sr_variable_dimensions();
+        }
+    }
+    dims
+}
+
 /// Check that an equation `lhs = rhs` is dimensionally homogeneous.
 pub fn check_equation_dimensions(
     expr: &Expr,

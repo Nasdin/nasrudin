@@ -31,9 +31,9 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use nasrudin_core::{Domain, Theorem, TheoremId, VerificationStatus};
+use nasrudin_derive::AxiomStore;
 use nasrudin_ga::{DiscoveryEvent, GaConfig, GaEngine, GaStatusSnapshot};
 use nasrudin_lean_bridge::LeanBridge;
-use nasrudin_pg::sea_orm::DatabaseConnection;
 use nasrudin_rocks::TheoremDb;
 
 use axum::routing::delete;
@@ -41,7 +41,8 @@ use axum::routing::delete;
 /// Shared application state.
 struct AppState {
     db: Arc<TheoremDb>,
-    pg: DatabaseConnection,
+    pg: Option<nasrudin_pg::sea_orm::DatabaseConnection>,
+    axiom_store: Arc<AxiomStore>,
     discovery_tx: tokio::sync::broadcast::Sender<DiscoveryEvent>,
     ga_status: Arc<std::sync::Mutex<GaStatusSnapshot>>,
 }
@@ -66,18 +67,43 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => tracing::warn!("No .env loaded ({}): using existing env vars", e),
     }
 
-    // Connect to PostgreSQL and run migrations
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set (in .env or environment)");
-    let pg = nasrudin_pg::connect_and_migrate(
-        &nasrudin_pg::PgConfig::new(&database_url),
-    )
-    .await?;
+    // Connect to PostgreSQL (optional — auth features require it)
+    let pg = match std::env::var("DATABASE_URL") {
+        Ok(database_url) => {
+            match nasrudin_pg::connect_and_migrate(
+                &nasrudin_pg::PgConfig::new(&database_url),
+            ).await {
+                Ok(conn) => {
+                    tracing::info!("PostgreSQL connected");
+                    Some(conn)
+                }
+                Err(e) => {
+                    tracing::warn!("PostgreSQL connection failed ({e}): auth endpoints disabled");
+                    None
+                }
+            }
+        }
+        Err(_) => {
+            tracing::info!("DATABASE_URL not set: running without PostgreSQL (auth disabled)");
+            None
+        }
+    };
 
     // Open RocksDB (use env var or default path)
     let db_path = std::env::var("ROCKS_DB_PATH").unwrap_or_else(|_| "./data/theorems.db".into());
     let db = Arc::new(TheoremDb::new(&db_path)?);
     tracing::info!("RocksDB opened at {db_path}");
+
+    // Load PhysLean axioms from catalog
+    let mut axiom_store = AxiomStore::new();
+    let prover_root = std::env::var("PROVER_ROOT").unwrap_or_else(|_| "../prover".into());
+    let catalog_path = std::path::Path::new(&prover_root)
+        .join("../physlean-extract/output/catalog.json");
+    match axiom_store.load_from_catalog(&catalog_path) {
+        Ok(count) => tracing::info!("Loaded {count} axioms from {}", catalog_path.display()),
+        Err(e) => tracing::warn!("Failed to load catalog ({}): GA will seed with random only", e),
+    }
+    let axiom_store = Arc::new(axiom_store);
 
     // Channels
     let (candidates_tx, candidates_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();
@@ -96,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
     // Spawn GA thread (CPU-bound, std::thread)
     let ga_config = GaConfig::default();
     let ga_db = Arc::clone(&db);
+    let ga_axiom_store = (*axiom_store).clone();
     let ga_discovery_tx = discovery_tx.clone();
     let ga_shutdown = Arc::clone(&shutdown);
     let ga_status_ref = Arc::clone(&ga_status);
@@ -103,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("ga-engine".into())
         .spawn(move || {
-            let engine = GaEngine::new(ga_config, ga_db);
+            let engine = GaEngine::new(ga_config, ga_db, ga_axiom_store);
 
             engine.run_with_status(
                 candidates_tx,
@@ -124,18 +151,10 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         db,
         pg,
+        axiom_store,
         discovery_tx,
         ga_status,
     });
-
-    // Session store (in-memory; swap to SQL/Redis store for persistence)
-    let session_store = MemoryStore::default();
-    let session_layer = SessionManagerLayer::new(session_store)
-        .with_secure(false); // TODO: set true behind TLS in production
-
-    // Auth layer
-    let auth_backend = auth::Backend::new(state.pg.clone());
-    let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
 
     // CORS configuration
     let cors = CorsLayer::new()
@@ -152,18 +171,6 @@ async fn main() -> anyhow::Result<()> {
     // Build grouped sub-routers with per-group rate limits.
     // Each group gets its own GovernorLayer (GCRA, per-IP keying).
 
-    // Auth-strict: brute-force protection (5 req/min, burst 5)
-    let auth_strict = Router::new()
-        .route("/api/auth/register", axum::routing::post(auth::register))
-        .route("/api/auth/login", axum::routing::post(auth::login))
-        .layer(GovernorLayer::new(rate_limit::auth_strict()));
-
-    // Auth-session: lightweight session ops (30 req/min, burst 10)
-    let auth_session = Router::new()
-        .route("/api/auth/logout", axum::routing::post(auth::logout))
-        .route("/api/auth/me", get(auth::me))
-        .layer(GovernorLayer::new(rate_limit::auth_session()));
-
     // API-standard: core read API (60 req/min, burst 20)
     let api = Router::new()
         .route("/api/ga/status", get(ga_status_handler))
@@ -174,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/theorems/{id}/proof", get(get_proof))
         .route("/api/theorems", get(search_theorems))
         .route("/api/domains", get(list_domains))
+        .route("/api/axioms", get(list_axioms))
         .layer(GovernorLayer::new(rate_limit::api_standard()));
 
     // Health-relaxed: monitoring & liveness (120 req/min, burst 30)
@@ -184,17 +192,49 @@ async fn main() -> anyhow::Result<()> {
 
     // SSE: no rate limit (long-lived connection)
     let sse = Router::new()
-        .route("/api/events/discoveries", get(discovery_stream));
+        .route("/api/events/discoveries", get(discovery_stream))
+        .route("/api/events/stats", get(stats_stream));
 
-    let app = Router::new()
-        .merge(auth_strict)
-        .merge(auth_session)
+    // Start with core routes
+    let mut app = Router::new()
         .merge(api)
         .merge(health)
-        .merge(sse)
+        .merge(sse);
+
+    // Add auth routes only if PostgreSQL is available
+    if let Some(ref pg_conn) = state.pg {
+        let session_store = MemoryStore::default();
+        let session_layer = SessionManagerLayer::new(session_store)
+            .with_secure(false); // TODO: set true behind TLS in production
+
+        let auth_backend = auth::Backend::new(pg_conn.clone());
+        let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
+
+        // Auth-strict: brute-force protection (5 req/min, burst 5)
+        let auth_strict = Router::new()
+            .route("/api/auth/register", axum::routing::post(auth::register))
+            .route("/api/auth/login", axum::routing::post(auth::login))
+            .layer(GovernorLayer::new(rate_limit::auth_strict()));
+
+        // Auth-session: lightweight session ops (30 req/min, burst 10)
+        let auth_session = Router::new()
+            .route("/api/auth/logout", axum::routing::post(auth::logout))
+            .route("/api/auth/me", get(auth::me))
+            .layer(GovernorLayer::new(rate_limit::auth_session()));
+
+        app = app
+            .merge(auth_strict)
+            .merge(auth_session)
+            .layer(auth_layer);
+
+        tracing::info!("Auth endpoints enabled (PostgreSQL available)");
+    } else {
+        tracing::info!("Auth endpoints disabled (no PostgreSQL)");
+    }
+
+    let app = app
         .layer(cors)
         .layer(TraceLayer::new_for_http())
-        .layer(auth_layer)
         .with_state(state.clone());
 
     // Bind and serve with graceful shutdown
@@ -568,6 +608,56 @@ async fn list_domains(
     }
 }
 
+/// Query parameters for axiom listing.
+#[derive(Debug, Deserialize)]
+struct AxiomParams {
+    domain: Option<String>,
+}
+
+/// List seed axioms loaded from the PhysLean catalog.
+async fn list_axioms(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<AxiomParams>,
+) -> Json<serde_json::Value> {
+    let axioms: Vec<serde_json::Value> = if let Some(ref domain_str) = params.domain {
+        match parse_domain(domain_str) {
+            Some(domain) => state
+                .axiom_store
+                .by_domain(&domain)
+                .into_iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "name": a.name,
+                        "domain": a.domain.to_string(),
+                        "description": a.description,
+                    })
+                })
+                .collect(),
+            None => vec![],
+        }
+    } else {
+        state
+            .axiom_store
+            .names()
+            .into_iter()
+            .filter_map(|name| state.axiom_store.get(name))
+            .map(|a| {
+                serde_json::json!({
+                    "name": a.name,
+                    "domain": a.domain.to_string(),
+                    "description": a.description,
+                })
+            })
+            .collect()
+    };
+
+    let total = axioms.len();
+    Json(serde_json::json!({
+        "axioms": axioms,
+        "total": total,
+    }))
+}
+
 
 /// Server-Sent Events stream for live discovery notifications.
 async fn discovery_stream(
@@ -582,6 +672,21 @@ async fn discovery_stream(
         Err(_) => None,
     });
 
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Server-Sent Events stream for live GA engine metrics.
+///
+/// Emits a `stats` event every 5 seconds with the current GA status snapshot.
+async fn stats_stream(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let interval = tokio::time::interval(std::time::Duration::from_secs(5));
+    let stream = tokio_stream::wrappers::IntervalStream::new(interval).map(move |_| {
+        let snapshot = state.ga_status.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let data = serde_json::to_string(&snapshot).unwrap_or_default();
+        Ok(Event::default().event("stats").data(data))
+    });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 

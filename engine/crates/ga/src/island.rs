@@ -7,6 +7,7 @@ use nasrudin_core::{
     BinOp, Domain, Expr, FitnessScore, PhysConst, ProofTree, Theorem, TheoremOrigin,
     VerificationStatus, compute_theorem_id,
 };
+use nasrudin_derive::{AxiomStore, domain_variable_dimensions, infer_dimension};
 use nasrudin_rocks::TheoremDb;
 use rand::Rng;
 
@@ -94,6 +95,56 @@ impl Island {
                 }
             }
         }
+        // Fill remainder with random expressions
+        self.seed(rng);
+    }
+
+    /// Seed the population from axioms in the AxiomStore matching this island's domain.
+    ///
+    /// Converts each domain-matched axiom into an `Individual` and adds it to
+    /// the population (up to capacity). Remaining slots are filled by `seed()`.
+    pub fn seed_from_axioms(&mut self, store: &AxiomStore, rng: &mut impl Rng) {
+        let domain = &self.population.domain;
+        let axioms = store.by_domain(domain);
+        let target = self.config.population_size;
+
+        for axiom in axioms {
+            if self.population.len() >= target {
+                break;
+            }
+
+            let canonical = axiom.statement.to_canonical();
+            let id = compute_theorem_id(&canonical);
+
+            if self.dedup.is_duplicate(&id) {
+                continue;
+            }
+            self.dedup.insert(id);
+
+            let mut theorem = Theorem {
+                id,
+                statement: axiom.statement.clone(),
+                canonical,
+                latex: String::new(),
+                proof: ProofTree::Axiom(id),
+                depth: 1,
+                complexity: 0,
+                domain: axiom.domain.clone(),
+                dimension: None,
+                parents: vec![],
+                children: vec![],
+                verified: VerificationStatus::Pending,
+                fitness: FitnessScore::default(),
+                generation: 0,
+                created_at: 0,
+                origin: TheoremOrigin::Axiom,
+            };
+            theorem.complexity = theorem.statement.node_count() as u32;
+            theorem.fitness = evaluate(&theorem);
+
+            self.population.add(Individual::new(theorem));
+        }
+
         // Fill remainder with random expressions
         self.seed(rng);
     }
@@ -219,10 +270,18 @@ impl Island {
         });
         combined.truncate(pop_size);
 
-        // Collect candidates for verification (first Pareto front)
+        // Collect candidates for verification (first Pareto front, dimensionally valid)
+        let var_dims = domain_variable_dimensions(&self.population.domain);
         let candidates: Vec<Theorem> = combined
             .iter()
             .filter(|ind| ind.pareto_rank == 0)
+            .filter(|ind| {
+                // Pre-filter: skip expressions that are dimensionally incoherent.
+                // If infer_dimension returns None, the expression mixes incompatible
+                // dimensions (e.g., adding energy to mass). Let through expressions
+                // where inference succeeds OR where variables are unknown.
+                infer_dimension(&ind.theorem.statement, &var_dims).is_some()
+            })
             .map(|ind| ind.theorem.clone())
             .collect();
 

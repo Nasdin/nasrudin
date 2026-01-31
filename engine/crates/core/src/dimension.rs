@@ -27,6 +27,9 @@ impl Dimension {
     pub const VOLTAGE: Self = Self::new(2, 1, -3, -1, 0, 0, 0);
     pub const ENTROPY: Self = Self::new(2, 1, -2, 0, -1, 0, 0);
     pub const ACTION: Self = Self::new(2, 1, -1, 0, 0, 0, 0);
+    pub const CURRENT: Self = Self::new(0, 0, 0, 1, 0, 0, 0);
+    pub const TEMPERATURE: Self = Self::new(0, 0, 0, 0, 1, 0, 0);
+    pub const VOLUME: Self = Self::new(3, 0, 0, 0, 0, 0, 0);
 
     pub const fn new(
         length: i8,
