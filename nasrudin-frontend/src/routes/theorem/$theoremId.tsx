@@ -3,24 +3,96 @@ import "katex/dist/katex.min.css";
 import { useMemo, useState } from "react";
 import { BlockMath } from "react-katex";
 import DomainBadge from "../../components/DomainBadge";
+import { RouteError } from "../../components/RouteError";
+import {
+	domainDisplay,
+	epochToIso,
+	isVerified,
+	originOperator,
+	theoremHexId,
+	totalFitness,
+} from "../../lib/api";
 import { mockTheorems } from "../../lib/mock-data";
+import { theoremQueryOptions, useTheorem } from "../../lib/queries";
 
 export const Route = createFileRoute("/theorem/$theoremId")({
+	loader: ({ context: { queryClient }, params }) => {
+		queryClient.ensureQueryData(theoremQueryOptions(params.theoremId));
+	},
+	head: ({ params }) => ({
+		meta: [{ title: `Theorem ${params.theoremId} — Nasrudin` }],
+	}),
+	pendingComponent: () => (
+		<div className="p-8 max-w-3xl mx-auto">
+			<div className="animate-pulse space-y-4">
+				<div className="h-6 bg-slate-200 rounded w-1/3" />
+				<div className="h-40 bg-slate-100 rounded-xl" />
+				<div className="h-32 bg-slate-100 rounded-xl" />
+			</div>
+		</div>
+	),
+	errorComponent: ({ error, reset }) => (
+		<RouteError error={error} reset={reset} />
+	),
 	component: TheoremDetailPage,
 });
 
+// Known theorem calculators keyed by canonical/latex signature
+const knownCalculators: Record<
+	string,
+	{
+		variables: Array<{
+			name: string;
+			symbol: string;
+			unit: string;
+			defaultValue?: number;
+		}>;
+		computation: {
+			target: string;
+			targetSymbol: string;
+			targetUnit: string;
+			compute: (vars: Record<string, number>) => number;
+			resultLatex: (result: number) => string;
+		};
+	}
+> = {};
+
+// Pre-populate from the mock data calculators
+for (const thm of mockTheorems) {
+	if (thm.variables && thm.computation) {
+		knownCalculators[thm.latex] = {
+			variables: thm.variables,
+			computation: thm.computation,
+		};
+	}
+}
+
 function TheoremDetailPage() {
 	const { theoremId } = Route.useParams();
-	const theorem = mockTheorems.find((t) => t.id === theoremId);
+	const { data: theorem, isLoading, error } = useTheorem(theoremId);
 
-	if (!theorem) {
+	if (isLoading) {
+		return (
+			<div className="p-8 max-w-3xl mx-auto">
+				<div className="animate-pulse space-y-4">
+					<div className="h-6 bg-slate-200 rounded w-1/3" />
+					<div className="h-40 bg-slate-100 rounded-xl" />
+					<div className="h-32 bg-slate-100 rounded-xl" />
+				</div>
+			</div>
+		);
+	}
+
+	if (error || !theorem) {
 		return (
 			<div className="p-8 max-w-3xl mx-auto text-center">
 				<h1 className="text-2xl font-bold text-slate-900 mb-2">
 					Theorem not found
 				</h1>
 				<p className="text-slate-500 mb-6">
-					No theorem with ID "{theoremId}" exists.
+					{error
+						? `Error: ${error.message}`
+						: `No theorem with ID "${theoremId}" exists.`}
 				</p>
 				<Link
 					to="/"
@@ -31,6 +103,13 @@ function TheoremDetailPage() {
 			</div>
 		);
 	}
+
+	const hexId = theoremHexId(theorem.id);
+	const display = domainDisplay(theorem.domain);
+	const fitness = totalFitness(theorem.fitness);
+	const operator = originOperator(theorem.origin);
+	const verified = isVerified(theorem.verified);
+	const calc = knownCalculators[theorem.latex];
 
 	return (
 		<div className="p-8 max-w-3xl mx-auto">
@@ -43,35 +122,52 @@ function TheoremDetailPage() {
 
 			<div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
 				<div className="flex items-center gap-3 mb-4">
-					<DomainBadge domain={theorem.domain} />
-					<span className="text-xs text-slate-500">depth {theorem.depth}</span>
+					<DomainBadge domain={display} />
+					<span className="text-xs text-slate-500">
+						depth {theorem.depth}
+					</span>
 					<span className="text-xs text-slate-500">
 						gen {theorem.generation}
 					</span>
+					{verified ? (
+						<span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+							Verified
+						</span>
+					) : theorem.verified === "Pending" ? (
+						<span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+							Pending
+						</span>
+					) : (
+						<span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200">
+							Rejected
+						</span>
+					)}
 				</div>
-				{theorem.name && (
-					<h1 className="text-xl font-bold text-slate-900 mb-4">
-						{theorem.name}
-					</h1>
+				{theorem.canonical && (
+					<p className="text-sm text-slate-500 font-mono mb-2">
+						{theorem.canonical}
+					</p>
 				)}
 				<div className="overflow-x-auto text-lg">
 					<BlockMath math={theorem.latex} />
 				</div>
 			</div>
 
-			{theorem.variables && theorem.computation && (
+			{calc && (
 				<Calculator
-					variables={theorem.variables}
-					computation={theorem.computation}
+					variables={calc.variables}
+					computation={calc.computation}
 				/>
 			)}
 
 			<div className="bg-slate-50 border border-slate-200 rounded-xl p-6 mb-6">
-				<h2 className="text-sm font-semibold text-slate-900 mb-3">Metadata</h2>
+				<h2 className="text-sm font-semibold text-slate-900 mb-3">
+					Metadata
+				</h2>
 				<dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
 					<dt className="text-slate-500">Fitness</dt>
 					<dd className="text-slate-900 font-medium">
-						{(theorem.fitness * 100).toFixed(1)}%
+						{(fitness * 100).toFixed(1)}%
 					</dd>
 					<dt className="text-slate-500">Generation</dt>
 					<dd className="text-slate-900 font-medium">
@@ -79,26 +175,98 @@ function TheoremDetailPage() {
 					</dd>
 					<dt className="text-slate-500">Depth</dt>
 					<dd className="text-slate-900 font-medium">{theorem.depth}</dd>
-					{theorem.operator && (
-						<>
-							<dt className="text-slate-500">Operator</dt>
-							<dd className="text-slate-900 font-medium">{theorem.operator}</dd>
-						</>
-					)}
-					{theorem.timestamp && (
-						<>
-							<dt className="text-slate-500">Discovered</dt>
-							<dd className="text-slate-900 font-medium">
-								{new Date(theorem.timestamp).toLocaleString()}
-							</dd>
-						</>
-					)}
+					<dt className="text-slate-500">Complexity</dt>
+					<dd className="text-slate-900 font-medium">
+						{theorem.complexity}
+					</dd>
+					<dt className="text-slate-500">Operator</dt>
+					<dd className="text-slate-900 font-medium">{operator}</dd>
+					<dt className="text-slate-500">Discovered</dt>
+					<dd className="text-slate-900 font-medium">
+						{new Date(epochToIso(theorem.created_at)).toLocaleString()}
+					</dd>
 				</dl>
 			</div>
 
+			{/* Fitness breakdown */}
+			<div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
+				<h2 className="text-sm font-semibold text-slate-900 mb-3">
+					Fitness Breakdown
+				</h2>
+				<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+					{(
+						[
+							["Novelty", theorem.fitness.novelty],
+							["Complexity", theorem.fitness.complexity],
+							["Depth", theorem.fitness.depth],
+							["Dimensional", theorem.fitness.dimensional],
+							["Symmetry", theorem.fitness.symmetry],
+							["Connectivity", theorem.fitness.connectivity],
+							["Relevance", theorem.fitness.nasrudin_relevance],
+						] as const
+					).map(([label, val]) => (
+						<div key={label} className="text-center">
+							<p className="text-lg font-bold text-slate-900">
+								{(val * 100).toFixed(0)}%
+							</p>
+							<p className="text-xs text-slate-500">{label}</p>
+						</div>
+					))}
+				</div>
+			</div>
+
+			{/* Parents / Children */}
+			{(theorem.parents.length > 0 || theorem.children.length > 0) && (
+				<div className="bg-slate-50 border border-slate-200 rounded-xl p-6 mb-6">
+					<h2 className="text-sm font-semibold text-slate-900 mb-3">
+						Lineage
+					</h2>
+					{theorem.parents.length > 0 && (
+						<div className="mb-3">
+							<p className="text-xs text-slate-500 mb-1">Parents</p>
+							<div className="flex flex-wrap gap-2">
+								{theorem.parents.map((pid) => {
+									const phex = theoremHexId(pid);
+									return (
+										<Link
+											key={phex}
+											to="/theorem/$theoremId"
+											params={{ theoremId: phex }}
+											className="text-xs font-mono text-blue-700 hover:underline bg-blue-50 px-2 py-1 rounded"
+										>
+											{phex}
+										</Link>
+									);
+								})}
+							</div>
+						</div>
+					)}
+					{theorem.children.length > 0 && (
+						<div>
+							<p className="text-xs text-slate-500 mb-1">Children</p>
+							<div className="flex flex-wrap gap-2">
+								{theorem.children.map((cid) => {
+									const chex = theoremHexId(cid);
+									return (
+										<Link
+											key={chex}
+											to="/theorem/$theoremId"
+											params={{ theoremId: chex }}
+											className="text-xs font-mono text-blue-700 hover:underline bg-blue-50 px-2 py-1 rounded"
+										>
+											{chex}
+										</Link>
+									);
+								})}
+							</div>
+						</div>
+					)}
+				</div>
+			)}
+
 			<Link
 				to="/explore/$theoremId"
-				params={{ theoremId: "demo" }}
+				params={{ theoremId: hexId }}
 				className="inline-flex items-center text-sm font-medium text-blue-700 hover:underline"
 			>
 				View derivation graph &rarr;
@@ -111,8 +279,19 @@ function Calculator({
 	variables,
 	computation,
 }: {
-	variables: NonNullable<(typeof mockTheorems)[0]["variables"]>;
-	computation: NonNullable<(typeof mockTheorems)[0]["computation"]>;
+	variables: Array<{
+		name: string;
+		symbol: string;
+		unit: string;
+		defaultValue?: number;
+	}>;
+	computation: {
+		target: string;
+		targetSymbol: string;
+		targetUnit: string;
+		compute: (vars: Record<string, number>) => number;
+		resultLatex: (result: number) => string;
+	};
 }) {
 	const [values, setValues] = useState<Record<string, number>>(() => {
 		const initial: Record<string, number> = {};
@@ -132,7 +311,9 @@ function Calculator({
 
 	return (
 		<div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
-			<h2 className="text-sm font-semibold text-slate-900 mb-4">Calculator</h2>
+			<h2 className="text-sm font-semibold text-slate-900 mb-4">
+				Calculator
+			</h2>
 
 			<div className="space-y-3 mb-5">
 				{variables.map((v) => (

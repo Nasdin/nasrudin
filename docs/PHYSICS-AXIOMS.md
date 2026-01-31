@@ -6,7 +6,7 @@ for Lean 4. Hand-coded axioms have been replaced by a catalog extraction pipelin
 ## Architecture
 
 ```
-physlean-extract/ (Lean 4.16.0)        prover/ (Lean 4.27.0)
+physlean-extract/ (Lean 4.26.0)        prover/ (Lean 4.27.0)
   imports PhysLean                        imports Mathlib
   walks environment                       PhysicsGenerator/
   outputs catalog.json ──────────────────> Generated/*.lean (re-axiomatized)
@@ -19,8 +19,8 @@ physlean-extract/ (Lean 4.16.0)        prover/ (Lean 4.27.0)
     drives lean-bridge imports
 ```
 
-**Why re-axiomatize?** Lean 4.16 and 4.27 `.olean` files are not cross-compatible.
-We extract theorem *statements* from PhysLean (4.16), then declare them as `axiom`
+**Why re-axiomatize?** Lean 4.26 and 4.27 `.olean` files are not cross-compatible.
+We extract theorem *statements* from PhysLean (4.26), then declare them as `axiom`
 in our project (4.27). The extraction guarantees these axioms correspond to proven
 PhysLean results. When PhysLean upgrades to 4.27+, we switch to direct `import PhysLean`.
 
@@ -224,7 +224,7 @@ The GA does NOT know these exist. They are success metrics only
 ## Pipeline Commands
 
 ```bash
-# Extract theorems from PhysLean (requires Lean 4.16 via lean-toolchain)
+# Extract theorems from PhysLean (requires Lean 4.26 via lean-toolchain)
 just extract-physlean
 
 # Generate .lean axiom files from catalog

@@ -34,12 +34,22 @@ pub struct CatalogTheorem {
     pub physlean_name: String,
     /// Physics domain.
     pub domain: String,
-    /// Pretty-printed Lean type signature.
+    /// Pretty-printed Lean type signature (PhysLean prefixes stripped).
     pub type_signature: String,
+    /// Raw type signature before rewriting.
+    #[serde(default)]
+    pub raw_signature: Option<String>,
+    /// Whether this theorem's signature is simple enough to re-axiomatize.
+    #[serde(default = "default_true")]
+    pub can_reaxiomatize: bool,
     /// Source identifier (always "physlean").
     pub source: String,
     /// Documentation string from PhysLean.
     pub doc_string: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A type (structure/inductive) extracted from PhysLean.
@@ -57,6 +67,9 @@ pub struct CatalogType {
     /// Field names (for structures).
     #[serde(default)]
     pub fields: Vec<String>,
+    /// Documentation string from PhysLean.
+    #[serde(default)]
+    pub doc_string: Option<String>,
 }
 
 /// A physical constant.

@@ -53,9 +53,9 @@ fn main() {
         return;
     }
 
-    // Step 1: Load SR axioms
-    println!("▶ Loading special relativity axioms...");
-    let engine = DerivationEngine::with_sr_axioms();
+    // Step 1: Load axioms from PhysLean catalog (falls back to legacy SR)
+    println!("▶ Loading axioms from PhysLean catalog...");
+    let engine = DerivationEngine::with_catalog_axioms();
     let store = engine.store();
     println!("  Loaded {} axioms:", store.len());
     for name in store.names() {

@@ -38,9 +38,31 @@ impl DerivationEngine {
         }
     }
 
+    /// Create an engine pre-loaded with axioms from the PhysLean catalog.
+    ///
+    /// Falls back to the legacy SR axioms if the catalog is not found.
+    pub fn with_catalog_axioms() -> Self {
+        let mut engine = Self::new();
+        // Try catalog first, fall back to legacy
+        let catalog_path = std::path::Path::new("physlean-extract/output/catalog.json");
+        match engine.store.load_from_catalog(catalog_path) {
+            Ok(count) => {
+                tracing::info!("Loaded {count} axioms from PhysLean catalog");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load catalog ({e}), using legacy SR axioms");
+                #[allow(deprecated)]
+                engine.store.load_special_relativity();
+            }
+        }
+        engine
+    }
+
     /// Create an engine pre-loaded with special relativity axioms.
+    #[deprecated(note = "Use with_catalog_axioms() for PhysLean-sourced axioms")]
     pub fn with_sr_axioms() -> Self {
         let mut engine = Self::new();
+        #[allow(deprecated)]
         engine.store.load_special_relativity();
         engine
     }

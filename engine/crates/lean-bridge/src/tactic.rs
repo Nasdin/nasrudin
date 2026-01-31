@@ -83,23 +83,28 @@ pub fn total_cascade_timeout() -> Duration {
 
 /// Render a Lean4 `by` block that tries the full cascade.
 ///
+/// Each tactic is wrapped with `; done` to ensure `first` only considers
+/// it a success if the goal is fully closed. Without this, Mathlib's
+/// `norm_num` extensions can partially modify the proof state without
+/// closing the goal, causing `first` to stop trying alternatives.
+///
 /// Produces:
 /// ```lean
 /// by
 ///   first
-///   | omega
-///   | norm_num
-///   | ring
-///   | simp
-///   | linarith
-///   | field_simp
-///   | polyrith
-///   | grind
+///   | (omega; done)
+///   | (norm_num; done)
+///   | (ring; done)
+///   | (simp; done)
+///   | (linarith; done)
+///   | (field_simp; done)
+///   | (polyrith; done)
+///   | (grind; done)
 /// ```
 pub fn render_cascade_tactic() -> String {
     let mut out = String::from("by\n  first\n");
     for entry in default_cascade() {
-        out.push_str(&format!("  | {}\n", entry.name));
+        out.push_str(&format!("  | ({}; done)\n", entry.name));
     }
     out
 }

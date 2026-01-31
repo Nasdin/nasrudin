@@ -52,6 +52,19 @@ pub struct GaStatus {
     pub running: bool,
 }
 
+/// Shared snapshot of GA status for the API server.
+///
+/// Updated periodically by `GaEngine::run_with_status`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GaStatusSnapshot {
+    pub total_generations: u64,
+    pub total_population: usize,
+    pub num_islands: usize,
+    pub candidates_sent: u64,
+    pub verified_discoveries: u64,
+    pub running: bool,
+}
+
 /// The main genetic algorithm engine.
 ///
 /// Coordinates multiple domain-focused islands and communicates results
@@ -235,6 +248,130 @@ impl GaEngine {
         }
 
         let _ = rng; // used for future stochastic migration
+    }
+
+    /// Run the GA engine loop with a shared status snapshot (for API exposure).
+    ///
+    /// This wraps `run()` and periodically updates the `ga_status` Mutex so the
+    /// API server can expose live GA status.
+    pub fn run_with_status(
+        mut self,
+        candidates_tx: std::sync::mpsc::Sender<Vec<Theorem>>,
+        verified_rx: std::sync::mpsc::Receiver<Vec<Theorem>>,
+        discovery_tx: tokio::sync::broadcast::Sender<DiscoveryEvent>,
+        shutdown: Arc<AtomicBool>,
+        ga_status: Arc<std::sync::Mutex<crate::GaStatusSnapshot>>,
+    ) {
+        tracing::info!("GA engine starting with {} islands (status-tracked)", self.islands.len());
+
+        let mut rng = rand::rng();
+
+        // Seed all islands
+        for island in &mut self.islands {
+            island.seed_from_db(&self.db, &mut rng);
+            tracing::info!(
+                "Seeded island {:?} with {} individuals",
+                island.population.domain,
+                island.population.len()
+            );
+        }
+
+        let mut generation: u64 = 0;
+
+        while !shutdown.load(Ordering::Relaxed) {
+            generation += 1;
+
+            // Step each island and collect candidates
+            let mut all_candidates: Vec<Theorem> = Vec::new();
+            for island in &mut self.islands {
+                let candidates = island.step(&mut rng);
+                all_candidates.extend(candidates);
+            }
+
+            // Send candidates for verification (batch)
+            if !all_candidates.is_empty()
+                && generation % self.config.verification_interval == 0
+            {
+                let batch: Vec<Theorem> = all_candidates
+                    .into_iter()
+                    .take(self.config.verification_batch_size)
+                    .collect();
+                self.candidates_sent += batch.len() as u64;
+
+                if candidates_tx.send(batch).is_err() {
+                    tracing::warn!("Verification channel closed, stopping GA");
+                    break;
+                }
+            }
+
+            // Check for verified results (non-blocking)
+            while let Ok(verified_batch) = verified_rx.try_recv() {
+                for theorem in verified_batch {
+                    self.verified_discoveries += 1;
+
+                    if let Err(e) = self.db.put_theorem(&theorem) {
+                        tracing::error!("Failed to store verified theorem: {e}");
+                        continue;
+                    }
+
+                    for parent_id in &theorem.parents {
+                        let _ = self.db.add_child(parent_id, theorem.id);
+                    }
+
+                    let event = DiscoveryEvent {
+                        theorem_id: hex::encode(theorem.id),
+                        canonical: theorem.canonical.clone(),
+                        latex: theorem.latex.clone(),
+                        domain: theorem.domain.to_string(),
+                        depth: theorem.depth,
+                        generation: theorem.generation,
+                        fitness: theorem.fitness.clone(),
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    };
+
+                    let _ = discovery_tx.send(event);
+                }
+            }
+
+            // Inter-island migration
+            if generation % self.config.migration_interval == 0 && self.islands.len() > 1 {
+                self.migrate(&mut rng);
+            }
+
+            // Update shared status snapshot every 10 generations
+            if generation % 10 == 0 {
+                if let Ok(mut snapshot) = ga_status.lock() {
+                    snapshot.total_generations = generation;
+                    snapshot.total_population = self.islands.iter().map(|i| i.population.len()).sum();
+                    snapshot.num_islands = self.islands.len();
+                    snapshot.candidates_sent = self.candidates_sent;
+                    snapshot.verified_discoveries = self.verified_discoveries;
+                    snapshot.running = true;
+                }
+            }
+
+            // Log progress periodically
+            if generation % 100 == 0 {
+                let total_pop: usize = self.islands.iter().map(|i| i.population.len()).sum();
+                tracing::info!(
+                    "GA generation {generation}: {total_pop} total individuals, {} candidates sent, {} verified",
+                    self.candidates_sent,
+                    self.verified_discoveries
+                );
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
+        // Mark as stopped
+        if let Ok(mut snapshot) = ga_status.lock() {
+            snapshot.running = false;
+        }
+
+        tracing::info!("GA engine shutting down after {generation} generations");
     }
 }
 

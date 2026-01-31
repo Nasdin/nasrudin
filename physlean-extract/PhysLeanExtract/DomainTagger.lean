@@ -1,11 +1,11 @@
+import Lean
+
 /-!
 # Domain Tagger
 
 Maps PhysLean namespace prefixes to physics domain tags.
 Used to categorize extracted theorems for the Rust engine.
 -/
-
-import Lean
 
 namespace PhysLeanExtract
 
@@ -44,16 +44,45 @@ PhysLean organizes its library under:
 - `PhysLean.Thermodynamics.*`
 - `PhysLean.StatisticalMechanics.*`
 - `PhysLean.Mathematics.*` (supporting math)
+- `PhysLean.SpaceAndTime.*` (spacetime geometry)
+- `PhysLean.QFT.*` (quantum field theory)
+- `PhysLean.Particles.*` (particle physics)
+- `PhysLean.Units.*` (unit systems)
+- `PhysLean.Meta.*` (metaprogramming)
 -/
 def tagDomain (name : Name) : PhysDomain :=
   let str := name.toString
-  if str.startsWith "PhysLean.ClassicalMechanics" then
+  -- Special & general relativity (flat namespace patterns from PhysLean)
+  if str.startsWith "Lorentz." ||
+     str.startsWith "LorentzGroup." ||
+     str.startsWith "SpaceTime." ||
+     str.startsWith "minkowskiMatrix." ||
+     str.startsWith "complexLorentzTensor." ||
+     str.startsWith "realLorentzTensor." then
+    .SpecialRelativity
+  -- Electromagnetism (flat namespace)
+  else if str.startsWith "Electromagnetism." then
+    .Electromagnetism
+  -- Particle physics / Standard Model → QuantumMechanics
+  else if str.startsWith "Fermion." ||
+          str.startsWith "Higgs." ||
+          str.startsWith "StandardModel." then
+    .QuantumMechanics
+  -- Clifford algebra → SpecialRelativity (used for spinors)
+  else if str.startsWith "CliffordAlgebra." then
+    .SpecialRelativity
+  -- PhysLean.* prefixed namespaces (original module paths)
+  else if str.startsWith "PhysLean.ClassicalMechanics" then
     .ClassicalMechanics
   else if str.startsWith "PhysLean.Relativity" then
+    .SpecialRelativity
+  else if str.startsWith "PhysLean.SpaceAndTime" then
     .SpecialRelativity
   else if str.startsWith "PhysLean.Electromagnetism" then
     .Electromagnetism
   else if str.startsWith "PhysLean.QuantumMechanics" then
+    .QuantumMechanics
+  else if str.startsWith "PhysLean.QFT" then
     .QuantumMechanics
   else if str.startsWith "PhysLean.Thermodynamics" then
     .Thermodynamics
@@ -61,10 +90,9 @@ def tagDomain (name : Name) : PhysDomain :=
     .StatisticalMechanics
   else if str.startsWith "PhysLean.Mathematics" then
     .PureMath
-  -- Also handle the broader PhysLean.Meta, PhysLean.Cosmology etc
-  else if str.startsWith "PhysLean.Cosmology" then
-    -- Cosmology stubs → no domain (PhysLean coverage is minimal)
-    .Unknown
+  else if str.startsWith "PhysLean.Units" then
+    .PureMath
+  -- Infrastructure / meta / too specialized → Unknown
   else if str.startsWith "PhysLean." then
     .Unknown
   else

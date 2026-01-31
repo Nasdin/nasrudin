@@ -38,11 +38,13 @@ axiom in_thermal_eq : ThermoSystem → ThermoSystem → Prop
 -- Source: PhysLean (PhysLean.Thermodynamics.IdealGas.ideal_gas_law)
 /-- Ideal gas law: PV = nRT -/
 axiom ideal_gas_law :
-  ∀ (gas : IdealGas), gas.pressure * gas.volume = gas.moles * R * gas.temperature
+  ∀ (gas : IdealGas), gas.pressure * gas.volume = gas.moles * R_gas * gas.temperature
 
--- Source: PhysLean (PhysLean.StatisticalMechanics.Boltzmann.distribution)
+-- TODO: requires PhysLean type definitions for CanonicalEnsemble, probability, partition_function
+/- Source: PhysLean (PhysLean.StatisticalMechanics.Boltzmann.distribution)
 /-- Boltzmann distribution for canonical ensemble -/
 axiom boltzmann_distribution :
   ∀ (sys : CanonicalEnsemble) (E : ℝ), probability sys E = Real.exp (-E / (k_B * sys.temperature)) / partition_function sys
+-/
 
 end PhysicsGenerator.Thermodynamics

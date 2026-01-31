@@ -344,9 +344,17 @@ impl TheoremDb {
             .context("Failed to get stats")?
         {
             Some(bytes) => {
-                let stats: DbStats =
-                    serde_json::from_slice(&bytes).context("Failed to deserialize stats")?;
-                Ok(stats)
+                // Handle corrupt/stale stats gracefully by resetting to default
+                match serde_json::from_slice::<DbStats>(&bytes) {
+                    Ok(stats) => Ok(stats),
+                    Err(e) => {
+                        tracing::warn!("Stats deserialization failed ({e}), resetting to default");
+                        let default = DbStats::default();
+                        // Overwrite corrupt data
+                        let _ = self.put_stats(&default);
+                        Ok(default)
+                    }
+                }
             }
             None => Ok(DbStats::default()),
         }
@@ -532,8 +540,12 @@ impl TheoremDb {
         }
         let mut theorems = Vec::with_capacity(recent_ids.len());
         for id in &recent_ids {
-            if let Some(thm) = self.get_theorem(id)? {
-                theorems.push(thm);
+            match self.get_theorem(id) {
+                Ok(Some(thm)) => theorems.push(thm),
+                Ok(None) => {} // index points to deleted record — skip
+                Err(e) => {
+                    tracing::warn!("Skipping corrupt theorem {}: {e}", hex::encode(id));
+                }
             }
         }
         Ok(theorems)

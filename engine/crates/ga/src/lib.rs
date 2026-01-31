@@ -16,7 +16,7 @@ pub mod population;
 pub mod selection;
 
 pub use config::GaConfig;
-pub use engine::{DiscoveryEvent, GaEngine};
+pub use engine::{DiscoveryEvent, GaEngine, GaStatusSnapshot};
 pub use individual::Individual;
 pub use island::Island;
 pub use population::Population;

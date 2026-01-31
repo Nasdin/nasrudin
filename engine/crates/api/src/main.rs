@@ -31,7 +31,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use nasrudin_core::{Domain, Theorem, TheoremId, VerificationStatus};
-use nasrudin_ga::{DiscoveryEvent, GaConfig, GaEngine};
+use nasrudin_ga::{DiscoveryEvent, GaConfig, GaEngine, GaStatusSnapshot};
 use nasrudin_lean_bridge::LeanBridge;
 use nasrudin_pg::sea_orm::DatabaseConnection;
 use nasrudin_rocks::TheoremDb;
@@ -46,16 +46,7 @@ struct AppState {
     ga_status: Arc<std::sync::Mutex<GaStatusSnapshot>>,
 }
 
-/// A snapshot of GA engine status, updated periodically.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct GaStatusSnapshot {
-    pub total_generations: u64,
-    pub total_population: usize,
-    pub num_islands: usize,
-    pub candidates_sent: u64,
-    pub verified_discoveries: u64,
-    pub running: bool,
-}
+// GaStatusSnapshot is now imported from nasrudin_ga
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -114,24 +105,13 @@ async fn main() -> anyhow::Result<()> {
         .spawn(move || {
             let engine = GaEngine::new(ga_config, ga_db);
 
-            // Capture initial status
-            {
-                let status = engine.status();
-                if let Ok(mut snapshot) = ga_status_ref.lock() {
-                    snapshot.total_generations = status.total_generations;
-                    snapshot.total_population = status.total_population;
-                    snapshot.num_islands = status.num_islands;
-                    snapshot.candidates_sent = status.candidates_sent;
-                    snapshot.verified_discoveries = status.verified_discoveries;
-                    snapshot.running = true;
-                }
-            }
-
-            engine.run(candidates_tx, verified_rx, ga_discovery_tx, ga_shutdown);
-
-            if let Ok(mut snapshot) = ga_status_ref.lock() {
-                snapshot.running = false;
-            }
+            engine.run_with_status(
+                candidates_tx,
+                verified_rx,
+                ga_discovery_tx,
+                ga_shutdown,
+                ga_status_ref,
+            );
         })?;
 
     // Spawn verification workers (process candidates via Lean4)
@@ -161,7 +141,12 @@ async fn main() -> anyhow::Result<()> {
     let cors = CorsLayer::new()
         .allow_origin("http://localhost:3000".parse::<HeaderValue>()?)
         .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
-        .allow_headers(tower_http::cors::Any)
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::ACCEPT,
+            axum::http::header::COOKIE,
+        ])
         .allow_credentials(true);
 
     // Build grouped sub-routers with per-group rate limits.
@@ -257,12 +242,12 @@ async fn run_verification_workers(
         }
     });
 
-    let lean_bridge = LeanBridge::default();
-    let prover_root = std::env::var("PROVER_ROOT")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("../prover"));
+    let lean_bridge = LeanBridge::new().unwrap_or_else(|e| {
+        tracing::warn!("LeanBridge init failed ({e}), verification disabled");
+        LeanBridge::default()
+    });
 
-    tracing::info!("Verification worker started (prover root: {})", prover_root.display());
+    tracing::info!("Verification worker started (lean bridge available: {})", lean_bridge.is_available());
 
     while let Some(batch) = async_rx.recv().await {
         let mut verified_batch: Vec<Theorem> = Vec::new();
@@ -273,24 +258,35 @@ async fn run_verification_workers(
                 continue;
             }
 
-            // Attempt verification via lake build
-            let module_name = format!("GA_{}", hex::encode(theorem.id));
-            match lean_bridge.verify_via_lake(&prover_root, &module_name) {
-                Ok(true) => {
+            // Attempt verification via ProcessVerifier (generates .lean → lake build)
+            match lean_bridge.verify_theorem(&theorem) {
+                Ok(nasrudin_lean_bridge::VerifyResult::Verified { proof_term }) => {
                     theorem.verified = VerificationStatus::Verified {
-                        proof_term: vec![],
+                        proof_term,
                         tactic_used: "lake_build".to_string(),
                     };
                     tracing::info!("Verified theorem {}", hex::encode(theorem.id));
                 }
-                Ok(false) => {
+                Ok(nasrudin_lean_bridge::VerifyResult::Rejected { reason }) => {
+                    theorem.verified = VerificationStatus::Rejected { reason };
+                }
+                Ok(nasrudin_lean_bridge::VerifyResult::Timeout) => {
                     theorem.verified = VerificationStatus::Rejected {
-                        reason: "lake build failed".to_string(),
+                        reason: "verification timed out".to_string(),
                     };
                 }
+                Ok(nasrudin_lean_bridge::VerifyResult::ParseError { message }) => {
+                    theorem.verified = VerificationStatus::Rejected {
+                        reason: format!("parse error: {message}"),
+                    };
+                }
+                Ok(nasrudin_lean_bridge::VerifyResult::FfiError { message }) => {
+                    // No backend available — store as pending
+                    tracing::debug!("Lean verification unavailable: {message}");
+                    theorem.verified = VerificationStatus::Pending;
+                }
                 Err(e) => {
-                    // Lean not available — store as pending
-                    tracing::debug!("Lean verification unavailable: {e}");
+                    tracing::debug!("Lean verification error: {e}");
                     theorem.verified = VerificationStatus::Pending;
                 }
             }

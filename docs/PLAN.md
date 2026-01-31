@@ -173,7 +173,7 @@ Ingests existing theorems into RocksDB:
    all declarations. Export via Lean4 FFI as serialized theorem records.
 2. **Metamath**: Parse `set.mm` directly in Rust (well-defined text format).
    Map Metamath axioms to internal `Expr` representation.
-3. **PhysLean** (implemented): The `physlean-extract/` project (Lean 4.16.0) walks
+3. **PhysLean** (implemented): The `physlean-extract/` project (Lean 4.26.0) walks
    PhysLean's environment and outputs `catalog.json`. The `physics-importer` crate
    (`engine/crates/importer/`) reads this catalog and:
    - Populates `AxiomStore` via `load_from_catalog()`

@@ -223,8 +223,11 @@ fn is_physics_constant(name: &str) -> bool {
 }
 
 /// Verify a `.lean` file by running `lake build`.
+///
+/// Uses the same PATH-augmented command builder as the process verifier
+/// to ensure `~/.elan/bin` is on PATH.
 pub fn verify_via_lake(prover_root: &Path, module_path: &str) -> Result<bool> {
-    let output = std::process::Command::new("lake")
+    let output = crate::process::lake_command()
         .arg("build")
         .arg(module_path)
         .current_dir(prover_root)

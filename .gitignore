@@ -11,6 +11,8 @@ target/
 prover/build/
 prover/lake-packages/
 prover/.lake/
+physlean-extract/.lake/build/
+physlean-extract/.lake/packages/
 
 # Environment
 .env

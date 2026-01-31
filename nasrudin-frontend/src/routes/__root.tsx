@@ -1,15 +1,21 @@
+import type { QueryClient } from "@tanstack/react-query";
 import {
-	createRootRoute,
+	createRootRouteWithContext,
 	HeadContent,
 	Outlet,
 	Scripts,
 } from "@tanstack/react-router";
 
+import RateLimitToast from "../components/RateLimitToast";
 import TopNav from "../components/TopNav";
 
 import appCss from "../styles.css?url";
 
-export const Route = createRootRoute({
+interface RouterContext {
+	queryClient: QueryClient;
+}
+
+export const Route = createRootRouteWithContext<RouterContext>()({
 	head: () => ({
 		meta: [
 			{
@@ -80,6 +86,7 @@ function RootLayout() {
 					</a>
 				</p>
 			</footer>
+			<RateLimitToast />
 		</div>
 	);
 }

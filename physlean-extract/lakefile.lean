@@ -13,4 +13,4 @@ lean_exe extract where
   root := `PhysLeanExtract.Main
 
 require PhysLean from git
-  "https://github.com/HEPLean/PhysLean.git" @ "master"
+  "https://github.com/HEPLean/PhysLean.git" @ "v4.26.0"

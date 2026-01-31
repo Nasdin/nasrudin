@@ -4,7 +4,7 @@ import PhysicsGenerator.Basic
 /-!
 # Electromagnetism (Generated from PhysLean)
 
-Auto-generated from PhysLean catalog (version: master).
+Auto-generated from PhysLean catalog (version: v4.26.0).
 These axioms correspond to proven theorems in PhysLean.
 Re-axiomatized here for Lean 4.27 compatibility.
 
@@ -19,16 +19,14 @@ open PhysicsGenerator
 -- Types (from PhysLean)
 -- ══════════════════════════════════════════════════════════════
 
--- Source: PhysLean (PhysLean.Electromagnetism.FieldStrengthTensor)
-/-- FieldStrengthTensor -/
-structure FieldStrengthTensor where
-  components : Matrix (Fin 4) (Fin 4) ℝ
+-- Source: PhysLean (Electromagnetism.FreeSpace)
+/-- Free space consists of the specification of the
+electric permittivity and the magnetic permeability.  -/
+axiom FreeSpace : Type
 
--- Source: PhysLean (PhysLean.Electromagnetism.FourPotential)
-/-- FourPotential -/
-structure FourPotential where
-  φ : ℝ
-  A : Fin 3 → ℝ
+-- Source: PhysLean (Electromagnetism.EMSystem)
+/-- The electric permittivity and the magnetic permeability of free space.  -/
+axiom EMSystem : Type
 
 -- ══════════════════════════════════════════════════════════════
 -- Helper Types (for axiom signatures)
@@ -57,24 +55,4471 @@ axiom rho_field : ScalarField
 -- Theorems (from PhysLean — re-axiomatized)
 -- ══════════════════════════════════════════════════════════════
 
--- Source: PhysLean (PhysLean.Electromagnetism.FieldTensor.maxwell_field_tensor)
-/-- Maxwell's equations in tensor form -/
-axiom maxwell_field_tensor :
-  ∀ (F : FieldStrengthTensor), maxwell_from_tensor F ↔ maxwell_equations F
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_basis_repr_apply_eq_single)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_basis_repr_apply_eq_single : ∀ {d : Nat} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))} (A : Electromagnetism.ElectromagneticPotential d)
+--   (x : SpaceTime d),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.CoVector.basis.tensorProduct Lorentz.Vector.basis).repr (A.toFieldStrength x))
+--       μν)
+--     (instHSub.hSub (instHMul.hMul (minkowskiMatrix μν.fst μν.fst) (SpaceTime.deriv μν.fst A x μν.snd))
+--       (instHMul.hMul (minkowskiMatrix μν.snd μν.snd) (SpaceTime.deriv μν.snd A x μν.fst)))
 
--- Source: PhysLean (PhysLean.Electromagnetism.Potential.electromagnetic_potential)
-/-- The field tensor as exterior derivative of the 4-potential -/
-axiom electromagnetic_potential :
-  ∀ (A : FourPotential), F_from_potential A = exterior_derivative A
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradLagrangian_sum_inr_i)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradlagrangian_sum_inr_i : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d) (ε : SchwartzMap (SpaceTime d) Real) (i : Fin d),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe (Electromagnetism.DistElectromagneticPotential.gradLagrangian 𝓕 A J) ε (Sum.inr i))
+--     (instHAdd.hAdd
+--       (instHMul.hMul (Real.instInv.inv 𝓕.μ₀)
+--         (instHSub.hSub
+--           (instHMul.hMul (instHDiv.hDiv 1 (instHPow.hPow 𝓕.c.val 2))
+--             ((ContinuousLinearMap.funLike.coe
+--                   (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--                     (LinearMap.instFunLike.coe Space.distTimeDeriv
+--                       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c) A)))
+--                   ε).ofLp
+--               i))
+--           (Finset.univ.sum fun j =>
+--             Finsupp.instFunLike.coe
+--               (EquivLike.toFunLike.coe
+--                 ((PiLp.basisFun 2 Real (Fin d)).tensorProduct (PiLp.basisFun 2 Real (Fin d))).repr
+--                 (ContinuousLinearMap.funLike.coe
+--                   (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--                     (LinearMap.instFunLike.coe (Space.distSpaceDeriv j)
+--                       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix 𝓕.c)
+--                         A)))
+--                   ε))
+--               { fst := j, snd := i })))
+--       ((ContinuousLinearMap.funLike.coe
+--             (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.currentDensity 𝓕.c) J))
+--             ε).ofLp
+--         i))
 
--- Source: PhysLean (PhysLean.Electromagnetism.PlaneWave.plane_wave_solution)
-/-- Plane wave dispersion relation from Maxwell's equations -/
-axiom plane_wave_solution :
-  ∀ (k : WaveVector) (ω : ℝ), is_maxwell_solution (plane_wave k ω) → ω = c * |k|
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm : {d : Nat} → Electromagnetism.FreeSpace → Electromagnetism.ElectromagneticPotential d → SpaceTime d → Real
 
--- Source: PhysLean (PhysLean.Electromagnetism.Gauge.gauge_invariance)
-/-- Gauge invariance of the electromagnetic field tensor -/
-axiom gauge_invariance :
-  ∀ (A : FourPotential) (χ : ScalarField), F_from_potential (A + gauge_transform χ) = F_from_potential A
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity_eq_timeSlice)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_eq_timeslice : ∀ {c : SpeedOfLight} {d : Nat} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Eq (Electromagnetism.LorentzCurrentDensity.currentDensity c J)
+--     (EquivLike.toFunLike.coe (SpaceTime.timeSlice c) fun x => { ofLp := fun i => J x (Sum.inr i) })
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle_eq_1 : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space),
+--   Eq (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle 𝓕 q r₀)
+--     (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (Space.distOfFunction
+--           (fun x =>
+--             instHSMul.hSMul
+--               (instHMul.hMul (instHDiv.hDiv (instHMul.hMul (instHMul.hMul q 𝓕.μ₀) 𝓕.c.val) (instHMul.hMul 4 Real.pi))
+--                 (Real.instInv.inv (Space.instNorm.norm (instHSub.hSub x r₀))))
+--               (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))
+--           ⋯)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_eq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_eq : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (A.fieldStrengthMatrix x)
+--     (EquivLike.toFunLike.coe (Lorentz.CoVector.basis.tensorProduct Lorentz.Vector.basis).repr (A.toFieldStrength x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradKineticTerm_eq_sum_sum)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradkineticterm_eq_sum_sum : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     Eq (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A x)
+--       (Finset.univ.sum fun ν =>
+--         Finset.univ.sum fun μ =>
+--           instHSMul.hSMul
+--             (instHMul.hMul (instHDiv.hDiv 1 𝓕.μ₀)
+--               (instHSub.hSub
+--                 (instHMul.hMul (instHMul.hMul (minkowskiMatrix μ μ) (minkowskiMatrix ν ν))
+--                   (SpaceTime.deriv μ (fun x' => SpaceTime.deriv μ A x' ν) x))
+--                 (SpaceTime.deriv μ (fun x' => SpaceTime.deriv ν A x' μ) x)))
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.lagrangian)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_lagrangian : {d : Nat} →
+--   Electromagnetism.FreeSpace →
+--     Electromagnetism.ElectromagneticPotential d → Electromagnetism.LorentzCurrentDensity d → SpaceTime d → Real
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.toTensor_fieldStrengthAux_basis_repr)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_totensor_fieldstrengthaux_basis_repr : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real)
+--   (b :
+--     TensorSpecies.Tensor.ComponentIdx
+--       (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe
+--         (TensorSpecies.Tensor.basis
+--             (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--               (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).repr
+--         (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.fieldStrengthAux ε)))
+--       b)
+--     (Finset.univ.sum fun κ =>
+--       instHSub.hSub
+--         (instHMul.hMul (minkowskiMatrix (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 0)) κ)
+--           (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv κ) A) ε
+--             (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 1))))
+--         (instHMul.hMul (minkowskiMatrix (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 1)) κ)
+--           (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv κ) A) ε
+--             (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 0)))))
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.ε₀_ne_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_ε₀_ne_zero : ∀ (𝓕 : Electromagnetism.FreeSpace), Ne 𝓕.ε₀ 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.time_deriv_time_deriv_magneticFieldMatrix_of_isExtrema)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_time_deriv_time_deriv_magneticfieldmatrix_of_isextrema : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {𝓕 : Electromagnetism.FreeSpace},
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A J →
+--           ∀ (t : Time) (x : Space d) (i j : Fin d),
+--             Eq
+--               (Time.deriv
+--                 (Time.deriv fun x_1 =>
+--                   Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A x_1 x { fst := i, snd := j })
+--                 t)
+--               (instHAdd.hAdd
+--                 (instHMul.hMul (instHPow.hPow 𝓕.c.val 2)
+--                   (Finset.univ.sum fun k =>
+--                     Space.deriv k
+--                       (Space.deriv k fun x =>
+--                         Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := i, snd := j })
+--                       x))
+--                 (instHMul.hMul (Real.instInv.inv 𝓕.ε₀)
+--                   (instHSub.hSub
+--                     (Space.deriv j (fun x => (Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J t x).ofLp i)
+--                       x)
+--                     (Space.deriv i (fun x => (Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J t x).ofLp j)
+--                       x))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_diag_eq_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_diag_eq_zero : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d) (μ : Sum (Fin 1) (Fin d)),
+--   Eq (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := μ }) 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.isExtrema_iff_gradLagrangian)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isextrema_iff_gradlagrangian : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d)
+--   (J : Electromagnetism.LorentzCurrentDensity d),
+--   Iff (Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A J)
+--     (Eq (Electromagnetism.ElectromagneticPotential.gradLagrangian 𝓕 A J) 0)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire_vectorPotential_snd)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_vectorpotential_snd : ∀ {η : SchwartzMap (Prod Time Space) Real} (𝓕 : Electromagnetism.FreeSpace) (I : Real),
+--   Eq
+--     ((ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c)
+--             (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I))
+--           η).ofLp
+--       1)
+--     0
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity : optParam Nat 3 → Type
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_eq_electricMatrix_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_eq_electricmatrix_magneticfieldmatrix : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Differentiable Real A →
+--     Eq (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A x)
+--       (instHMul.hMul (1 / 2)
+--         (instHSub.hSub
+--           (instHMul.hMul 𝓕.ε₀
+--             (instHPow.hPow
+--               ((PiLp.instNorm 2 fun x => Real).norm
+--                 (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                   (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                   (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--               2))
+--           (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 2 𝓕.μ₀))
+--             (Finset.univ.sum fun i =>
+--               Finset.univ.sum fun j =>
+--                 instHPow.hPow
+--                   (Real.norm.norm
+--                     (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A
+--                       (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                       (ContinuousLinearMap.funLike.coe SpaceTime.space x) { fst := i, snd := j }))
+--                   2))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.freeCurrentPotential_hasVarGradientAt)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_freecurrentpotential_hasvargradientat : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         HasVarGradientAt (fun A => Electromagnetism.ElectromagneticPotential.freeCurrentPotential A J)
+--           (Finset.univ.sum fun μ x =>
+--             instHSMul.hSMul (instHMul.hMul (minkowskiMatrix μ μ) (J x μ))
+--               (Module.Basis.instFunLike.coe Lorentz.Vector.basis μ))
+--           A
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.deriv_basis_repr_apply)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_deriv_basis_repr_apply : ∀ {d : Nat} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))} (A : Electromagnetism.ElectromagneticPotential d)
+--   (x : SpaceTime d),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.CoVector.basis.tensorProduct Lorentz.Vector.basis).repr (A.deriv x)) μν)
+--     (SpaceTime.deriv μν.fst A x μν.snd)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.IsExtrema)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_isextrema : {d : Nat} →
+--   Electromagnetism.FreeSpace →
+--     Electromagnetism.DistElectromagneticPotential d → Electromagnetism.DistLorentzCurrentDensity d → Prop
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_eq_1 : ∀ {d : Nat} (c : SpeedOfLight) (E₀ : EuclideanSpace Real (Fin d)) (B₀ : Prod (Fin d) (Fin d) → Real)
+--   (B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i })))
+--   (x : SpaceTime d) (val : Fin 1),
+--   Eq (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm x (Sum.inl val))
+--     (instHMul.hMul (Real.instNeg.neg (instHDiv.hDiv 1 c.val))
+--       (instInnerOfInnerProductSpace'.inner Real E₀
+--         (EquivLike.toFunLike.coe Space.basis.repr (ContinuousLinearMap.funLike.coe SpaceTime.space x))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricField_time_deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfield_time_deriv : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s),
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (x : Space d),
+--       Eq (Time.deriv (fun x_1 => Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A x_1 x) t)
+--         (instHSMul.hSMul (Real.instNeg.neg 𝓕.c.val)
+--           (ContinuousLinearMap.funLike.coe
+--             (fderiv Real P.electricFunction
+--               (instHSub.hSub (Space.instInnerReal.inner Real x s.unit) (instHMul.hMul 𝓕.c.val t.val)))
+--             1))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricField_space_deriv_eq_time_deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfield_space_deriv_eq_time_deriv : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d},
+--   Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s →
+--     ContDiff Real 2 A →
+--       ∀ (t : Time) (x : Space d) (i k : Fin d),
+--         Eq (Space.deriv k (fun x => (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp i) x)
+--           (instHSMul.hSMul (Real.instNeg.neg (instHDiv.hDiv (s.unit.val k) 𝓕.c.val))
+--             (Time.deriv (fun x_1 => (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A x_1 x).ofLp i) t))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential_sum_inr_i)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradfreecurrentpotential_sum_inr_i : ∀ (𝓕 : Electromagnetism.FreeSpace) {d : Nat} (J : Electromagnetism.DistLorentzCurrentDensity d)
+--   (ε : SchwartzMap (SpaceTime d) Real) (i : Fin d),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential J) ε
+--       (Sum.inr i))
+--     (Real.instNeg.neg
+--       ((ContinuousLinearMap.funLike.coe
+--             (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.currentDensity 𝓕.c) J))
+--             ε).ofLp
+--         i))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB_scalarPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_scalarpotential : ∀ {d : Nat} {c : SpeedOfLight} {E₀ : EuclideanSpace Real (Fin d)} {B₀ : Prod (Fin d) (Fin d) → Real}
+--   {B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i }))},
+--   Eq
+--     (Electromagnetism.ElectromagneticPotential.scalarPotential c
+--       (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm))
+--     fun x x_1 =>
+--     Real.instNeg.neg (instInnerOfInnerProductSpace'.inner Real E₀ (EquivLike.toFunLike.coe Space.basis.repr x_1))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_differentiable : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (ij : Prod (Fin d) (Fin d)),
+--       Differentiable Real
+--         (Function.hasUncurryInduction.uncurry fun t x =>
+--           Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x ij)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.deriv_hasVarAdjDerivAt)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_deriv_hasvaradjderivat : ∀ {d : Nat} (μ ν : Sum (Fin 1) (Fin d)) (A : SpaceTime d → Lorentz.Vector d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     HasVarAdjDerivAt (fun A x => SpaceTime.deriv μ A x ν)
+--       (fun ψ x =>
+--         instHSMul.hSMul
+--           (Real.instNeg.neg
+--             (ContinuousLinearMap.funLike.coe (fderiv Real ψ x) (Module.Basis.instFunLike.coe Lorentz.Vector.basis μ)))
+--           (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν))
+--       A
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire_vectorPotential_distTimeDeriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_vectorpotential_disttimederiv : ∀ (𝓕 : Electromagnetism.FreeSpace) (I : Real),
+--   Eq
+--     (LinearMap.instFunLike.coe Space.distTimeDeriv
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c)
+--         (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I)))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.freeCurrentPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_freecurrentpotential : {d : Nat} → Electromagnetism.ElectromagneticPotential d → Electromagnetism.LorentzCurrentDensity d → SpaceTime d → Real
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradLagrangian_eq_kineticTerm_sub)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradlagrangian_eq_kineticterm_sub : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         Eq (Electromagnetism.ElectromagneticPotential.gradLagrangian 𝓕 A J)
+--           (instHSub.hSub (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A) (A.gradFreeCurrentPotential J))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_magneticFieldMatrix_succ_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_magneticfieldmatrix_succ_zero : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i : Fin d),
+--       Eq
+--         (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c
+--           (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x { fst := i.succ, snd := 0 })
+--         (instHMul.hMul (instHDiv.hDiv (E₀ i) 𝓕.c.val)
+--           (Real.cos
+--             (instHAdd.hAdd (instHSub.hSub (instHMul.hMul (instHMul.hMul 𝓕.c.val k) t.val) (instHMul.hMul k (x.val 0)))
+--               (φ i))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_differentiable_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_differentiable_time : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   ContDiff Real 2 A →
+--     ∀ (x : Space d), Differentiable Real fun x_1 => Electromagnetism.ElectromagneticPotential.electricField c A x_1 x
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.μ₀)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_μ₀ : Electromagnetism.FreeSpace → Real
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix_distSpaceDeriv_basis_repr_eq_vector_potential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_magneticfieldmatrix_distspacederiv_basis_repr_eq_vector_potential : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (Prod Time (Space d)) Real) (i j k : Fin d),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe ((PiLp.basisFun 2 Real (Fin d)).tensorProduct (PiLp.basisFun 2 Real (Fin d))).repr
+--         (ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Space.distSpaceDeriv k)
+--             (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix c) A))
+--           ε))
+--       { fst := i, snd := j })
+--     (instHSub.hSub
+--       ((ContinuousLinearMap.funLike.coe
+--             (LinearMap.instFunLike.coe (Space.distSpaceDeriv k)
+--               (LinearMap.instFunLike.coe (Space.distSpaceDeriv j)
+--                 (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential c) A)))
+--             ε).ofLp
+--         i)
+--       ((ContinuousLinearMap.funLike.coe
+--             (LinearMap.instFunLike.coe (Space.distSpaceDeriv k)
+--               (LinearMap.instFunLike.coe (Space.distSpaceDeriv i)
+--                 (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential c) A)))
+--             ε).ofLp
+--         j))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticField_thd_eq_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfield_thd_eq_fieldstrengthmatrix : ∀ {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential) (t : Time) (x : Space),
+--   Differentiable Real A →
+--     Eq ((Electromagnetism.ElectromagneticPotential.magneticField c A t x).ofLp 2)
+--       (Real.instNeg.neg
+--         (Finsupp.instFunLike.coe
+--           (A.fieldStrengthMatrix (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x }))
+--           { fst := Sum.inr 0, snd := Sum.inr 1 }))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_electricfield : {d : Nat} →
+--   SpeedOfLight →
+--     LinearMap (RingHom.id Real) (Electromagnetism.DistElectromagneticPotential d)
+--       (Distribution Real (Prod Time (Space d)) (EuclideanSpace Real (Fin d)))
+
+-- Source: PhysLean (Electromagnetism.ElectricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electricfield : optParam Nat 3 → Type
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricFunction)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfunction : {d : Nat} →
+--   {𝓕 : Electromagnetism.FreeSpace} →
+--     {A : Electromagnetism.ElectromagneticPotential d} →
+--       {s : Space.Direction d} →
+--         Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s → Real → EuclideanSpace Real (Fin d)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity_eq_distTranslate)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticlecurrentdensity_eq_disttranslate : ∀ (c : SpeedOfLight) (q : Real) (r₀ : Space),
+--   Eq (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity c q r₀)
+--     (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c).symm
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (LinearMap.instFunLike.coe (Space.distTranslate (EquivLike.toFunLike.coe Space.basis.repr r₀))
+--           (instHSMul.hSMul (instHMul.hMul c.val q)
+--             (Distribution.diracDelta' Real 0 (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrength_basis_repr_eq_single)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrength_basis_repr_eq_single : ∀ {d : Nat} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))}
+--   (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr
+--         (ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A) ε))
+--       μν)
+--     (instHSub.hSub
+--       (instHMul.hMul (minkowskiMatrix μν.fst μν.fst)
+--         (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv μν.fst) A) ε μν.snd))
+--       (instHMul.hMul (minkowskiMatrix μν.snd μν.snd)
+--         (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv μν.snd) A) ε μν.fst)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradLagrangian.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradlagrangian_eq_1 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d),
+--   Eq (Electromagnetism.DistElectromagneticPotential.gradLagrangian 𝓕 A J)
+--     (instHSub.hSub (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.gradKineticTerm 𝓕) A)
+--       (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential J))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradLagrangian_eq_tensor)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradlagrangian_eq_tensor : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d) (ε : SchwartzMap (SpaceTime d) Real) (ν : Sum (Fin 1) (Fin d)),
+--   Eq (ContinuousLinearMap.funLike.coe (Electromagnetism.DistElectromagneticPotential.gradLagrangian 𝓕 A J) ε ν)
+--     (instHMul.hMul (minkowskiMatrix ν ν)
+--       (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor.symm
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--           (instHAdd.hAdd
+--             (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 1 0 1 ⋯)
+--               (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--                 (instHSMul.hSMul (instHDiv.hDiv 1 𝓕.μ₀)
+--                   (ContinuousLinearMap.funLike.coe
+--                     (LinearMap.instFunLike.coe SpaceTime.distTensorDeriv
+--                       (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A))
+--                     ε))))
+--             (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT (Matrix.vecCons 0 Matrix.vecEmpty) ⋯)
+--               (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--                 (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor (ContinuousLinearMap.funLike.coe J ε))))))
+--         ν))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential_differentiable_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential_differentiable_time : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   Differentiable Real A →
+--     ∀ (x : Space d), Differentiable Real fun x_1 => Electromagnetism.ElectromagneticPotential.vectorPotential c A x_1 x
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle_electricfield : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space 1),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle 𝓕 q r₀))
+--     (instHSMul.hSMul (instHDiv.hDiv (instHMul.hMul (instHMul.hMul q 𝓕.μ₀) (instHPow.hPow 𝓕.c.val 2)) 2)
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (Space.distOfFunction
+--           (fun x =>
+--             instHSMul.hSMul (instHPow.hPow (Space.instNorm.norm (instHSub.hSub x r₀)) (-1))
+--               (EquivLike.toFunLike.coe Space.basis.repr (instHSub.hSub x r₀)))
+--           ⋯)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradfreecurrentpotential : {d : Nat} →
+--   LinearMap (RingHom.id Real) (Electromagnetism.DistLorentzCurrentDensity d)
+--     (Distribution Real (SpaceTime d) (Lorentz.Vector d))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_apply_differentiable_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_apply_differentiable_space : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (i : Fin d),
+--       Differentiable Real fun x => (Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_electricField_succ)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_electricfield_succ : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i : Fin d),
+--       Eq
+--         ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c
+--               (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--           i.succ)
+--         (instHMul.hMul (E₀ i)
+--           (Real.cos
+--             (instHAdd.hAdd (instHSub.hSub (instHMul.hMul (instHMul.hMul k 𝓕.c.val) t.val) (instHMul.hMul k (x.val 0)))
+--               (φ i))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential_contDiff_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential_contdiff_space : ∀ {n : WithTop ENat} {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real n A → ∀ (t : Time), ContDiff Real n (Electromagnetism.ElectromagneticPotential.vectorPotential c A t)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle_electricfield : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle 𝓕 q r₀))
+--     (instHSMul.hSMul (instHDiv.hDiv q (instHMul.hMul (instHMul.hMul 4 Real.pi) 𝓕.ε₀))
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (Space.distOfFunction
+--           (fun x =>
+--             instHSMul.hSMul (instHPow.hPow (Space.instNorm.norm (instHSub.hSub x r₀)) (-3))
+--               (EquivLike.toFunLike.coe Space.basis.repr (instHSub.hSub x r₀)))
+--           ⋯)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.lagrangian.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_lagrangian_eq_1 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (A : Electromagnetism.ElectromagneticPotential d)
+--   (J : Electromagnetism.LorentzCurrentDensity d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 A J x)
+--     (instHSub.hSub (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A x) (A.freeCurrentPotential J x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticField_fst_eq_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfield_fst_eq_fieldstrengthmatrix : ∀ {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential) (t : Time) (x : Space),
+--   Differentiable Real A →
+--     Eq ((Electromagnetism.ElectromagneticPotential.magneticField c A t x).ofLp 0)
+--       (Real.instNeg.neg
+--         (Finsupp.instFunLike.coe
+--           (A.fieldStrengthMatrix (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x }))
+--           { fst := Sum.inr 1, snd := Sum.inr 2 }))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_tensor_basis_eq_basis)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_tensor_basis_eq_basis : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d)
+--   (b :
+--     TensorSpecies.Tensor.ComponentIdx
+--       (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe
+--         (TensorSpecies.Tensor.basis
+--             (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--               (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).repr
+--         (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.toFieldStrength x)))
+--       b)
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr (A.toFieldStrength x))
+--       { fst := EquivLike.toFunLike.coe finSumFinEquiv.symm (b 0),
+--         snd := EquivLike.toFunLike.coe finSumFinEquiv.symm (b 1) })
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.ε₀_nonneg)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_ε₀_nonneg : ∀ (𝓕 : Electromagnetism.FreeSpace), Real.instLE.le 0 𝓕.ε₀
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.isExtrema_iff_space_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_isextrema_iff_space_time : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d),
+--   Iff (Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕 A J)
+--     (And
+--       (∀ (ε : SchwartzMap (Prod Time (Space d)) Real),
+--         Eq
+--           (ContinuousLinearMap.funLike.coe
+--             (LinearMap.instFunLike.coe Space.distSpaceDiv
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c) A))
+--             ε)
+--           (instHMul.hMul (instHDiv.hDiv 1 𝓕.ε₀)
+--             (ContinuousLinearMap.funLike.coe
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.chargeDensity 𝓕.c) J) ε)))
+--       (∀ (ε : SchwartzMap (Prod Time (Space d)) Real) (i : Fin d),
+--         Eq
+--           (instHAdd.hAdd
+--             (instHSub.hSub
+--               (instHMul.hMul (instHMul.hMul 𝓕.μ₀ 𝓕.ε₀)
+--                 ((ContinuousLinearMap.funLike.coe
+--                       (LinearMap.instFunLike.coe Space.distTimeDeriv
+--                         (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c) A))
+--                       ε).ofLp
+--                   i))
+--               (Finset.univ.sum fun j =>
+--                 Finsupp.instFunLike.coe
+--                   (EquivLike.toFunLike.coe
+--                     ((PiLp.basisFun 2 Real (Fin d)).tensorProduct (PiLp.basisFun 2 Real (Fin d))).repr
+--                     (ContinuousLinearMap.funLike.coe
+--                       (LinearMap.instFunLike.coe (Space.distSpaceDeriv j)
+--                         (LinearMap.instFunLike.coe
+--                           (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix 𝓕.c) A))
+--                       ε))
+--                   { fst := j, snd := i }))
+--             (instHMul.hMul 𝓕.μ₀
+--               ((ContinuousLinearMap.funLike.coe
+--                     (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.currentDensity 𝓕.c) J)
+--                     ε).ofLp
+--                 i)))
+--           0))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential_contdiff : ∀ {n : WithTop ENat} {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real n A →
+--     ContDiff Real n
+--       (Function.hasUncurryInduction.uncurry (Electromagnetism.ElectromagneticPotential.vectorPotential c A))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_apply_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_apply_contdiff : ∀ {d : Nat} {i : Fin d} {n : WithTop ENat} {c : SpeedOfLight} {A : Electromagnetism.ElectromagneticPotential d},
+--   ContDiff Real (instHAdd.hAdd n 1) A →
+--     ContDiff Real n
+--       (Function.hasUncurryInduction.uncurry fun t x =>
+--         (Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix_basis_repr_eq_vector_potential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_magneticfieldmatrix_basis_repr_eq_vector_potential : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (Prod Time (Space d)) Real) (i j : Fin d),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe ((PiLp.basisFun 2 Real (Fin d)).tensorProduct (PiLp.basisFun 2 Real (Fin d))).repr
+--         (ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix c) A) ε))
+--       { fst := i, snd := j })
+--     (instHSub.hSub
+--       ((ContinuousLinearMap.funLike.coe
+--             (LinearMap.instFunLike.coe (Space.distSpaceDeriv j)
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential c) A))
+--             ε).ofLp
+--         i)
+--       ((ContinuousLinearMap.funLike.coe
+--             (LinearMap.instFunLike.coe (Space.distSpaceDeriv i)
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential c) A))
+--             ε).ofLp
+--         j))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsExtrema)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isextrema : {d : Nat} →
+--   Electromagnetism.FreeSpace →
+--     Electromagnetism.ElectromagneticPotential d → Electromagnetism.LorentzCurrentDensity d → Prop
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_eq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_eq : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   Eq (Electromagnetism.ElectromagneticPotential.electricField c A) fun t x =>
+--     instHSub.hSub
+--       (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--         (Space.grad (Electromagnetism.ElectromagneticPotential.scalarPotential c A t) x))
+--       (Time.deriv (fun t => Electromagnetism.ElectromagneticPotential.vectorPotential c A t x) t)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_eq_electricMatrix_magneticFieldMatrix_time_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_eq_electricmatrix_magneticfieldmatrix_time_space : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (t : Time) (x : Space d),
+--   Differentiable Real A →
+--     Eq
+--       (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A
+--         (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace 𝓕.c).symm { fst := t, snd := x }))
+--       (instHMul.hMul (1 / 2)
+--         (instHSub.hSub
+--           (instHMul.hMul 𝓕.ε₀
+--             (instHPow.hPow
+--               ((PiLp.instNorm 2 fun x => Real).norm (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x))
+--               2))
+--           (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 2 𝓕.μ₀))
+--             (Finset.univ.sum fun i =>
+--               Finset.univ.sum fun j =>
+--                 instHPow.hPow
+--                   (Real.norm.norm
+--                     (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := i, snd := j }))
+--                   2))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle_isExterma)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle_isexterma : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space),
+--   Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕
+--     (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle 𝓕 q r₀)
+--     (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity 𝓕.c q r₀)
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.chargeDensity_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_chargedensity_zero : ∀ {d : Nat} {c : SpeedOfLight}, Eq (Electromagnetism.LorentzCurrentDensity.chargeDensity c 0) 0
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity_apply_differentiable_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_apply_differentiable_space : ∀ {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Differentiable Real J →
+--     ∀ (t : Time) (i : Fin d),
+--       Differentiable Real fun x => (Electromagnetism.LorentzCurrentDensity.currentDensity c J t x).ofLp i
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.electricField_eq_fieldStrength)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_electricfield_eq_fieldstrength : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (Prod Time (Space d)) Real) (i : Fin d),
+--   Eq
+--     ((ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField c) A) ε).ofLp
+--       i)
+--     (instHMul.hMul (Real.instNeg.neg c.val)
+--       (Finsupp.instFunLike.coe
+--         (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr
+--           (ContinuousLinearMap.funLike.coe
+--             (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c)
+--               (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A))
+--             ε))
+--         { fst := Sum.inl 0, snd := Sum.inr i }))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.deriv_equivariant)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_deriv_equivariant : ∀ {d : Nat} {x : SpaceTime d} (A : Electromagnetism.ElectromagneticPotential d) (Λ : (LorentzGroup d).Elem),
+--   Differentiable Real A →
+--     Eq
+--       (Electromagnetism.ElectromagneticPotential.deriv
+--         (fun x => instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x))) x)
+--       (instHSMul.hSMul Λ (A.deriv (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFunction)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfunction : {d : Nat} →
+--   {𝓕 : Electromagnetism.FreeSpace} →
+--     {A : Electromagnetism.ElectromagneticPotential d} →
+--       {s : Space.Direction d} →
+--         Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s → Real → Prod (Fin d) (Fin d) → Real
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfield : optParam SpeedOfLight 1 → Electromagnetism.ElectromagneticPotential → Electromagnetism.MagneticField
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb : {d : Nat} →
+--   SpeedOfLight →
+--     EuclideanSpace Real (Fin d) →
+--       (B₀ : Prod (Fin d) (Fin d) → Real) →
+--         (∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i }))) →
+--           Electromagnetism.ElectromagneticPotential d
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradKineticTerm_eq_sum_sum)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradkineticterm_eq_sum_sum : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.gradKineticTerm 𝓕) A) ε)
+--     (Finset.univ.sum fun ν =>
+--       Finset.univ.sum fun μ =>
+--         instHSMul.hSMul
+--           (instHMul.hMul (instHDiv.hDiv 1 𝓕.μ₀)
+--             (instHSub.hSub
+--               (instHMul.hMul (instHMul.hMul (minkowskiMatrix μ μ) (minkowskiMatrix ν ν))
+--                 (ContinuousLinearMap.funLike.coe
+--                   (LinearMap.instFunLike.coe (SpaceTime.distDeriv μ)
+--                     (LinearMap.instFunLike.coe (SpaceTime.distDeriv μ) A))
+--                   ε ν))
+--               (ContinuousLinearMap.funLike.coe
+--                 (LinearMap.instFunLike.coe (SpaceTime.distDeriv μ)
+--                   (LinearMap.instFunLike.coe (SpaceTime.distDeriv ν) A))
+--                 ε μ)))
+--           (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_inr_inl_eq_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_inr_inl_eq_electricfield : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d) (i : Fin d),
+--   Differentiable Real A →
+--     Eq (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := Sum.inr i, snd := Sum.inl 0 })
+--       (instHMul.hMul (instHDiv.hDiv 1 c.val)
+--         ((Electromagnetism.ElectromagneticPotential.electricField c A (LinearMap.instFunLike.coe (SpaceTime.time c) x)
+--               (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--           i))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrength_antisymmetric_basis)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrength_antisymmetric_basis : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real)
+--   (μ ν : Sum (Fin 1) (Fin d)),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr
+--         (ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A) ε))
+--       { fst := μ, snd := ν })
+--     (Real.instNeg.neg
+--       (Finsupp.instFunLike.coe
+--         (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr
+--           (ContinuousLinearMap.funLike.coe
+--             (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A) ε))
+--         { fst := ν, snd := μ }))
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.chargeDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_chargedensity : {d : Nat} → optParam SpeedOfLight 1 → Electromagnetism.LorentzCurrentDensity d → Time → Space d → Real
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrengthAux_basis_repr_apply)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrengthaux_basis_repr_apply : ∀ {d : Nat} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))}
+--   (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr (A.fieldStrengthAux ε))
+--       μν)
+--     (Finset.univ.sum fun κ =>
+--       instHSub.hSub
+--         (instHMul.hMul (minkowskiMatrix μν.fst κ)
+--           (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv κ) A) ε μν.snd))
+--         (instHMul.hMul (minkowskiMatrix μν.snd κ)
+--           (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv κ) A) ε μν.fst)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix_basis_repr_eq_fieldStrength)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_magneticfieldmatrix_basis_repr_eq_fieldstrength : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (Prod Time (Space d)) Real) (i j : Fin d),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe ((PiLp.basisFun 2 Real (Fin d)).tensorProduct (PiLp.basisFun 2 Real (Fin d))).repr
+--         (ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix c) A) ε))
+--       { fst := i, snd := j })
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr
+--         (ContinuousLinearMap.funLike.coe
+--           (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c)
+--             (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A))
+--           ε))
+--       { fst := Sum.inr i, snd := Sum.inr j })
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradLagrangian)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradlagrangian : {d : Nat} →
+--   Electromagnetism.FreeSpace →
+--     Electromagnetism.DistElectromagneticPotential d →
+--       Electromagnetism.DistLorentzCurrentDensity d → Distribution Real (SpaceTime d) (Lorentz.Vector d)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB.congr_simp)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_congr_simp : ∀ {d : Nat} (c c_1 : SpeedOfLight),
+--   Eq c c_1 →
+--     ∀ (E₀ E₀_1 : EuclideanSpace Real (Fin d)),
+--       Eq E₀ E₀_1 →
+--         ∀ (B₀ B₀_1 : Prod (Fin d) (Fin d) → Real) (e_B₀ : Eq B₀ B₀_1)
+--           (B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i })))
+--           (a a_1 : SpaceTime d),
+--           Eq a a_1 →
+--             ∀ (a_2 a_3 : Sum (Fin 1) (Fin d)),
+--               Eq a_2 a_3 →
+--                 Eq (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm a a_2)
+--                   (Electromagnetism.ElectromagneticPotential.constantEB c_1 E₀_1 B₀_1 ⋯ a_1 a_3)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticField_eq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfield_eq : ∀ {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential),
+--   Eq (Electromagnetism.ElectromagneticPotential.magneticField c A) fun t x =>
+--     Space.curl (Electromagnetism.ElectromagneticPotential.vectorPotential c A t) x
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential_differentiable : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   Differentiable Real A →
+--     Differentiable Real
+--       (Function.hasUncurryInduction.uncurry (Electromagnetism.ElectromagneticPotential.vectorPotential c A))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.isExtrema_iff_gradLagrangian)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_isextrema_iff_gradlagrangian : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d),
+--   Iff (Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕 A J)
+--     (Eq (Electromagnetism.DistElectromagneticPotential.gradLagrangian 𝓕 A J) 0)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.lagrangian_eq_electric_magnetic)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_lagrangian_eq_electric_magnetic : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d) (x : SpaceTime d),
+--       Eq (Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 A J x)
+--         (instHAdd.hAdd
+--           (instHSub.hSub
+--             (instHMul.hMul (1 / 2)
+--               (instHSub.hSub
+--                 (instHMul.hMul 𝓕.ε₀
+--                   (instHPow.hPow
+--                     ((PiLp.instNorm 2 fun x => Real).norm
+--                       (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                         (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                         (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--                     2))
+--                 (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 2 𝓕.μ₀))
+--                   (Finset.univ.sum fun i =>
+--                     Finset.univ.sum fun j =>
+--                       instHPow.hPow
+--                         (Real.norm.norm
+--                           (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A
+--                             (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                             (ContinuousLinearMap.funLike.coe SpaceTime.space x) { fst := i, snd := j }))
+--                         2))))
+--             (instHMul.hMul
+--               (Electromagnetism.ElectromagneticPotential.scalarPotential 𝓕.c A
+--                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x) (ContinuousLinearMap.funLike.coe SpaceTime.space x))
+--               (Electromagnetism.LorentzCurrentDensity.chargeDensity 𝓕.c J
+--                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                 (ContinuousLinearMap.funLike.coe SpaceTime.space x))))
+--           (Finset.univ.sum fun i =>
+--             instHMul.hMul
+--               ((Electromagnetism.ElectromagneticPotential.vectorPotential 𝓕.c A
+--                     (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--                 i)
+--               ((Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J
+--                     (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--                 i)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire_vectorPotential_fst)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_vectorpotential_fst : ∀ (𝓕 : Electromagnetism.FreeSpace) (I : Real) (η : SchwartzMap (Prod Time Space) Real),
+--   Eq
+--     ((ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c)
+--             (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I))
+--           η).ofLp
+--       0)
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (LinearMap.instFunLike.coe (Space.constantSliceDist 0)
+--           (instHSMul.hSMul (instHDiv.hDiv (instHMul.hMul (Real.instNeg.neg I) 𝓕.μ₀) (instHMul.hMul 2 Real.pi))
+--             (Space.distOfFunction (fun x => Real.log (Space.instNorm.norm x)) ⋯))))
+--       η)
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.c_abs)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_c_abs : ∀ (𝓕 : Electromagnetism.FreeSpace), Eq (abs 𝓕.c.val) 𝓕.c.val
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.isExtrema_iff_components)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_isextrema_iff_components : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d),
+--   Iff (Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕 A J)
+--     (And
+--       (∀ (ε : SchwartzMap (SpaceTime d) Real),
+--         Eq
+--           (ContinuousLinearMap.funLike.coe (Electromagnetism.DistElectromagneticPotential.gradLagrangian 𝓕 A J) ε
+--             (Sum.inl 0))
+--           0)
+--       (∀ (ε : SchwartzMap (SpaceTime d) Real) (i : Fin d),
+--         Eq
+--           (ContinuousLinearMap.funLike.coe (Electromagnetism.DistElectromagneticPotential.gradLagrangian 𝓕 A J) ε
+--             (Sum.inr i))
+--           0))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB_vectorPotential_time_deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_vectorpotential_time_deriv : ∀ {d : Nat} {c : SpeedOfLight} {E₀ : EuclideanSpace Real (Fin d)} {B₀ : Prod (Fin d) (Fin d) → Real}
+--   {B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i }))}
+--   (t : Time) (x : Space d),
+--   Eq
+--     (Time.deriv
+--       (fun x_1 =>
+--         Electromagnetism.ElectromagneticPotential.vectorPotential c
+--           (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm) x_1 x)
+--       t)
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.isExtrema_iff_gauss_ampere_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isextrema_iff_gauss_ampere_magneticfieldmatrix : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d},
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         Iff (Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A J)
+--           (∀ (t : Time) (x : Space d),
+--             And
+--               (Eq (Space.div (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t) x)
+--                 (instHDiv.hDiv (Electromagnetism.LorentzCurrentDensity.chargeDensity 𝓕.c J t x) 𝓕.ε₀))
+--               (∀ (i : Fin d),
+--                 Eq
+--                   (instHMul.hMul (instHMul.hMul 𝓕.μ₀ 𝓕.ε₀)
+--                     ((Time.deriv (fun t => Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x) t).ofLp
+--                       i))
+--                   (instHSub.hSub
+--                     (Finset.univ.sum fun j =>
+--                       Space.deriv j
+--                         (fun x =>
+--                           Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x
+--                             { fst := j, snd := i })
+--                         x)
+--                     (instHMul.hMul 𝓕.μ₀ ((Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J t x).ofLp i)))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrengthAux_tensor_basis_eq_basis)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrengthaux_tensor_basis_eq_basis : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real)
+--   (b :
+--     TensorSpecies.Tensor.ComponentIdx
+--       (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe
+--         (TensorSpecies.Tensor.basis
+--             (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--               (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).repr
+--         (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.fieldStrengthAux ε)))
+--       b)
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr (A.fieldStrengthAux ε))
+--       { fst := EquivLike.toFunLike.coe finSumFinEquiv.symm (b 0),
+--         snd := EquivLike.toFunLike.coe finSumFinEquiv.symm (b 1) })
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_vectorPotential_succ')
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_vectorpotential_succ' : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i : Nat)
+--   (hi : instLTNat.lt i.succ d.succ),
+--   Eq
+--     ((Electromagnetism.ElectromagneticPotential.vectorPotential 𝓕.c
+--           (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--       ⟨i.succ, hi⟩)
+--     (instHMul.hMul (instHDiv.hDiv (instHMul.hMul (Real.instNeg.neg (E₀ ⟨i, ⋯⟩)) 1) (instHMul.hMul 𝓕.c.val k))
+--       (Real.sin (instHAdd.hAdd (instHMul.hMul k (instHSub.hSub (instHMul.hMul t.val 𝓕.c.val) (x.val 0))) (φ ⟨i, ⋯⟩))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_magneticfieldmatrix : ∀ {d : Nat} {c : SpeedOfLight} {E₀ : EuclideanSpace Real (Fin d)} {B₀ : Prod (Fin d) (Fin d) → Real}
+--   {B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i }))},
+--   Eq
+--     (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c
+--       (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm))
+--     fun x x_1 => B₀
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFieldMatrix_space_deriv_eq_time_deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfieldmatrix_space_deriv_eq_time_deriv : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d},
+--   Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s →
+--     ContDiff Real 2 A →
+--       ∀ (t : Time) (x : Space d) (i j k : Fin d),
+--         Eq
+--           (Space.deriv k
+--             (fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := i, snd := j }) x)
+--           (instHSMul.hSMul (Real.instNeg.neg (instHDiv.hDiv (s.unit.val k) 𝓕.c.val))
+--             (Time.deriv
+--               (fun x_1 =>
+--                 Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A x_1 x { fst := i, snd := j })
+--               t))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_magneticFieldMatrix_zero_succ)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_magneticfieldmatrix_zero_succ : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i : Fin d),
+--       Eq
+--         (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c
+--           (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x { fst := 0, snd := i.succ })
+--         (instHMul.hMul (instHDiv.hDiv (Real.instNeg.neg (E₀ i)) 𝓕.c.val)
+--           (Real.cos
+--             (instHAdd.hAdd (instHSub.hSub (instHMul.hMul (instHMul.hMul 𝓕.c.val k) t.val) (instHMul.hMul k (x.val 0)))
+--               (φ i))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity_chargeDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticlecurrentdensity_chargedensity : ∀ (c : SpeedOfLight) (q : Real) (r₀ : Space),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.chargeDensity c)
+--       (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity c q r₀))
+--     (LinearMap.instFunLike.coe Space.constantTime (instHSMul.hSMul q (Distribution.diracDelta Real r₀)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.hamiltonian_eq_electricField_magneticField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_hamiltonian_eq_electricfield_magneticfield : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d) (x : SpaceTime d),
+--       Eq (Electromagnetism.ElectromagneticPotential.hamiltonian 𝓕 A J x)
+--         (instHSub.hSub
+--           (instHAdd.hAdd
+--             (instHAdd.hAdd
+--               (instHMul.hMul (instHMul.hMul (1 / 2) 𝓕.ε₀)
+--                 (instHAdd.hAdd
+--                   (instHPow.hPow
+--                     ((PiLp.instNorm 2 fun x => Real).norm
+--                       (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                         (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                         (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--                     2)
+--                   (instHMul.hMul (instHDiv.hDiv (instHPow.hPow 𝓕.c.val 2) 2)
+--                     (Finset.univ.sum fun i =>
+--                       Finset.univ.sum fun j =>
+--                         instHPow.hPow
+--                           (Real.norm.norm
+--                             (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A
+--                               (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                               (ContinuousLinearMap.funLike.coe SpaceTime.space x) { fst := i, snd := j }))
+--                           2))))
+--               (instHMul.hMul 𝓕.ε₀
+--                 (instInnerOfInnerProductSpace'.inner Real
+--                   (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                     (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x))
+--                   (Space.grad
+--                     (fun x_1 =>
+--                       Electromagnetism.ElectromagneticPotential.scalarPotential 𝓕.c A
+--                         (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x) x_1)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x)))))
+--             (instHMul.hMul
+--               (Electromagnetism.ElectromagneticPotential.scalarPotential 𝓕.c A
+--                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x) (ContinuousLinearMap.funLike.coe SpaceTime.space x))
+--               (Electromagnetism.LorentzCurrentDensity.chargeDensity 𝓕.c J
+--                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                 (ContinuousLinearMap.funLike.coe SpaceTime.space x))))
+--           (Finset.univ.sum fun i =>
+--             instHMul.hMul
+--               ((Electromagnetism.ElectromagneticPotential.vectorPotential 𝓕.c A
+--                     (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--                 i)
+--               ((Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J
+--                     (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--                 i)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire_vectorPotential_thrd)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_vectorpotential_thrd : ∀ {η : SchwartzMap (Prod Time Space) Real} (𝓕 : Electromagnetism.FreeSpace) (I : Real),
+--   Eq
+--     ((ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c)
+--             (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I))
+--           η).ofLp
+--       2)
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_differentiable : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))},
+--   ContDiff Real 2 A → Differentiable Real fun x => Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) μν
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticlecurrentdensity : SpeedOfLight → Real → Space 1 → Electromagnetism.DistLorentzCurrentDensity 1
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle : Electromagnetism.FreeSpace → Real → Space → Electromagnetism.DistElectromagneticPotential
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB.eq_2)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_eq_2 : ∀ {d : Nat} (c : SpeedOfLight) (E₀ : EuclideanSpace Real (Fin d)) (B₀ : Prod (Fin d) (Fin d) → Real)
+--   (B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i })))
+--   (x : SpaceTime d) (i : Fin d),
+--   Eq (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm x (Sum.inr i))
+--     (instHMul.hMul (1 / 2)
+--       (Finset.univ.sum fun j =>
+--         instHMul.hMul (B₀ { fst := i, snd := j }) ((ContinuousLinearMap.funLike.coe SpaceTime.space x).val j)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_differentiable_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_differentiable_space : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (ij : Prod (Fin d) (Fin d)),
+--       Differentiable Real fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x ij
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.toTensor_fieldStrengthAux)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_totensor_fieldstrengthaux : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.fieldStrengthAux ε))
+--     (instHSub.hSub
+--       (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--           (LinearMap.instFunLike.coe
+--             (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--               (EquivLike.toFunLike.coe
+--                 (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                     (Matrix.vecCons realLorentzTensor.Color.up
+--                       (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                 (realLorentzTensor.contrMetric d)))
+--             (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--               (ContinuousLinearMap.funLike.coe
+--                 (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A) ε)))))
+--       (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT (Matrix.vecCons 1 (Matrix.vecCons 0 Matrix.vecEmpty)) ⋯)
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--           (LinearMap.instFunLike.coe
+--             (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--               (EquivLike.toFunLike.coe
+--                 (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                     (Matrix.vecCons realLorentzTensor.Color.up
+--                       (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                 (realLorentzTensor.contrMetric d)))
+--             (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--               (ContinuousLinearMap.funLike.coe
+--                 (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A) ε))))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradKineticTerm)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradkineticterm : {d : Nat} → Electromagnetism.FreeSpace → Electromagnetism.ElectromagneticPotential d → SpaceTime d → Lorentz.Vector d
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.canonicalMomentum.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_canonicalmomentum_eq_1 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (A : Electromagnetism.ElectromagneticPotential d)
+--   (J : Electromagnetism.LorentzCurrentDensity d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.canonicalMomentum 𝓕 A J x)
+--     (instHSub.hSub
+--       (gradient
+--         (fun v =>
+--           Electromagnetism.ElectromagneticPotential.lagrangian 𝓕
+--             (fun x => instHAdd.hAdd (A x) (instHSMul.hSMul (x (Sum.inl 0)) v)) J x)
+--         0)
+--       (instHSMul.hSMul (x (Sum.inl 0))
+--         (gradient (fun v => Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 (fun x => instHAdd.hAdd (A x) v) J x)
+--           0)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.spaceTime_deriv_action_eq_sum)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_spacetime_deriv_action_eq_sum : ∀ {d : Nat} {μ ν : Sum (Fin 1) (Fin d)} {x : SpaceTime d} (Λ : (LorentzGroup d).Elem)
+--   (A : Electromagnetism.ElectromagneticPotential d),
+--   Differentiable Real A →
+--     Eq
+--       (SpaceTime.deriv μ
+--         (fun x => instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x))) x ν)
+--       (Finset.univ.sum fun κ =>
+--         Finset.univ.sum fun ρ =>
+--           instHMul.hMul (instHMul.hMul (Λ.val ν κ) ((DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ).val ρ μ))
+--             (SpaceTime.deriv ρ A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x) κ))
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.ctorIdx)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_ctoridx : Electromagnetism.FreeSpace → Nat
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_electricField_succ_time_deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_electricfield_succ_time_deriv : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i : Fin d),
+--       Eq
+--         (Time.deriv
+--           (fun t =>
+--             (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c
+--                   (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--               i.succ)
+--           t)
+--         (instHMul.hMul (instHMul.hMul (instHMul.hMul (Real.instNeg.neg k) 𝓕.c.val) (E₀ i))
+--           (Real.sin
+--             (instHAdd.hAdd (instHSub.hSub (instHMul.hMul (instHMul.hMul k 𝓕.c.val) t.val) (instHMul.hMul k (x.val 0)))
+--               (φ i))))
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity : {d : Nat} →
+--   optParam SpeedOfLight 1 → Electromagnetism.LorentzCurrentDensity d → Time → Space d → EuclideanSpace Real (Fin d)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrengthAux.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrengthaux_eq_1 : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq (A.fieldStrengthAux ε)
+--     (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor.symm
+--       (LinearMap.instFunLike.coe
+--         (TensorSpecies.Tensor.permT id Electromagnetism.ElectromagneticPotential.toFieldStrength._proof_3)
+--         (instHAdd.hAdd
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--             (LinearMap.instFunLike.coe
+--               (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                 (EquivLike.toFunLike.coe
+--                   (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                       (Matrix.vecCons realLorentzTensor.Color.up
+--                         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                   (realLorentzTensor.contrMetric d)))
+--               (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--                 (ContinuousLinearMap.funLike.coe
+--                   (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A) ε))))
+--           (LinearMap.instFunLike.coe
+--             (TensorSpecies.Tensor.permT (Matrix.vecCons 1 (Matrix.vecCons 0 Matrix.vecEmpty))
+--               Electromagnetism.ElectromagneticPotential.toFieldStrength._proof_7)
+--             (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--               (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--                 (LinearMap.instFunLike.coe
+--                   (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                     (EquivLike.toFunLike.coe
+--                       (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                           (Matrix.vecCons realLorentzTensor.Color.up
+--                             (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                       (realLorentzTensor.contrMetric d)))
+--                   (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--                     (ContinuousLinearMap.funLike.coe
+--                       (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A) ε)))))))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_antisymm)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_antisymm : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d) (t : Time) (x : Space d) (i j : Fin d),
+--   Eq (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := i, snd := j })
+--     (Real.instNeg.neg (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := j, snd := i }))
+
+-- Source: PhysLean (Electromagnetism.EMSystem.μ₀)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_emsystem_μ₀ : Electromagnetism.EMSystem → Real
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_eq_1 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A x)
+--     (instHMul.hMul (instHDiv.hDiv (-1) (instHMul.hMul 4 𝓕.μ₀))
+--       (LinearMap.instFunLike.coe TensorSpecies.Tensor.toField
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 0 0 1 ⋯)
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 3 ⋯)
+--             (LinearMap.instFunLike.coe
+--               (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                 (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 0 3 ⋯)
+--                   (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 4 2 5 ⋯)
+--                     (LinearMap.instFunLike.coe
+--                       (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                         (LinearMap.instFunLike.coe
+--                           (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                             (EquivLike.toFunLike.coe
+--                               (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                                   (Matrix.vecCons realLorentzTensor.Color.down
+--                                     (Matrix.vecCons realLorentzTensor.Color.down Matrix.vecEmpty))).toTensor
+--                               (realLorentzTensor.coMetric d)))
+--                           (EquivLike.toFunLike.coe
+--                             (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                                 (Matrix.vecCons realLorentzTensor.Color.down
+--                                   (Matrix.vecCons realLorentzTensor.Color.down Matrix.vecEmpty))).toTensor
+--                             (realLorentzTensor.coMetric d))))
+--                       (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.toFieldStrength x))))))
+--               (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.toFieldStrength x)))))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.isExtrema_iff_tensors)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isextrema_iff_tensors : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         Iff (Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A J)
+--           (∀ (x : SpaceTime d),
+--             Eq
+--               (instHAdd.hAdd
+--                 (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 1 0 1 ⋯)
+--                   (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--                     (instHSMul.hSMul (instHDiv.hDiv 1 𝓕.μ₀) (SpaceTime.tensorDeriv A.toFieldStrength x))))
+--                 (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT (Matrix.vecCons 0 Matrix.vecEmpty) ⋯)
+--                   (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--                     (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor (J x)))))
+--               0)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_time_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_time_contdiff : ∀ {d : Nat} {n : WithTop ENat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (instHAdd.hAdd n 1) A →
+--     ∀ (x : Space d) (ij : Prod (Fin d) (Fin d)),
+--       ContDiff Real n fun t => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x ij
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire_scalarPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_scalarpotential : ∀ (𝓕 : Electromagnetism.FreeSpace) (I : Real),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.scalarPotential 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.freeCurrentPotential.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_freecurrentpotential_eq_1 : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (J : Electromagnetism.LorentzCurrentDensity d)
+--   (x : SpaceTime d),
+--   Eq (A.freeCurrentPotential J x)
+--     (ContinuousLinearMap.funLike.coe (ContinuousLinearMap.funLike.coe Lorentz.Vector.minkowskiProduct (A x)) (J x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.time_deriv_magneticFieldMatrix_eq_electricField_mul_propogator)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_time_deriv_magneticfieldmatrix_eq_electricfield_mul_propogator : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d},
+--   Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s →
+--     ContDiff Real 2 A →
+--       ∀ (t : Time) (x : Space d) (i j : Fin d),
+--         Eq
+--           (Time.deriv
+--             (fun x_1 =>
+--               Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A x_1 x { fst := i, snd := j })
+--             t)
+--           (Time.deriv
+--             (fun t =>
+--               instHSub.hSub
+--                 (instHMul.hMul (instHDiv.hDiv (s.unit.val j) 𝓕.c.val)
+--                   ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp i))
+--                 (instHMul.hMul (instHDiv.hDiv (s.unit.val i) 𝓕.c.val)
+--                   ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp j)))
+--             t)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_magneticfieldmatrix_eq_1 : ∀ {d : Nat} (c : SpeedOfLight),
+--   Eq (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix c)
+--     {
+--       toFun := fun A =>
+--         {
+--               toLinearMap :=
+--                 TensorProduct.map (Lorentz.Vector.spatialCLM d).toLinearMap (Lorentz.Vector.spatialCLM d).toLinearMap,
+--               cont := ⋯ }.comp
+--           (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c)
+--             (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A)),
+--       map_add' := ⋯, map_smul' := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFieldMatrix_space_deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfieldmatrix_space_deriv : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s),
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (x : Space d) (i j k : Fin d),
+--       Eq
+--         (Space.deriv k
+--           (fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := i, snd := j }) x)
+--         (instHSMul.hSMul (s.unit.val k)
+--           (ContinuousLinearMap.funLike.coe
+--             (fderiv Real (fun u => P.magneticFunction u { fst := i, snd := j })
+--               (instHSub.hSub (Space.instInnerReal.inner Real x s.unit) (instHMul.hMul 𝓕.c.val t.val)))
+--             1))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticField_snd_eq_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfield_snd_eq_fieldstrengthmatrix : ∀ {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential) (t : Time) (x : Space),
+--   Differentiable Real A →
+--     Eq ((Electromagnetism.ElectromagneticPotential.magneticField c A t x).ofLp 1)
+--       (Finsupp.instFunLike.coe
+--         (A.fieldStrengthMatrix (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x }))
+--         { fst := Sum.inr 0, snd := Sum.inr 2 })
+
+-- Source: PhysLean (Electromagnetism.EMSystem.c)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_emsystem_c : Electromagnetism.EMSystem → Real
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_differentiable : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real),
+--   Differentiable Real (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.time_deriv_comp_vectorPotential_eq_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_time_deriv_comp_vectorpotential_eq_electricfield : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   Differentiable Real A →
+--     ∀ (t : Time) (x : Space d) (i : Fin d),
+--       Eq (Time.deriv (fun t => (Electromagnetism.ElectromagneticPotential.vectorPotential c A t x).ofLp i) t)
+--         (instHSub.hSub (Real.instNeg.neg ((Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i))
+--           (Space.deriv i (Electromagnetism.ElectromagneticPotential.scalarPotential c A t) x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_eq_electric_magnetic)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_eq_electric_magnetic : ∀ {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential) (t : Time) (x : Space),
+--   Differentiable Real A →
+--     Eq
+--       (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A
+--         (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace 𝓕.c).symm { fst := t, snd := x }))
+--       (instHMul.hMul (1 / 2)
+--         (instHSub.hSub
+--           (instHMul.hMul 𝓕.ε₀
+--             (instHPow.hPow
+--               ((PiLp.instNorm 2 fun x => Real).norm (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x))
+--               2))
+--           (instHMul.hMul (instHDiv.hDiv 1 𝓕.μ₀)
+--             (instHPow.hPow
+--               ((PiLp.instNorm 2 fun x => Real).norm (Electromagnetism.ElectromagneticPotential.magneticField 𝓕.c A t x))
+--               2))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.scalarPotential_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_scalarpotential_contdiff : ∀ {n : WithTop ENat} {d : Nat} (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real n A →
+--     ContDiff Real n
+--       (Function.hasUncurryInduction.uncurry (Electromagnetism.ElectromagneticPotential.scalarPotential c A))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_eq_1 : ∀ (𝓕 : Electromagnetism.FreeSpace) (I : Real),
+--   Eq (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I)
+--     (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (LinearMap.instFunLike.coe (Space.constantSliceDist 0)
+--           (instHSMul.hSMul (instHDiv.hDiv (instHMul.hMul (Real.instNeg.neg I) 𝓕.μ₀) (instHMul.hMul 2 Real.pi))
+--             (Space.distOfFunction
+--               (fun x =>
+--                 instHSMul.hSMul (Real.log (Space.instNorm.norm x))
+--                   (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inr 0)))
+--               Electromagnetism.DistElectromagneticPotential.infiniteWire._proof_2)))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticlecurrentdensity_eq_1 : ∀ (c : SpeedOfLight) (q : Real) (r₀ : Space),
+--   Eq (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity c q r₀)
+--     (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c).symm
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (instHSMul.hSMul (instHMul.hMul c.val q)
+--           (Distribution.diracDelta' Real r₀ (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0))))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.isExterma_equivariant)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_isexterma_equivariant : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d) (Λ : (LorentzGroup d).Elem),
+--   Iff (Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕 (instHSMul.hSMul Λ A) (instHSMul.hSMul Λ J))
+--     (Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕 A J)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_eq_sum_potential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_eq_sum_potential : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A x)
+--     (instHMul.hMul (instHDiv.hDiv (-1) (instHMul.hMul 2 𝓕.μ₀))
+--       (Finset.univ.sum fun μ =>
+--         Finset.univ.sum fun ν =>
+--           instHSub.hSub
+--             (instHMul.hMul (instHMul.hMul (minkowskiMatrix μ μ) (minkowskiMatrix ν ν))
+--               (instHPow.hPow (SpaceTime.deriv μ A x ν) 2))
+--             (instHMul.hMul (SpaceTime.deriv μ A x ν) (SpaceTime.deriv ν A x μ))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_vectorPotential_succ_space_deriv_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_vectorpotential_succ_space_deriv_zero : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i : Fin d),
+--       Eq
+--         (Space.deriv 0
+--           (fun x =>
+--             (Electromagnetism.ElectromagneticPotential.vectorPotential 𝓕.c
+--                   (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--               i.succ)
+--           x)
+--         (instHMul.hMul (instHDiv.hDiv (E₀ i) 𝓕.c.val)
+--           (Real.cos
+--             (instHAdd.hAdd (instHSub.hSub (instHMul.hMul (instHMul.hMul 𝓕.c.val k) t.val) (instHMul.hMul k (x.val 0)))
+--               (φ i))))
+
+-- Source: PhysLean (Electromagnetism.DistLorentzCurrentDensity.chargeDensity.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distlorentzcurrentdensity_chargedensity_eq_1 : ∀ {d : Nat} (c : SpeedOfLight),
+--   Eq (Electromagnetism.DistLorentzCurrentDensity.chargeDensity c)
+--     {
+--       toFun := fun J =>
+--         instHSMul.hSMul (instHDiv.hDiv 1 c.val)
+--           ((Lorentz.Vector.temporalCLM d).comp (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c) J)),
+--       map_add' := ⋯, map_smul' := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradFreeCurrentPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradfreecurrentpotential : {d : Nat} →
+--   Electromagnetism.ElectromagneticPotential d →
+--     Electromagnetism.LorentzCurrentDensity d → SpaceTime d → Lorentz.Vector d
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix_eq_vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_magneticfieldmatrix_eq_vectorpotential : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (Prod Time (Space d)) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix c) A) ε)
+--     (Finset.univ.sum fun i =>
+--       Finset.univ.sum fun j =>
+--         instHSMul.hSMul
+--           (instHSub.hSub
+--             ((ContinuousLinearMap.funLike.coe
+--                   (LinearMap.instFunLike.coe (Space.distSpaceDeriv j)
+--                     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential c) A))
+--                   ε).ofLp
+--               i)
+--             ((ContinuousLinearMap.funLike.coe
+--                   (LinearMap.instFunLike.coe (Space.distSpaceDeriv i)
+--                     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential c) A))
+--                   ε).ofLp
+--               j))
+--           (TensorProduct.tmul Real (OrthonormalBasis.instFunLike.coe (EuclideanSpace.basisFun (Fin d) Real) i)
+--             (OrthonormalBasis.instFunLike.coe (EuclideanSpace.basisFun (Fin d) Real) j)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle_vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle_vectorpotential : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space 1),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle 𝓕 q r₀))
+--     0
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradKineticTerm_sum_inl_eq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradkineticterm_sum_inl_eq : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.gradKineticTerm 𝓕) A) ε (Sum.inl 0))
+--     (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 𝓕.μ₀ 𝓕.c.val))
+--       (ContinuousLinearMap.funLike.coe
+--         (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--           (LinearMap.instFunLike.coe Space.distSpaceDiv
+--             (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c) A)))
+--         ε))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_magneticFieldMatrix_succ_succ)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_magneticfieldmatrix_succ_succ : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ)
+--   (i j : Fin d),
+--   Eq
+--     (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c
+--       (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x { fst := i.succ, snd := j.succ })
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_smul)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_smul : ∀ {d : Nat} (c : Real) (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Differentiable Real A → Eq ((instHSMul.hSMul c A).toFieldStrength x) (instHSMul.hSMul c (A.toFieldStrength x))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.toTensor_deriv_basis_repr_apply)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_totensor_deriv_basis_repr_apply : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real)
+--   (b :
+--     TensorSpecies.Tensor.ComponentIdx
+--       (Fin.append (Matrix.vecCons realLorentzTensor.Color.down Matrix.vecEmpty)
+--         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe
+--         (TensorSpecies.Tensor.basis
+--             (Fin.append (Matrix.vecCons realLorentzTensor.Color.down Matrix.vecEmpty)
+--               (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).repr
+--         (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--           (ContinuousLinearMap.funLike.coe
+--             (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A) ε)))
+--       b)
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe (SpaceTime.distDeriv (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 0))) A) ε
+--       (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 1)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.canonicalMomentum)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_canonicalmomentum : {d : Nat} →
+--   Electromagnetism.FreeSpace →
+--     Electromagnetism.ElectromagneticPotential d →
+--       Electromagnetism.LorentzCurrentDensity d → SpaceTime d → Lorentz.Vector d
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.freeCurrentPotential_eq_sum_scalarPotential_vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_freecurrentpotential_eq_sum_scalarpotential_vectorpotential : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (A : Electromagnetism.ElectromagneticPotential d)
+--   (J : Electromagnetism.LorentzCurrentDensity d) (x : SpaceTime d),
+--   Eq (A.freeCurrentPotential J x)
+--     (instHSub.hSub
+--       (instHMul.hMul
+--         (Electromagnetism.ElectromagneticPotential.scalarPotential 𝓕.c A
+--           (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x) (ContinuousLinearMap.funLike.coe SpaceTime.space x))
+--         (Electromagnetism.LorentzCurrentDensity.chargeDensity 𝓕.c J (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--           (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--       (Finset.univ.sum fun i =>
+--         instHMul.hMul
+--           ((Electromagnetism.ElectromagneticPotential.vectorPotential 𝓕.c A
+--                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                 (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--             i)
+--           ((Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J
+--                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                 (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--             i)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.lagrangian_hasVarGradientAt_eq_add_gradKineticTerm)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_lagrangian_hasvargradientat_eq_add_gradkineticterm : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         HasVarGradientAt (fun A => Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 A J)
+--           (instHSub.hSub (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A) (A.gradFreeCurrentPotential J))
+--           A
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_electricField_space_deriv_same)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_electricfield_space_deriv_same : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i : Fin d.succ),
+--       Eq
+--         (Space.deriv i
+--           (fun x =>
+--             (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c
+--                   (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--               i)
+--           x)
+--         0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFieldMatrix_eq_propogator_cross_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfieldmatrix_eq_propogator_cross_electricfield : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d},
+--   Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s →
+--     ContDiff Real 2 A →
+--       ∀ (i j : Fin d),
+--         Exists fun C =>
+--           ∀ (t : Time) (x : Space d),
+--             Eq (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := i, snd := j })
+--               (instHAdd.hAdd
+--                 (instHMul.hMul (instHDiv.hDiv 1 𝓕.c.val)
+--                   (instHSub.hSub
+--                     (instHMul.hMul (s.unit.val j)
+--                       ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp i))
+--                     (instHMul.hMul (s.unit.val i)
+--                       ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp j))))
+--                 C)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_eq_1 : ∀ {d : Nat} (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential d) (t : Time) (x : Space d),
+--   Eq (Electromagnetism.ElectromagneticPotential.electricField c A t x)
+--     (instHSub.hSub
+--       (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--         (Space.grad (Electromagnetism.ElectromagneticPotential.scalarPotential c A t) x))
+--       (Time.deriv (fun t => Electromagnetism.ElectromagneticPotential.vectorPotential c A t x) t))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradKineticTerm)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradkineticterm : {d : Nat} →
+--   Electromagnetism.FreeSpace →
+--     LinearMap (RingHom.id Real) (Electromagnetism.DistElectromagneticPotential d)
+--       (Distribution Real (SpaceTime d) (Lorentz.Vector d))
+
+-- Source: PhysLean (Electromagnetism.EMSystem.ctorIdx)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_emsystem_ctoridx : Electromagnetism.EMSystem → Nat
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_differentiable : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d}, ContDiff Real 2 A → Differentiable Real A.toFieldStrength
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_equivariant)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_equivariant : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d)
+--   (Λ : (LorentzGroup d).Elem),
+--   Differentiable Real A →
+--     ∀ (x : SpaceTime d),
+--       Eq
+--         (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕
+--           (fun x => instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x))) x)
+--         (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A
+--           (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.lagrangian_hasVarGradientAt_gradLagrangian)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_lagrangian_hasvargradientat_gradlagrangian : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         HasVarGradientAt (fun A => Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 A J)
+--           (Electromagnetism.ElectromagneticPotential.gradLagrangian 𝓕 A J) A
+
+-- Source: PhysLean (Electromagnetism.DistLorentzCurrentDensity.currentDensity.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distlorentzcurrentdensity_currentdensity_eq_1 : ∀ {d : Nat} (c : SpeedOfLight),
+--   Eq (Electromagnetism.DistLorentzCurrentDensity.currentDensity c)
+--     { toFun := fun J => (Lorentz.Vector.spatialCLM d).comp (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c) J),
+--       map_add' := ⋯, map_smul' := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex : {d : Nat} →
+--   Electromagnetism.FreeSpace → Real → (Fin d → Real) → (Fin d → Real) → Electromagnetism.ElectromagneticPotential d.succ
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_contdiff : ∀ {d : Nat} {n : WithTop ENat} {c : SpeedOfLight} {A : Electromagnetism.ElectromagneticPotential d},
+--   ContDiff Real (instHAdd.hAdd n 1) A →
+--     ContDiff Real n (Function.hasUncurryInduction.uncurry (Electromagnetism.ElectromagneticPotential.electricField c A))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_eq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_eq : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   Eq (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A) fun t x ij =>
+--     Finsupp.instFunLike.coe
+--       (A.fieldStrengthMatrix (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x }))
+--       { fst := Sum.inr ij.fst, snd := Sum.inr ij.snd }
+
+-- Source: PhysLean (Electromagnetism.ChargeDensity)
+/-- The charge density.  -/
+axiom electromagnetism_chargedensity :
+  Type
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_const)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_const : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A₀ : Lorentz.Vector d),
+--   Eq (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 fun x => A₀) 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.curl_magneticFieldMatrix_eq_electricField_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_curl_magneticfieldmatrix_eq_electricfield_fieldstrengthmatrix : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (x : Space d) (i : Fin d),
+--       Eq
+--         (Finset.univ.sum fun j =>
+--           Space.deriv j
+--             (fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := j, snd := i }) x)
+--         (instHAdd.hAdd
+--           (instHMul.hMul (instHDiv.hDiv 1 (instHPow.hPow c.val 2))
+--             ((Time.deriv (fun t => Electromagnetism.ElectromagneticPotential.electricField c A t x) t).ofLp i))
+--           (Finset.univ.sum fun μ =>
+--             SpaceTime.deriv μ
+--               (fun x => Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := Sum.inr i })
+--               (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x })))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_add)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_add : ∀ {d : Nat} (A1 A2 : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Differentiable Real A1 →
+--     Differentiable Real A2 →
+--       Eq ((instHAdd.hAdd A1 A2).toFieldStrength x) (instHAdd.hAdd (A1.toFieldStrength x) (A2.toFieldStrength x))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrengthAux)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrengthaux : {d : Nat} →
+--   Electromagnetism.DistElectromagneticPotential d →
+--     SchwartzMap (SpaceTime d) Real → TensorProduct Real (Lorentz.Vector d) (Lorentz.Vector d)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix_one_dim_eq_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_magneticfieldmatrix_one_dim_eq_zero : ∀ {c : SpeedOfLight} (A : Electromagnetism.DistElectromagneticPotential 1),
+--   Eq (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix c) A) 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_differentiable_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_differentiable_time : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))},
+--   ContDiff Real 2 A →
+--     ∀ (x : Space d) {c : SpeedOfLight},
+--       Differentiable Real fun t =>
+--         Finsupp.instFunLike.coe
+--           (A.fieldStrengthMatrix (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x })) μν
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradKineticTerm_eq_tensorDeriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradkineticterm_eq_tensorderiv : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (ν : Sum (Fin 1) (Fin d)),
+--       Eq (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A x ν)
+--         (instHMul.hMul (minkowskiMatrix ν ν)
+--           (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor.symm
+--             (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--               (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 1 0 1 ⋯)
+--                 (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--                   (instHSMul.hSMul (instHDiv.hDiv 1 𝓕.μ₀) (SpaceTime.tensorDeriv A.toFieldStrength x)))))
+--             ν))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity_eq_distTranslate)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticlecurrentdensity_eq_disttranslate : ∀ (c : SpeedOfLight) (q : Real) (r₀ : Space 1),
+--   Eq (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity c q r₀)
+--     (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c).symm
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (LinearMap.instFunLike.coe (Space.distTranslate (EquivLike.toFunLike.coe Space.basis.repr r₀))
+--           (instHSMul.hSMul (instHMul.hMul c.val q)
+--             (Distribution.diracDelta' Real 0 (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_eq_electric_magnetic')
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_eq_electric_magnetic' : ∀ {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential},
+--   Differentiable Real A →
+--     ∀ (x : SpaceTime),
+--       Eq (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A x)
+--         (instHMul.hMul (1 / 2)
+--           (instHSub.hSub
+--             (instHMul.hMul 𝓕.ε₀
+--               (instHPow.hPow
+--                 ((PiLp.instNorm 2 fun x => Real).norm
+--                   (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                     (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--                 2))
+--             (instHMul.hMul (instHDiv.hDiv 1 𝓕.μ₀)
+--               (instHPow.hPow
+--                 ((PiLp.instNorm 2 fun x => Real).norm
+--                   (Electromagnetism.ElectromagneticPotential.magneticField 𝓕.c A
+--                     (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--                 2))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.scalarPotential.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_scalarpotential_eq_1 : ∀ {d : Nat} (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential d),
+--   Eq (Electromagnetism.ElectromagneticPotential.scalarPotential c A)
+--     (EquivLike.toFunLike.coe (SpaceTime.timeSlice c) fun x => instHMul.hMul c.val (A x (Sum.inl 0)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_apply_x_boost_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_apply_x_boost_zero : ∀ {d : Nat} {c : SpeedOfLight} (β : Real) (hβ : Real.instLT.lt (abs β) 1)
+--   (A : Electromagnetism.ElectromagneticPotential d.succ),
+--   Differentiable Real A →
+--     ∀ (t : Time) (x : Space d.succ),
+--       have Λ := LorentzGroup.boost 0 β hβ;
+--       have t' :=
+--         {
+--           val :=
+--             instHMul.hMul (LorentzGroup.γ β) (instHAdd.hAdd t.val (instHMul.hMul (instHDiv.hDiv β c.val) (x.val 0))) };
+--       have x' :=
+--         {
+--           val := fun x_1 =>
+--             Electromagnetism.ElectromagneticPotential.electricField_apply_x_boost_zero.match_1 (fun x => Real) x_1
+--               (fun _ =>
+--                 instHMul.hMul (LorentzGroup.γ β)
+--                   (instHAdd.hAdd (x.val 0) (instHMul.hMul (instHMul.hMul c.val β) t.val)))
+--               fun n ih => x.val ⟨n.succ, ih⟩ };
+--       Eq
+--         ((Electromagnetism.ElectromagneticPotential.electricField c
+--               (fun x =>
+--                 instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x)))
+--               t x).ofLp
+--           0)
+--         ((Electromagnetism.ElectromagneticPotential.electricField c A t' x').ofLp 0)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_smul)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_smul : ∀ {d : Nat} (c : Real) (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Differentiable Real A → Eq ((instHSMul.hSMul c A).fieldStrengthMatrix x) (instHSMul.hSMul c (A.fieldStrengthMatrix x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradKineticTerm_eq_electric_magnetic)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradkineticterm_eq_electric_magnetic : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     Eq (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A x)
+--       (instHAdd.hAdd
+--         (instHSMul.hSMul
+--           (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 𝓕.μ₀ 𝓕.c.val))
+--             (Space.div
+--               (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x))
+--               (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--           (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))
+--         (Finset.univ.sum fun i =>
+--           instHSMul.hSMul
+--             (instHMul.hMul (Real.instInv.inv 𝓕.μ₀)
+--               (instHSub.hSub
+--                 (instHMul.hMul (instHDiv.hDiv 1 (instHPow.hPow 𝓕.c.val 2))
+--                   ((Time.deriv
+--                         (fun t =>
+--                           Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t
+--                             (ContinuousLinearMap.funLike.coe SpaceTime.space x))
+--                         (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)).ofLp
+--                     i))
+--                 (Finset.univ.sum fun j =>
+--                   Space.deriv j
+--                     (fun x_1 =>
+--                       Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A
+--                         (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x) x_1 { fst := j, snd := i })
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x))))
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inr i))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.hamiltonian_eq_electricField_scalarPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_hamiltonian_eq_electricfield_scalarpotential : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d) (x : SpaceTime d),
+--       Eq (Electromagnetism.ElectromagneticPotential.hamiltonian 𝓕 A J x)
+--         (instHSub.hSub
+--           (instHMul.hMul (instHMul.hMul (instHDiv.hDiv 1 (instHPow.hPow 𝓕.c.val 2)) (Real.instInv.inv 𝓕.μ₀))
+--             (instHAdd.hAdd
+--               (instHPow.hPow
+--                 ((PiLp.instNorm 2 fun x => Real).norm
+--                   (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                     (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--                 2)
+--               (instInnerOfInnerProductSpace'.inner Real
+--                 (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                   (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                   (ContinuousLinearMap.funLike.coe SpaceTime.space x))
+--                 (Space.grad
+--                   (fun x_1 =>
+--                     Electromagnetism.ElectromagneticPotential.scalarPotential 𝓕.c A
+--                       (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x) x_1)
+--                   (ContinuousLinearMap.funLike.coe SpaceTime.space x)))))
+--           (Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 A J x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticField.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfield_eq_1 : ∀ (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential) (t : Time) (x : Space),
+--   Eq (Electromagnetism.ElectromagneticPotential.magneticField c A t x)
+--     (Space.curl (Electromagnetism.ElectromagneticPotential.vectorPotential c A t) x)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.canonicalMomentum_eq_gradient_kineticTerm)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_canonicalmomentum_eq_gradient_kineticterm : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       Eq (Electromagnetism.ElectromagneticPotential.canonicalMomentum 𝓕 A J) fun x =>
+--         gradient
+--           (fun v =>
+--             Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕
+--               (fun x => instHAdd.hAdd (A x) (instHSMul.hSMul (x (Sum.inl 0)) v)) x)
+--           0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_eq_electric_magnetic_of_spaceTime)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_eq_electric_magnetic_of_spacetime : ∀ (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential) (x : SpaceTime),
+--   Differentiable Real A →
+--     ∀ (μ ν : Sum (Fin 1) (Fin 3)),
+--       have tx := EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c) x;
+--       Eq (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := ν })
+--         (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_eq_electric_magnetic.match_3 (fun μ ν => Real) μ
+--           ν (fun _ => 0)
+--           (fun i =>
+--             instHDiv.hDiv
+--               (Real.instNeg.neg ((Electromagnetism.ElectromagneticPotential.electricField c A tx.fst tx.snd).ofLp i))
+--               c.val)
+--           (fun i =>
+--             instHDiv.hDiv ((Electromagnetism.ElectromagneticPotential.electricField c A tx.fst tx.snd).ofLp i) c.val)
+--           fun i j =>
+--           Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_eq_electric_magnetic.match_1 (fun i j => Real) i
+--             j (fun _ => 0)
+--             (fun _ =>
+--               Real.instNeg.neg ((Electromagnetism.ElectromagneticPotential.magneticField c A tx.fst tx.snd).ofLp 2))
+--             (fun _ => (Electromagnetism.ElectromagneticPotential.magneticField c A tx.fst tx.snd).ofLp 1)
+--             (fun _ => (Electromagnetism.ElectromagneticPotential.magneticField c A tx.fst tx.snd).ofLp 2) (fun _ => 0)
+--             (fun _ =>
+--               Real.instNeg.neg ((Electromagnetism.ElectromagneticPotential.magneticField c A tx.fst tx.snd).ofLp 0))
+--             (fun _ =>
+--               Real.instNeg.neg ((Electromagnetism.ElectromagneticPotential.magneticField c A tx.fst tx.snd).ofLp 1))
+--             (fun _ => (Electromagnetism.ElectromagneticPotential.magneticField c A tx.fst tx.snd).ofLp 0) fun _ => 0)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradLagrangian_eq_tensor)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradlagrangian_eq_tensor : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         ∀ (x : SpaceTime d) (ν : Sum (Fin 1) (Fin d)),
+--           Eq (Electromagnetism.ElectromagneticPotential.gradLagrangian 𝓕 A J x ν)
+--             (instHMul.hMul (minkowskiMatrix ν ν)
+--               (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor.symm
+--                 (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--                   (instHAdd.hAdd
+--                     (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 1 0 1 ⋯)
+--                       (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--                         (instHSMul.hSMul (instHDiv.hDiv 1 𝓕.μ₀) (SpaceTime.tensorDeriv A.toFieldStrength x))))
+--                     (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT (Matrix.vecCons 0 Matrix.vecEmpty) ⋯)
+--                       (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--                         (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor (J x))))))
+--                 ν))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricField_eq_propogator_cross_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfield_eq_propogator_cross_magneticfieldmatrix : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d},
+--   Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s →
+--     ContDiff Real (WithTop.some instTopENat.top) A →
+--       Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A 0 →
+--         ∀ (i : Fin d),
+--           Exists fun C =>
+--             ∀ (t : Time) (x : Space d),
+--               Eq ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp i)
+--                 (instHAdd.hAdd
+--                   (instHMul.hMul 𝓕.c.val
+--                     (Finset.univ.sum fun j =>
+--                       instHMul.hMul
+--                         (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := i, snd := j })
+--                         (s.unit.val j)))
+--                   C)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrengthAux_eq_basis)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrengthaux_eq_basis : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq (A.fieldStrengthAux ε)
+--     (Finset.univ.sum fun μ =>
+--       Finset.univ.sum fun ν =>
+--         instHSMul.hSMul
+--           (instHSub.hSub
+--             (instHMul.hMul (minkowskiMatrix μ μ)
+--               (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv μ) A) ε ν))
+--             (instHMul.hMul (minkowskiMatrix ν ν)
+--               (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv ν) A) ε μ)))
+--           (TensorProduct.tmul Real (Module.Basis.instFunLike.coe Lorentz.Vector.basis μ)
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential_sum_inl_0)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradfreecurrentpotential_sum_inl_0 : ∀ (𝓕 : Electromagnetism.FreeSpace) {d : Nat} (J : Electromagnetism.DistLorentzCurrentDensity d)
+--   (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential J) ε
+--       (Sum.inl 0))
+--     (instHMul.hMul 𝓕.c.val
+--       (ContinuousLinearMap.funLike.coe
+--         (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.chargeDensity 𝓕.c) J))
+--         ε))
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity_differentiable_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_differentiable_space : ∀ {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Differentiable Real J →
+--     ∀ (t : Time), Differentiable Real fun x => Electromagnetism.LorentzCurrentDensity.currentDensity c J t x
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricField_space_deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfield_space_deriv : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s),
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (x : Space d) (i : Fin d),
+--       Eq (Space.deriv i (fun x => Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x) x)
+--         (instHSMul.hSMul (s.unit.val i)
+--           (ContinuousLinearMap.funLike.coe
+--             (fderiv Real P.electricFunction
+--               (instHSub.hSub (Space.instInnerReal.inner Real x s.unit) (instHMul.hMul 𝓕.c.val t.val)))
+--             1))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_vectorPotential_zero_eq_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_vectorpotential_zero_eq_zero : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ),
+--   Eq
+--     ((Electromagnetism.ElectromagneticPotential.vectorPotential 𝓕.c
+--           (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--       0)
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_eq_1 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real) (x : SpaceTime d.succ),
+--   Eq (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ x (Sum.inl 0)) 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toTensor_toFieldStrength_basis_repr)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_totensor_tofieldstrength_basis_repr : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d)
+--   (b :
+--     TensorSpecies.Tensor.ComponentIdx
+--       (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe
+--         (TensorSpecies.Tensor.basis
+--             (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--               (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).repr
+--         (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.toFieldStrength x)))
+--       b)
+--     (Finset.univ.sum fun κ =>
+--       instHSub.hSub
+--         (instHMul.hMul (minkowskiMatrix (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 0)) κ)
+--           (SpaceTime.deriv κ A x (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 1))))
+--         (instHMul.hMul (minkowskiMatrix (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 1)) κ)
+--           (SpaceTime.deriv κ A x (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 0)))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.hamiltonian.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_hamiltonian_eq_1 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (A : Electromagnetism.ElectromagneticPotential d)
+--   (J : Electromagnetism.LorentzCurrentDensity d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.hamiltonian 𝓕 A J x)
+--     (instHSub.hSub
+--       (Finset.univ.sum fun μ =>
+--         instHMul.hMul (Electromagnetism.ElectromagneticPotential.canonicalMomentum 𝓕 A J x μ)
+--           (SpaceTime.deriv (Sum.inl 0) A x μ))
+--       (Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 A J x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFunction_eq_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfunction_eq_magneticfieldmatrix : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s),
+--   Eq P.magneticFunction fun u =>
+--     Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A
+--       { val := instHDiv.hDiv (Real.instNeg.neg u) 𝓕.c.val } 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_equivariant)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_equivariant : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (Λ : (LorentzGroup d).Elem),
+--   Differentiable Real A →
+--     ∀ (x : SpaceTime d),
+--       Eq
+--         (Electromagnetism.ElectromagneticPotential.toFieldStrength
+--           (fun x => instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x))) x)
+--         (instHSMul.hSMul Λ
+--           (A.toFieldStrength (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x)))
+
+-- Source: PhysLean (Electromagnetism.EMSystem.ε₀)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_emsystem_ε₀ : Electromagnetism.EMSystem → Real
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential_comp_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential_comp_contdiff : ∀ {n : WithTop ENat} {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real n A →
+--     ∀ (i : Fin d),
+--       ContDiff Real n
+--         (Function.hasUncurryInduction.uncurry fun t x =>
+--           (Electromagnetism.ElectromagneticPotential.vectorPotential c A t x).ofLp i)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricFunction_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfunction_differentiable : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s),
+--   ContDiff Real 2 A → Differentiable Real P.electricFunction
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity_apply_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_apply_differentiable : ∀ {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Differentiable Real J →
+--     ∀ (i : Fin d),
+--       Differentiable Real
+--         (Function.hasUncurryInduction.uncurry fun t x =>
+--           (Electromagnetism.LorentzCurrentDensity.currentDensity c J t x).ofLp i)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle_magneticfieldmatrix : ∀ {𝓕 : Electromagnetism.FreeSpace} (q : Real) (r₀ : Space),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle 𝓕 q r₀))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_scalarPotential_eq_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_scalarpotential_eq_zero : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real),
+--   Eq
+--     (Electromagnetism.ElectromagneticPotential.scalarPotential 𝓕.c
+--       (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_apply_x_boost_zero_succ)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_apply_x_boost_zero_succ : ∀ {d : Nat} {c : SpeedOfLight} (β : Real) (hβ : Real.instLT.lt (abs β) 1)
+--   (A : Electromagnetism.ElectromagneticPotential d.succ),
+--   Differentiable Real A →
+--     ∀ (t : Time) (x : Space d.succ) (i : Fin d),
+--       have Λ := LorentzGroup.boost 0 β hβ;
+--       have t' :=
+--         {
+--           val :=
+--             instHMul.hMul (LorentzGroup.γ β) (instHAdd.hAdd t.val (instHMul.hMul (instHDiv.hDiv β c.val) (x.val 0))) };
+--       have x' :=
+--         {
+--           val := fun x_1 =>
+--             Electromagnetism.ElectromagneticPotential.electricField_apply_x_boost_zero.match_1 (fun x => Real) x_1
+--               (fun _ =>
+--                 instHMul.hMul (LorentzGroup.γ β)
+--                   (instHAdd.hAdd (x.val 0) (instHMul.hMul (instHMul.hMul c.val β) t.val)))
+--               fun n ih => x.val ⟨n.succ, ih⟩ };
+--       Eq
+--         (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c
+--           (fun x => instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x))) t
+--           x { fst := 0, snd := i.succ })
+--         (instHMul.hMul (LorentzGroup.γ β)
+--           (instHAdd.hAdd
+--             (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t' x' { fst := 0, snd := i.succ })
+--             (instHMul.hMul (instHDiv.hDiv β c.val)
+--               ((Electromagnetism.ElectromagneticPotential.electricField c A t' x').ofLp i.succ))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_eq_electric_magnetic)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_eq_electric_magnetic : ∀ {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential) (t : Time) (x : Space),
+--   Differentiable Real A →
+--     ∀ (μ ν : Sum (Fin 1) (Fin 3)),
+--       Eq
+--         (Finsupp.instFunLike.coe
+--           (A.fieldStrengthMatrix (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x }))
+--           { fst := μ, snd := ν })
+--         (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_eq_electric_magnetic.match_3 (fun μ ν => Real) μ
+--           ν (fun _ => 0)
+--           (fun i =>
+--             instHDiv.hDiv (Real.instNeg.neg ((Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i))
+--               c.val)
+--           (fun i => instHDiv.hDiv ((Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i) c.val)
+--           fun i j =>
+--           Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_eq_electric_magnetic.match_1 (fun i j => Real) i
+--             j (fun _ => 0)
+--             (fun _ => Real.instNeg.neg ((Electromagnetism.ElectromagneticPotential.magneticField c A t x).ofLp 2))
+--             (fun _ => (Electromagnetism.ElectromagneticPotential.magneticField c A t x).ofLp 1)
+--             (fun _ => (Electromagnetism.ElectromagneticPotential.magneticField c A t x).ofLp 2) (fun _ => 0)
+--             (fun _ => Real.instNeg.neg ((Electromagnetism.ElectromagneticPotential.magneticField c A t x).ofLp 0))
+--             (fun _ => Real.instNeg.neg ((Electromagnetism.ElectromagneticPotential.magneticField c A t x).ofLp 1))
+--             (fun _ => (Electromagnetism.ElectromagneticPotential.magneticField c A t x).ofLp 0) fun _ => 0)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_apply_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_apply_differentiable : ∀ {d : Nat} {i : Fin d} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   ContDiff Real 2 A →
+--     Differentiable Real fun tx => (Electromagnetism.ElectromagneticPotential.electricField c A tx.fst tx.snd).ofLp i
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix : {d : Nat} →
+--   Electromagnetism.ElectromagneticPotential d →
+--     SpaceTime d → Finsupp (Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))) Real
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.chargeDensity_differentiable_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_chargedensity_differentiable_space : ∀ {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Differentiable Real J →
+--     ∀ (t : Time), Differentiable Real fun x => Electromagnetism.LorentzCurrentDensity.chargeDensity c J t x
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFieldMatrix_eq_magneticFunction)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfieldmatrix_eq_magneticfunction : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s) (t : Time) (x : Space d),
+--   Eq (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x)
+--     (P.magneticFunction (instHSub.hSub (Space.instInnerReal.inner Real x s.unit) (instHMul.hMul 𝓕.c.val t.val)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradKineticTerm_sum_inr_eq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradkineticterm_sum_inr_eq : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (SpaceTime d) Real) (i : Fin d),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.gradKineticTerm 𝓕) A) ε (Sum.inr i))
+--     (instHMul.hMul (Real.instInv.inv 𝓕.μ₀)
+--       (instHSub.hSub
+--         (instHMul.hMul (instHDiv.hDiv 1 (instHPow.hPow 𝓕.c.val 2))
+--           ((ContinuousLinearMap.funLike.coe
+--                 (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--                   (LinearMap.instFunLike.coe Space.distTimeDeriv
+--                     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c) A)))
+--                 ε).ofLp
+--             i))
+--         (Finset.univ.sum fun j =>
+--           Finsupp.instFunLike.coe
+--             (EquivLike.toFunLike.coe ((PiLp.basisFun 2 Real (Fin d)).tensorProduct (PiLp.basisFun 2 Real (Fin d))).repr
+--               (ContinuousLinearMap.funLike.coe
+--                 (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--                   (LinearMap.instFunLike.coe (Space.distSpaceDeriv j)
+--                     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix 𝓕.c)
+--                       A)))
+--                 ε))
+--             { fst := j, snd := i })))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_contdiff : ∀ {d : Nat} (n : WithTop ENat) (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real),
+--   ContDiff Real n (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire : Electromagnetism.FreeSpace → Real → Electromagnetism.DistElectromagneticPotential
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticlecurrentdensity_eq_1 : ∀ (c : SpeedOfLight) (q : Real) (r₀ : Space 1),
+--   Eq (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity c q r₀)
+--     (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c).symm
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (instHSMul.hSMul (instHMul.hMul c.val q)
+--           (Distribution.diracDelta' Real r₀ (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0))))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrength_eq_basis)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrength_eq_basis : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A) ε)
+--     (Finset.univ.sum fun μ =>
+--       Finset.univ.sum fun ν =>
+--         instHSMul.hSMul
+--           (instHSub.hSub
+--             (instHMul.hMul (minkowskiMatrix μ μ)
+--               (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv μ) A) ε ν))
+--             (instHMul.hMul (minkowskiMatrix ν ν)
+--               (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv ν) A) ε μ)))
+--           (TensorProduct.tmul Real (Module.Basis.instFunLike.coe Lorentz.Vector.basis μ)
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradKineticTerm_smul)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradkineticterm_smul : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (c : Real),
+--       Eq (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 (instHSMul.hSMul c A))
+--         (instHSMul.hSMul c (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.scalarPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_scalarpotential : {d : Nat} → optParam SpeedOfLight 1 → Electromagnetism.ElectromagneticPotential d → Time → Space d → Real
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradKineticTerm_eq_electric_magnetic_three)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradkineticterm_eq_electric_magnetic_three : ∀ {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential) (x : SpaceTime),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     Eq (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A x)
+--       (instHAdd.hAdd
+--         (instHSMul.hSMul
+--           (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 𝓕.μ₀ 𝓕.c.val))
+--             (Space.div
+--               (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x))
+--               (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--           (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))
+--         (Finset.univ.sum fun i =>
+--           instHSMul.hSMul
+--             (instHMul.hMul (Real.instInv.inv 𝓕.μ₀)
+--               (instHSub.hSub
+--                 (instHMul.hMul (instHDiv.hDiv 1 (instHPow.hPow 𝓕.c.val 2))
+--                   ((Time.deriv
+--                         (fun t =>
+--                           Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t
+--                             (ContinuousLinearMap.funLike.coe SpaceTime.space x))
+--                         (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)).ofLp
+--                     i))
+--                 ((Space.curl
+--                       (Electromagnetism.ElectromagneticPotential.magneticField 𝓕.c A
+--                         (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x))
+--                       (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--                   i)))
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inr i))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_vectorPotential_succ)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_vectorpotential_succ : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i : Fin d),
+--   Eq
+--     ((Electromagnetism.ElectromagneticPotential.vectorPotential 𝓕.c
+--           (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--       i.succ)
+--     (instHMul.hMul (instHDiv.hDiv (instHMul.hMul (Real.instNeg.neg (E₀ i)) 1) (instHMul.hMul 𝓕.c.val k))
+--       (Real.sin (instHAdd.hAdd (instHMul.hMul k (instHSub.hSub (instHMul.hMul t.val 𝓕.c.val) (x.val 0))) (φ i))))
+
+-- Source: PhysLean (Electromagnetism.DistLorentzCurrentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distlorentzcurrentdensity : optParam Nat 3 → Type
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_eq_1 : ∀ {d : Nat} (c : SpeedOfLight) (J : Electromagnetism.LorentzCurrentDensity d) (t : Time) (x : Space d),
+--   Eq (Electromagnetism.LorentzCurrentDensity.currentDensity c J t x)
+--     {
+--       ofLp := fun i =>
+--         J (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x }) (Sum.inr i) }
+
+-- Source: PhysLean (Electromagnetism.DistLorentzCurrentDensity.currentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distlorentzcurrentdensity_currentdensity : {d : Nat} →
+--   SpeedOfLight →
+--     LinearMap (RingHom.id Real) (Electromagnetism.DistLorentzCurrentDensity d)
+--       (Distribution Real (Prod Time (Space d)) (EuclideanSpace Real (Fin d)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_smooth)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_smooth : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d},
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))),
+--       ContDiff Real (WithTop.some instTopENat.top) fun x => Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) μν
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength : {d : Nat} →
+--   Electromagnetism.ElectromagneticPotential d → SpaceTime d → TensorProduct Real (Lorentz.Vector d) (Lorentz.Vector d)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.canonicalMomentum_eq_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_canonicalmomentum_eq_electricfield : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       Eq (Electromagnetism.ElectromagneticPotential.canonicalMomentum 𝓕 A J) fun x μ =>
+--         Electromagnetism.ElectromagneticPotential.canonicalMomentum_eq_electricField.match_1 (fun μ => Real) μ
+--           (fun _ => 0) fun i =>
+--           instHMul.hMul (Real.instNeg.neg (instHDiv.hDiv 1 (instHMul.hMul 𝓕.μ₀ 𝓕.c.val)))
+--             ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                   (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                   (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--               i)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB_vectorPotential_space_deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_vectorpotential_space_deriv : ∀ {d : Nat} {c : SpeedOfLight} {E₀ : EuclideanSpace Real (Fin d)} {B₀ : Prod (Fin d) (Fin d) → Real}
+--   {B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i }))}
+--   (t : Time) (x : Space d) (i j : Fin d),
+--   Eq
+--     (Space.deriv i
+--       (fun x =>
+--         (Electromagnetism.ElectromagneticPotential.vectorPotential c
+--               (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm) t x).ofLp
+--           j)
+--       x)
+--     (instHMul.hMul (1 / 2) (B₀ { fst := j, snd := i }))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle_eq_distTranslate)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle_eq_disttranslate : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space 1),
+--   Eq (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle 𝓕 q r₀)
+--     (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (LinearMap.instFunLike.coe (Space.distTranslate (EquivLike.toFunLike.coe Space.basis.repr r₀))
+--           (Space.distOfFunction
+--             (fun x =>
+--               instHSMul.hSMul
+--                 (instHMul.hMul (instHDiv.hDiv (Real.instNeg.neg (instHMul.hMul (instHMul.hMul q 𝓕.μ₀) 𝓕.c.val)) 2)
+--                   (Space.instNorm.norm x))
+--                 (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))
+--             ⋯))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.deriv_eq_sum_sum)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_deriv_eq_sum_sum : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A)
+--       ε)
+--     (Finset.univ.sum fun μ =>
+--       Finset.univ.sum fun ν =>
+--         instHSMul.hSMul (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv μ) A) ε ν)
+--           (TensorProduct.tmul Real (Module.Basis.instFunLike.coe Lorentz.CoVector.basis μ)
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.scalarPotential_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_scalarpotential_differentiable : ∀ {d : Nat} (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential d),
+--   Differentiable Real A →
+--     Differentiable Real
+--       (Function.hasUncurryInduction.uncurry (Electromagnetism.ElectromagneticPotential.scalarPotential c A))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_apply_contDiff_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_apply_contdiff_time : ∀ {d : Nat} {i : Fin d} {n : WithTop ENat} {c : SpeedOfLight} {A : Electromagnetism.ElectromagneticPotential d},
+--   ContDiff Real (instHAdd.hAdd n 1) A →
+--     ∀ (x : Space d), ContDiff Real n fun t => (Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity_chargeDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticlecurrentdensity_chargedensity : ∀ (c : SpeedOfLight) (q : Real) (r₀ : Space 1),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.chargeDensity c)
+--       (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity c q r₀))
+--     (LinearMap.instFunLike.coe Space.constantTime (instHSMul.hSMul q (Distribution.diracDelta Real r₀)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricFunction.congr_simp)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfunction_congr_simp : ∀ {d : Nat} {𝓕 𝓕_1 : Electromagnetism.FreeSpace} (e_𝓕 : Eq 𝓕 𝓕_1) {A A_1 : Electromagnetism.ElectromagneticPotential d}
+--   (e_A : Eq A A_1) {s s_1 : Space.Direction d} (e_s : Eq s s_1)
+--   (hA : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s) (a a_1 : Real),
+--   Eq a a_1 → Eq (hA.electricFunction a) (⋯.electricFunction a_1)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrength)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrength : {d : Nat} →
+--   LinearMap (RingHom.id Real) (Electromagnetism.DistElectromagneticPotential d)
+--     (Distribution Real (SpaceTime d) (TensorProduct Real (Lorentz.Vector d) (Lorentz.Vector d)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.time_deriv_time_deriv_electricField_of_isExtrema)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_time_deriv_time_deriv_electricfield_of_isextrema : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {𝓕 : Electromagnetism.FreeSpace},
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A J →
+--           ∀ (t : Time) (x : Space d) (i : Fin d),
+--             Eq
+--               (Time.deriv
+--                 (Time.deriv fun x_1 => (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A x_1 x).ofLp i) t)
+--               (instHSub.hSub
+--                 (instHSub.hSub
+--                   (instHMul.hMul (instHPow.hPow 𝓕.c.val 2)
+--                     (Finset.univ.sum fun j =>
+--                       Space.deriv j
+--                         (Space.deriv j fun x =>
+--                           (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp i)
+--                         x))
+--                   (instHMul.hMul (instHDiv.hDiv (instHPow.hPow 𝓕.c.val 2) 𝓕.ε₀)
+--                     (Space.deriv i (fun x => Electromagnetism.LorentzCurrentDensity.chargeDensity 𝓕.c J t x) x)))
+--                 (instHMul.hMul (instHMul.hMul (instHPow.hPow 𝓕.c.val 2) 𝓕.μ₀)
+--                   (Time.deriv (fun x_1 => (Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J x_1 x).ofLp i)
+--                     t)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_eq_1 : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (A.fieldStrengthMatrix x)
+--     (EquivLike.toFunLike.coe (Lorentz.CoVector.basis.tensorProduct Lorentz.Vector.basis).repr (A.toFieldStrength x))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_vectorpotential : {d : Nat} →
+--   SpeedOfLight →
+--     LinearMap (RingHom.id Real) (Electromagnetism.DistElectromagneticPotential d)
+--       (Distribution Real (Prod Time (Space d)) (EuclideanSpace Real (Fin d)))
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.chargeDensity.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_chargedensity_eq_1 : ∀ {d : Nat} (c : SpeedOfLight) (J : Electromagnetism.LorentzCurrentDensity d) (t : Time) (x : Space d),
+--   Eq (Electromagnetism.LorentzCurrentDensity.chargeDensity c J t x)
+--     (instHMul.hMul (instHDiv.hDiv 1 c.val)
+--       (J (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x }) (Sum.inl 0)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_hasVarGradientAt)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_hasvargradientat : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     HasVarGradientAt (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕)
+--       (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A) A
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.isExtrema_lorentzGroup_apply_iff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isextrema_lorentzgroup_apply_iff : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         ∀ (Λ : (LorentzGroup d).Elem),
+--           Iff
+--             (Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕
+--               (fun x =>
+--                 instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x)))
+--               fun x => instHSMul.hSMul Λ (J (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x)))
+--             (Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A J)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.scalarPotential_contDiff_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_scalarpotential_contdiff_time : ∀ {n : WithTop ENat} {d : Nat} (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real n A →
+--     ∀ (x : Space d), ContDiff Real n fun x_1 => Electromagnetism.ElectromagneticPotential.scalarPotential c A x_1 x
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.ε₀)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_ε₀ : Electromagnetism.FreeSpace → Real
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.deriv_equivariant)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_deriv_equivariant : ∀ {d : Nat} {A : Electromagnetism.DistElectromagneticPotential d} (Λ : (LorentzGroup d).Elem),
+--   Eq (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv (instHSMul.hSMul Λ A))
+--     (instHSMul.hSMul Λ (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradLagrangian_sum_inl_0)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradlagrangian_sum_inl_0 : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe (Electromagnetism.DistElectromagneticPotential.gradLagrangian 𝓕 A J) ε (Sum.inl 0))
+--     (instHSub.hSub
+--       (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 𝓕.μ₀ 𝓕.c.val))
+--         (ContinuousLinearMap.funLike.coe
+--           (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--             (LinearMap.instFunLike.coe Space.distSpaceDiv
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c) A)))
+--           ε))
+--       (instHMul.hMul 𝓕.c.val
+--         (ContinuousLinearMap.funLike.coe
+--           (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--             (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.chargeDensity 𝓕.c) J))
+--           ε)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrength_equivariant)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrength_equivariant : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (Λ : (LorentzGroup d).Elem),
+--   Eq (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength (instHSMul.hSMul Λ A))
+--     (instHSMul.hSMul Λ (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_differentiable_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_differentiable_space : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))},
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) {c : SpeedOfLight},
+--       Differentiable Real fun x =>
+--         Finsupp.instFunLike.coe
+--           (A.fieldStrengthMatrix (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x })) μν
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.space_deriv_electricField_eq_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_space_deriv_electricfield_eq_magneticfieldmatrix : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d},
+--   Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s →
+--     ContDiff Real (WithTop.some instTopENat.top) A →
+--       Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A 0 →
+--         ∀ (t : Time) (x : Space d) (i k : Fin d),
+--           Eq (Space.deriv k (fun x => (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp i) x)
+--             (Space.deriv k
+--               (fun x =>
+--                 instHMul.hMul 𝓕.c.val
+--                   (Finset.univ.sum fun j =>
+--                     instHMul.hMul
+--                       (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := i, snd := j })
+--                       (s.unit.val j)))
+--               x)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.scalarPotential.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_scalarpotential_eq_1 : ∀ {d : Nat} (c : SpeedOfLight),
+--   Eq (Electromagnetism.DistElectromagneticPotential.scalarPotential c)
+--     {
+--       toFun := fun A =>
+--         (Lorentz.Vector.temporalCLM d).comp
+--           (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c) (instHSMul.hSMul c.val A)),
+--       map_add' := ⋯, map_smul' := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_isPlaneWave)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_isplanewave : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real),
+--       Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕
+--         (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ)
+--         { unit := OrthonormalBasis.instFunLike.coe Space.basis 0, norm := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_add_const)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_add_const : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (A₀ : Lorentz.Vector d),
+--   Eq (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 fun x => instHAdd.hAdd (A x) A₀)
+--     (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_antisymmetric)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_antisymmetric : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.toFieldStrength x))
+--     (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT (Matrix.vecCons 1 (Matrix.vecCons 0 Matrix.vecEmpty)) ⋯)
+--       (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--         (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.toFieldStrength x))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.scalarPotential_contDiff_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_scalarpotential_contdiff_space : ∀ {n : WithTop ENat} {d : Nat} (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real n A → ∀ (t : Time), ContDiff Real n (Electromagnetism.ElectromagneticPotential.scalarPotential c A t)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.vectorPotential.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_vectorpotential_eq_1 : ∀ {d : Nat} (c : SpeedOfLight),
+--   Eq (Electromagnetism.DistElectromagneticPotential.vectorPotential c)
+--     { toFun := fun A => (Lorentz.Vector.spatialCLM d).comp (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c) A),
+--       map_add' := ⋯, map_smul' := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield : {d : Nat} → optParam SpeedOfLight 1 → Electromagnetism.ElectromagneticPotential d → Electromagnetism.ElectricField d
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.time_deriv_time_deriv_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_time_deriv_time_deriv_magneticfieldmatrix : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 3 A →
+--     ∀ (t : Time) (x : Space d) (i j : Fin d),
+--       Eq
+--         (Time.deriv
+--           (Time.deriv fun x_1 =>
+--             Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A x_1 x { fst := i, snd := j })
+--           t)
+--         (instHSub.hSub
+--           (Space.deriv i
+--             (fun x => (Time.deriv (fun t => Electromagnetism.ElectromagneticPotential.electricField c A t x) t).ofLp j)
+--             x)
+--           (Space.deriv j
+--             (fun x => (Time.deriv (fun t => Electromagnetism.ElectromagneticPotential.electricField c A t x) t).ofLp i)
+--             x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_eq_1 : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (A.toFieldStrength x)
+--     (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor.symm
+--       (LinearMap.instFunLike.coe
+--         (TensorSpecies.Tensor.permT id Electromagnetism.ElectromagneticPotential.toFieldStrength._proof_3)
+--         (instHAdd.hAdd
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--             (LinearMap.instFunLike.coe
+--               (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                 (EquivLike.toFunLike.coe
+--                   (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                       (Matrix.vecCons realLorentzTensor.Color.up
+--                         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                   (realLorentzTensor.contrMetric d)))
+--               (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.deriv x))))
+--           (LinearMap.instFunLike.coe
+--             (TensorSpecies.Tensor.permT (Matrix.vecCons 1 (Matrix.vecCons 0 Matrix.vecEmpty))
+--               Electromagnetism.ElectromagneticPotential.toFieldStrength._proof_7)
+--             (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--               (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--                 (LinearMap.instFunLike.coe
+--                   (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                     (EquivLike.toFunLike.coe
+--                       (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                           (Matrix.vecCons realLorentzTensor.Color.up
+--                             (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                       (realLorentzTensor.contrMetric d)))
+--                   (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.deriv x)))))))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle_eq_1 : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space 1),
+--   Eq (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle 𝓕 q r₀)
+--     (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (Space.distOfFunction
+--           (fun x =>
+--             instHSMul.hSMul
+--               (instHMul.hMul (instHDiv.hDiv (Real.instNeg.neg (instHMul.hMul (instHMul.hMul q 𝓕.μ₀) 𝓕.c.val)) 2)
+--                 (Space.instNorm.norm (instHSub.hSub x r₀)))
+--               (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))
+--           ⋯)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential_eq_1 : ∀ {d : Nat} (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential d),
+--   Eq (Electromagnetism.ElectromagneticPotential.vectorPotential c A)
+--     (EquivLike.toFunLike.coe (SpaceTime.timeSlice c) fun x => { ofLp := fun i => A x (Sum.inr i) })
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_add)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_add : ∀ {d : Nat} (A1 A2 : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Differentiable Real A1 →
+--     Differentiable Real A2 →
+--       Eq ((instHAdd.hAdd A1 A2).fieldStrengthMatrix x)
+--         (instHAdd.hAdd (A1.fieldStrengthMatrix x) (A2.fieldStrengthMatrix x))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradfreecurrentpotential_eq_1 : ∀ {d : Nat},
+--   Eq Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential
+--     {
+--       toFun := fun J =>
+--         {
+--           toFun := fun ε =>
+--             Finset.univ.sum fun μ =>
+--               instHSMul.hSMul (minkowskiMatrix μ μ)
+--                 (instHSMul.hSMul (ContinuousLinearMap.funLike.coe J ε μ)
+--                   (Module.Basis.instFunLike.coe Lorentz.Vector.basis μ)),
+--           map_add' := ⋯, map_smul' := ⋯, cont := ⋯ },
+--       map_add' := ⋯, map_smul' := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential : optParam Nat 3 → Type
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricFunction_eq_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfunction_eq_electricfield : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s),
+--   Eq P.electricFunction fun u =>
+--     Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A { val := instHDiv.hDiv (Real.instNeg.neg u) 𝓕.c.val }
+--       0
+
+-- Source: PhysLean (Electromagnetism.DistLorentzCurrentDensity.chargeDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distlorentzcurrentdensity_chargedensity : {d : Nat} →
+--   SpeedOfLight →
+--     LinearMap (RingHom.id Real) (Electromagnetism.DistLorentzCurrentDensity d)
+--       (Distribution Real (Prod Time (Space d)) Real)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.space_deriv_magneticFieldMatrix_eq_electricField_mul_propogator)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_space_deriv_magneticfieldmatrix_eq_electricfield_mul_propogator : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d},
+--   Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s →
+--     ContDiff Real 2 A →
+--       ∀ (t : Time) (x : Space d) (i j k : Fin d),
+--         Eq
+--           (Space.deriv k
+--             (fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := i, snd := j }) x)
+--           (Space.deriv k
+--             (fun x =>
+--               instHSub.hSub
+--                 (instHMul.hMul (instHDiv.hDiv (s.unit.val j) 𝓕.c.val)
+--                   ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp i))
+--                 (instHMul.hMul (instHDiv.hDiv (s.unit.val i) 𝓕.c.val)
+--                   ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x).ofLp j)))
+--             x)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_eq_vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_eq_vectorpotential : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   Differentiable Real A →
+--     ∀ (t : Time) (x : Space d) (i j : Fin d),
+--       Eq (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := i, snd := j })
+--         (instHSub.hSub
+--           (Space.deriv j (fun x => (Electromagnetism.ElectromagneticPotential.vectorPotential c A t x).ofLp i) x)
+--           (Space.deriv i (fun x => (Electromagnetism.ElectromagneticPotential.vectorPotential c A t x).ofLp j) x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential : {d : Nat} →
+--   optParam SpeedOfLight 1 → Electromagnetism.ElectromagneticPotential d → Time → Space d → EuclideanSpace Real (Fin d)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_polarization_ellipse)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_polarization_ellipse : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ),
+--       (∀ (i : Fin d), Ne (E₀ i) 0) →
+--         Eq
+--           (instHSub.hSub
+--             (instHMul.hMul (instHMul.hMul 2 d.cast)
+--               (Finset.univ.sum fun i =>
+--                 instHPow.hPow
+--                   (instHDiv.hDiv
+--                     ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c
+--                           (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--                       i.succ)
+--                     (E₀ i))
+--                   2))
+--             (instHMul.hMul 2
+--               (Finset.univ.sum fun i =>
+--                 Finset.univ.sum fun j =>
+--                   instHMul.hMul
+--                     (instHMul.hMul
+--                       (instHDiv.hDiv
+--                         ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c
+--                               (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--                           i.succ)
+--                         (E₀ i))
+--                       (instHDiv.hDiv
+--                         ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c
+--                               (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--                           j.succ)
+--                         (E₀ j)))
+--                     (Real.cos (instHSub.hSub (φ j) (φ i))))))
+--           (Finset.univ.sum fun i => Finset.univ.sum fun j => instHPow.hPow (Real.sin (instHSub.hSub (φ j) (φ i))) 2)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrength_eq_fieldStrengthAux)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrength_eq_fieldstrengthaux : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A) ε)
+--     (A.fieldStrengthAux ε)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_magneticFieldMatrix_zero_succ_space_deriv_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_magneticfieldmatrix_zero_succ_space_deriv_zero : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i : Fin d),
+--       Eq
+--         (Space.deriv 0
+--           (fun x =>
+--             Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c
+--               (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x { fst := 0, snd := i.succ })
+--           x)
+--         (instHMul.hMul (instHDiv.hDiv (instHMul.hMul (Real.instNeg.neg (E₀ i)) k) 𝓕.c.val)
+--           (Real.sin
+--             (instHAdd.hAdd (instHSub.hSub (instHMul.hMul (instHMul.hMul 𝓕.c.val k) t.val) (instHMul.hMul k (x.val 0)))
+--               (φ i))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.time_deriv_electricField_of_isExtrema)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_time_deriv_electricfield_of_isextrema : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {𝓕 : Electromagnetism.FreeSpace},
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A J →
+--           ∀ (t : Time) (x : Space d) (i : Fin d),
+--             Eq ((Time.deriv (fun x_1 => Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A x_1 x) t).ofLp i)
+--               (instHSub.hSub
+--                 (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 𝓕.μ₀ 𝓕.ε₀))
+--                   (Finset.univ.sum fun j =>
+--                     Space.deriv j
+--                       (fun x =>
+--                         Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := j, snd := i })
+--                       x))
+--                 (instHMul.hMul (instHDiv.hDiv 1 𝓕.ε₀)
+--                   ((Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J t x).ofLp i)))
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.c_sq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_c_sq : ∀ (𝓕 : Electromagnetism.FreeSpace), Eq (instHPow.hPow 𝓕.c.val 2) (instHDiv.hDiv 1 (instHMul.hMul 𝓕.ε₀ 𝓕.μ₀))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_eq_sum)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_eq_sum : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A x)
+--     (instHMul.hMul (instHDiv.hDiv (-1) (instHMul.hMul 4 𝓕.μ₀))
+--       (Finset.univ.sum fun μ =>
+--         Finset.univ.sum fun ν =>
+--           Finset.univ.sum fun μ' =>
+--             Finset.univ.sum fun ν' =>
+--               instHMul.hMul
+--                 (instHMul.hMul (instHMul.hMul (minkowskiMatrix μ μ') (minkowskiMatrix ν ν'))
+--                   (Finsupp.instFunLike.coe
+--                     (EquivLike.toFunLike.coe (Lorentz.CoVector.basis.tensorProduct Lorentz.Vector.basis).repr
+--                       (A.toFieldStrength x))
+--                     { fst := μ, snd := ν }))
+--                 (Finsupp.instFunLike.coe
+--                   (EquivLike.toFunLike.coe (Lorentz.CoVector.basis.tensorProduct Lorentz.Vector.basis).repr
+--                     (A.toFieldStrength x))
+--                   { fst := μ', snd := ν' })))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle_vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle_vectorpotential : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle 𝓕 q r₀))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential_apply_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential_apply_contdiff : ∀ {n : WithTop ENat} {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real n A →
+--     ∀ (i : Fin d),
+--       ContDiff Real n
+--         (Function.hasUncurryInduction.uncurry fun t x =>
+--           (Electromagnetism.ElectromagneticPotential.vectorPotential c A t x).ofLp i)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_add_time_mul_const)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_add_time_mul_const : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   Differentiable Real A →
+--     ∀ (c : Lorentz.Vector d) (x : SpaceTime d),
+--       Eq
+--         (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕
+--           (fun x => instHAdd.hAdd (A x) (instHSMul.hSMul (x (Sum.inl 0)) c)) x)
+--         (instHAdd.hAdd (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A x)
+--           (instHAdd.hAdd
+--             (instHMul.hMul (instHDiv.hDiv (-1) (instHMul.hMul 2 𝓕.μ₀))
+--               (Finset.univ.sum fun ν =>
+--                 instHSub.hSub
+--                   (instHAdd.hAdd
+--                     (instHMul.hMul (instHMul.hMul (instHMul.hMul 2 (c ν)) (minkowskiMatrix ν ν))
+--                       (SpaceTime.deriv (Sum.inl 0) A x ν))
+--                     (instHMul.hMul (minkowskiMatrix ν ν) (instHPow.hPow (c ν) 2)))
+--                   (instHMul.hMul (instHMul.hMul 2 (c ν)) (SpaceTime.deriv ν A x (Sum.inl 0)))))
+--             (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 2 𝓕.μ₀)) (instHPow.hPow (c (Sum.inl 0)) 2))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_isExtrema)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_isextrema : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real),
+--       Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕
+--         (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) 0
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.electricField.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_electricfield_eq_1 : ∀ {d : Nat} (c : SpeedOfLight),
+--   Eq (Electromagnetism.DistElectromagneticPotential.electricField c)
+--     {
+--       toFun := fun A =>
+--         instHSub.hSub
+--           (ContinuousLinearMap.neg.neg
+--             (LinearMap.instFunLike.coe Space.distSpaceGrad
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.scalarPotential c) A)))
+--           (LinearMap.instFunLike.coe Space.distTimeDeriv
+--             (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential c) A)),
+--       map_add' := ⋯, map_smul' := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.isExterma_iff_tensor)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_isexterma_iff_tensor : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d),
+--   Iff (Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕 A J)
+--     (∀ (ε : SchwartzMap (SpaceTime d) Real),
+--       Eq
+--         (instHAdd.hAdd
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 1 0 1 ⋯)
+--             (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--               (instHSMul.hSMul (instHDiv.hDiv 1 𝓕.μ₀)
+--                 (ContinuousLinearMap.funLike.coe
+--                   (LinearMap.instFunLike.coe SpaceTime.distTensorDeriv
+--                     (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A))
+--                   ε))))
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT (Matrix.vecCons 0 Matrix.vecEmpty) ⋯)
+--             (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--               (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor (ContinuousLinearMap.funLike.coe J ε)))))
+--         0)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_inr_inr_eq_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_inr_inr_eq_magneticfieldmatrix : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d) (i j : Fin d),
+--   Eq (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := Sum.inr i, snd := Sum.inr j })
+--     (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A (LinearMap.instFunLike.coe (SpaceTime.time c) x)
+--       (ContinuousLinearMap.funLike.coe SpaceTime.space x) { fst := i, snd := j })
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_magneticFieldMatrix_space_deriv_succ)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_magneticfieldmatrix_space_deriv_succ : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (i j : Fin d.succ) (l : Fin d),
+--       Eq
+--         (Space.deriv l.succ
+--           (fun x =>
+--             Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c
+--               (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x { fst := i, snd := j })
+--           x)
+--         0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFunction.congr_simp)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfunction_congr_simp : ∀ {d : Nat} {𝓕 𝓕_1 : Electromagnetism.FreeSpace} (e_𝓕 : Eq 𝓕 𝓕_1) {A A_1 : Electromagnetism.ElectromagneticPotential d}
+--   (e_A : Eq A A_1) {s s_1 : Space.Direction d} (e_s : Eq s s_1)
+--   (hA : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s) (a a_1 : Real),
+--   Eq a a_1 →
+--     ∀ (a_2 a_3 : Prod (Fin d) (Fin d)), Eq a_2 a_3 → Eq (hA.magneticFunction a a_2) (⋯.magneticFunction a_1 a_3)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_apply_x_boost_succ_succ)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_apply_x_boost_succ_succ : ∀ {d : Nat} {c : SpeedOfLight} (β : Real) (hβ : Real.instLT.lt (abs β) 1)
+--   (A : Electromagnetism.ElectromagneticPotential d.succ),
+--   Differentiable Real A →
+--     ∀ (t : Time) (x : Space d.succ) (i j : Fin d),
+--       have Λ := LorentzGroup.boost 0 β hβ;
+--       have t' :=
+--         {
+--           val :=
+--             instHMul.hMul (LorentzGroup.γ β) (instHAdd.hAdd t.val (instHMul.hMul (instHDiv.hDiv β c.val) (x.val 0))) };
+--       have x' :=
+--         {
+--           val := fun x_1 =>
+--             Electromagnetism.ElectromagneticPotential.electricField_apply_x_boost_zero.match_1 (fun x => Real) x_1
+--               (fun _ =>
+--                 instHMul.hMul (LorentzGroup.γ β)
+--                   (instHAdd.hAdd (x.val 0) (instHMul.hMul (instHMul.hMul c.val β) t.val)))
+--               fun n ih => x.val ⟨n.succ, ih⟩ };
+--       Eq
+--         (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c
+--           (fun x => instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x))) t
+--           x { fst := i.succ, snd := j.succ })
+--         (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t' x' { fst := i.succ, snd := j.succ })
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle_div_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle_div_electricfield : ∀ {𝓕 : Electromagnetism.FreeSpace} (q : Real) (r₀ : Space),
+--   Eq
+--     (LinearMap.instFunLike.coe Space.distSpaceDiv
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c)
+--         (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle 𝓕 q r₀)))
+--     (instHSMul.hSMul (instHDiv.hDiv 1 𝓕.ε₀)
+--       (LinearMap.instFunLike.coe Space.constantTime (instHSMul.hSMul q (Distribution.diracDelta Real r₀))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrength_diag_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrength_diag_zero : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real)
+--   (μ : Sum (Fin 1) (Fin d)),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr
+--         (ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A) ε))
+--       { fst := μ, snd := μ })
+--     0
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.IsExtrema.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_isextrema_eq_1 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d),
+--   Eq (Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕 A J)
+--     (Eq (Electromagnetism.DistElectromagneticPotential.gradLagrangian 𝓕 A J) 0)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_eq_sum_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_eq_sum_fieldstrengthmatrix : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A x)
+--     (instHMul.hMul (instHDiv.hDiv (-1) (instHMul.hMul 4 𝓕.μ₀))
+--       (Finset.univ.sum fun μ =>
+--         Finset.univ.sum fun ν =>
+--           Finset.univ.sum fun μ' =>
+--             Finset.univ.sum fun ν' =>
+--               instHMul.hMul
+--                 (instHMul.hMul (instHMul.hMul (minkowskiMatrix μ μ') (minkowskiMatrix ν ν'))
+--                   (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := ν }))
+--                 (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ', snd := ν' })))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_antisymm)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_antisymm : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d) (μ ν : Sum (Fin 1) (Fin d)),
+--   Eq (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := ν })
+--     (Real.instNeg.neg (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := ν, snd := μ }))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticlecurrentdensity : SpeedOfLight → Real → Space → Electromagnetism.DistLorentzCurrentDensity
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle_isExterma)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle_isexterma : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space 1),
+--   Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕
+--     (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle 𝓕 q r₀)
+--     (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity 𝓕.c q r₀)
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity_ContDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_contdiff : ∀ {n : WithTop ENat} {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   ContDiff Real n J →
+--     ContDiff Real n (Function.hasUncurryInduction.uncurry (Electromagnetism.LorentzCurrentDensity.currentDensity c J))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricFunction_unique)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfunction_unique : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s) (E1 : Real → EuclideanSpace Real (Fin d)),
+--   Eq (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A) (ClassicalMechanics.planeWave E1 𝓕.c.val s) →
+--     Eq E1 P.electricFunction
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle_div_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle_div_electricfield : ∀ {𝓕 : Electromagnetism.FreeSpace} (q : Real) (r₀ : Space 1),
+--   Eq
+--     (LinearMap.instFunLike.coe Space.distSpaceDiv
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c)
+--         (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle 𝓕 q r₀)))
+--     (instHSMul.hSMul (instHMul.hMul 𝓕.μ₀ (instHPow.hPow 𝓕.c.val 2))
+--       (LinearMap.instFunLike.coe Space.constantTime (instHSMul.hSMul q (Distribution.diracDelta Real r₀))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_space_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_space_contdiff : ∀ {d : Nat} {n : WithTop ENat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (instHAdd.hAdd n 1) A →
+--     ∀ (t : Time) (ij : Prod (Fin d) (Fin d)),
+--       ContDiff Real n fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x ij
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradFreeCurrentPotential_eq_chargeDensity_currentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradfreecurrentpotential_eq_chargedensity_currentdensity : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         ∀ (x : SpaceTime d),
+--           Eq (A.gradFreeCurrentPotential J x)
+--             (instHAdd.hAdd
+--               (instHSMul.hSMul
+--                 (instHMul.hMul 𝓕.c.val
+--                   (Electromagnetism.LorentzCurrentDensity.chargeDensity 𝓕.c J
+--                     (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                     (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--                 (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))
+--               (Finset.univ.sum fun i =>
+--                 instHSMul.hSMul
+--                   (Real.instNeg.neg
+--                     ((Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J
+--                           (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                           (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--                       i))
+--                   (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inr i))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix : {d : Nat} →
+--   optParam SpeedOfLight 1 → Electromagnetism.ElectromagneticPotential d → Time → Space d → Prod (Fin d) (Fin d) → Real
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_electricField_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_electricfield_zero : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ),
+--   Eq
+--     ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c
+--           (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--       0)
+--     0
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle_eq_distTranslate)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle_eq_disttranslate : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space),
+--   Eq (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle 𝓕 q r₀)
+--     (EquivLike.toFunLike.coe (SpaceTime.distTimeSlice 𝓕.c).symm
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (LinearMap.instFunLike.coe (Space.distTranslate (EquivLike.toFunLike.coe Space.basis.repr r₀))
+--           (Space.distOfFunction
+--             (fun x =>
+--               instHSMul.hSMul
+--                 (instHMul.hMul (instHDiv.hDiv (instHMul.hMul (instHMul.hMul q 𝓕.μ₀) 𝓕.c.val) (instHMul.hMul 4 Real.pi))
+--                   (Real.instInv.inv (Space.instNorm.norm x)))
+--                 (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))
+--             ⋯))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.deriv.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_deriv_eq_1 : ∀ {d : Nat}, Eq Electromagnetism.DistElectromagneticPotential.deriv SpaceTime.distTensorDeriv
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_differentiable_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_differentiable_space : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   ContDiff Real 2 A → ∀ (t : Time), Differentiable Real (Electromagnetism.ElectromagneticPotential.electricField c A t)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_eq_sum_fieldStrengthMatrix_sq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_eq_sum_fieldstrengthmatrix_sq : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A x)
+--     (instHMul.hMul (instHDiv.hDiv (-1) (instHMul.hMul 4 𝓕.μ₀))
+--       (Finset.univ.sum fun μ =>
+--         Finset.univ.sum fun ν =>
+--           instHMul.hMul (instHMul.hMul (minkowskiMatrix μ μ) (minkowskiMatrix ν ν))
+--             (instHPow.hPow (Real.norm.norm (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := ν }))
+--               2)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_eq_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_eq_fieldstrengthmatrix : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d),
+--   Eq A.toFieldStrength fun x =>
+--     Finset.univ.sum fun μ =>
+--       Finset.univ.sum fun ν =>
+--         instHSMul.hSMul (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := ν })
+--           (TensorProduct.tmul Real (Module.Basis.instFunLike.coe Lorentz.Vector.basis μ)
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity_currentDensity_thrd)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_wirecurrentdensity_currentdensity_thrd : ∀ (c : SpeedOfLight) (I : Real) (ε : SchwartzMap (Prod Time Space) Real),
+--   Eq
+--     ((ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.currentDensity c)
+--             (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity c) I))
+--           ε).ofLp
+--       2)
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.freeCurrentPotential_add_const)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_freecurrentpotential_add_const : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (J : Electromagnetism.LorentzCurrentDensity d)
+--   (c : Lorentz.Vector d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.freeCurrentPotential (fun x => instHAdd.hAdd (A x) c) J x)
+--     (instHAdd.hAdd (A.freeCurrentPotential J x)
+--       (ContinuousLinearMap.funLike.coe (ContinuousLinearMap.funLike.coe Lorentz.Vector.minkowskiProduct c) (J x)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential_apply_contDiff_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential_apply_contdiff_space : ∀ {n : WithTop ENat} {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real n A →
+--     ∀ (t : Time) (i : Fin d),
+--       ContDiff Real n fun x => (Electromagnetism.ElectromagneticPotential.vectorPotential c A t x).ofLp i
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toTensor_toFieldStrength)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_totensor_tofieldstrength : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.toFieldStrength x))
+--     (instHSub.hSub
+--       (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--           (LinearMap.instFunLike.coe
+--             (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--               (EquivLike.toFunLike.coe
+--                 (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                     (Matrix.vecCons realLorentzTensor.Color.up
+--                       (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                 (realLorentzTensor.contrMetric d)))
+--             (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.deriv x)))))
+--       (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT (Matrix.vecCons 1 (Matrix.vecCons 0 Matrix.vecEmpty)) ⋯)
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--           (LinearMap.instFunLike.coe
+--             (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--               (EquivLike.toFunLike.coe
+--                 (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                     (Matrix.vecCons realLorentzTensor.Color.up
+--                       (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                 (realLorentzTensor.contrMetric d)))
+--             (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.deriv x))))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradKineticTerm_add)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradkineticterm_add : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A1 A2 : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A1 →
+--     ContDiff Real (WithTop.some instTopENat.top) A2 →
+--       Eq (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 (instHAdd.hAdd A1 A2))
+--         (instHAdd.hAdd (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A1)
+--           (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A2))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle_magneticfieldmatrix : ∀ {𝓕 : Electromagnetism.FreeSpace} (q : Real) (r₀ : Space 1),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle 𝓕 q r₀))
+--     0
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrengthAux_basis_repr_apply_eq_single)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrengthaux_basis_repr_apply_eq_single : ∀ {d : Nat} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))}
+--   (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr (A.fieldStrengthAux ε))
+--       μν)
+--     (instHSub.hSub
+--       (instHMul.hMul (minkowskiMatrix μν.fst μν.fst)
+--         (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv μν.fst) A) ε μν.snd))
+--       (instHMul.hMul (minkowskiMatrix μν.snd μν.snd)
+--         (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv μν.snd) A) ε μν.fst)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB_isExtrema)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_isextrema : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {E₀ : EuclideanSpace Real (Fin d)} {B₀ : Prod (Fin d) (Fin d) → Real}
+--   {B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i }))},
+--   Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕
+--     (Electromagnetism.ElectromagneticPotential.constantEB 𝓕.c E₀ B₀ B₀_antisymm) 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradLagrangian_eq_sum_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradlagrangian_eq_sum_fieldstrengthmatrix : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         Eq (Electromagnetism.ElectromagneticPotential.gradLagrangian 𝓕 A J) fun x =>
+--           Finset.univ.sum fun ν =>
+--             instHSMul.hSMul (minkowskiMatrix ν ν)
+--               (instHSMul.hSMul
+--                 (instHSub.hSub
+--                   (instHMul.hMul (instHDiv.hDiv 1 𝓕.μ₀)
+--                     (Finset.univ.sum fun μ =>
+--                       SpaceTime.deriv μ
+--                         (fun x => Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := ν }) x))
+--                   (J x ν))
+--                 (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_equivariant)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_equivariant : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (Λ : (LorentzGroup d).Elem),
+--   Differentiable Real A →
+--     ∀ (x : SpaceTime d) (μ ν : Sum (Fin 1) (Fin d)),
+--       Eq
+--         (Finsupp.instFunLike.coe
+--           (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix
+--             (fun x => instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x)))
+--             x)
+--           { fst := μ, snd := ν })
+--         (Finset.univ.sum fun κ =>
+--           Finset.univ.sum fun ρ =>
+--             instHMul.hMul (instHMul.hMul (Λ.val μ κ) (Λ.val ν ρ))
+--               (Finsupp.instFunLike.coe
+--                 (A.fieldStrengthMatrix (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x))
+--                 { fst := κ, snd := ρ }))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave : {d : Nat} → Electromagnetism.FreeSpace → Electromagnetism.ElectromagneticPotential d → Space.Direction d → Prop
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_eq_add)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_eq_add : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (A.toFieldStrength x)
+--     (instHSub.hSub
+--       (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor.symm
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--             (LinearMap.instFunLike.coe
+--               (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                 (EquivLike.toFunLike.coe
+--                   (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                       (Matrix.vecCons realLorentzTensor.Color.up
+--                         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                   (realLorentzTensor.contrMetric d)))
+--               (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.deriv x))))))
+--       (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor.symm
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT (Matrix.vecCons 1 (Matrix.vecCons 0 Matrix.vecEmpty)) ⋯)
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--             (LinearMap.instFunLike.coe
+--               (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                 (EquivLike.toFunLike.coe
+--                   (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                       (Matrix.vecCons realLorentzTensor.Color.up
+--                         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                   (realLorentzTensor.contrMetric d)))
+--               (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.deriv x)))))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_wirecurrentdensity_eq_1 : ∀ (c : SpeedOfLight),
+--   Eq (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity c)
+--     {
+--       toFun := fun I =>
+--         EquivLike.toFunLike.coe (SpaceTime.distTimeSlice c).symm
+--           (LinearMap.instFunLike.coe Space.constantTime
+--             (LinearMap.instFunLike.coe (Space.constantSliceDist 0)
+--               (instHSMul.hSMul I
+--                 (Distribution.diracDelta' Real 0 (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inr 0)))))),
+--       map_add' := ⋯, map_smul' := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradKineticTerm_eq_distTensorDeriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradkineticterm_eq_disttensorderiv : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (SpaceTime d) Real) (ν : Sum (Fin 1) (Fin d)),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.gradKineticTerm 𝓕) A) ε ν)
+--     (instHMul.hMul (minkowskiMatrix ν ν)
+--       (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor.symm
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 1 0 1 ⋯)
+--             (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--               (instHSMul.hSMul (instHDiv.hDiv 1 𝓕.μ₀)
+--                 (ContinuousLinearMap.funLike.coe
+--                   (LinearMap.instFunLike.coe SpaceTime.distTensorDeriv
+--                     (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A))
+--                   ε)))))
+--         ν))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.lagrangian_add_const)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_lagrangian_add_const : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d)
+--   (J : Electromagnetism.LorentzCurrentDensity d) (c : Lorentz.Vector d) (x : SpaceTime d),
+--   Eq (Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 (fun x => instHAdd.hAdd (A x) c) J x)
+--     (instHSub.hSub (Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 A J x)
+--       (ContinuousLinearMap.funLike.coe (ContinuousLinearMap.funLike.coe Lorentz.Vector.minkowskiProduct c) (J x)))
+
+-- Source: PhysLean (Electromagnetism.EMSystem.coulombConstant)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_emsystem_coulombconstant : Electromagnetism.EMSystem → Real
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB_smooth)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_smooth : ∀ {d : Nat} {c : SpeedOfLight} {E₀ : EuclideanSpace Real (Fin d)} {B₀ : Prod (Fin d) (Fin d) → Real}
+--   {B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i }))},
+--   ContDiff Real (WithTop.some instTopENat.top)
+--     (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.kineticTerm_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_kineticterm_contdiff : ∀ {d : Nat} {n : WithTop ENat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (instHAdd.hAdd n 1) A → ContDiff Real n (Electromagnetism.ElectromagneticPotential.kineticTerm 𝓕 A)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire_vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_vectorpotential : ∀ (𝓕 : Electromagnetism.FreeSpace) (I : Real),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I))
+--     (LinearMap.instFunLike.coe Space.constantTime
+--       (LinearMap.instFunLike.coe (Space.constantSliceDist 0)
+--         (instHSMul.hSMul (instHDiv.hDiv (instHMul.hMul (Real.instNeg.neg I) 𝓕.μ₀) (instHMul.hMul 2 Real.pi))
+--           (Space.distOfFunction
+--             (fun x => instHSMul.hSMul (Real.log (Space.instNorm.norm x)) (EuclideanSpace.single 0 1)) ⋯))))
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.chargeDensity_eq_timeSlice)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_chargedensity_eq_timeslice : ∀ {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Eq (Electromagnetism.LorentzCurrentDensity.chargeDensity c J)
+--     (EquivLike.toFunLike.coe (SpaceTime.timeSlice c) fun x => instHSMul.hSMul (instHDiv.hDiv 1 c.val) (J x (Sum.inl 0)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_wirecurrentdensity : SpeedOfLight → LinearMap (RingHom.id Real) Real Electromagnetism.DistLorentzCurrentDensity
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_inl_inr_eq_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_inl_inr_eq_electricfield : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d) (i : Fin d),
+--   Differentiable Real A →
+--     Eq (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := Sum.inl 0, snd := Sum.inr i })
+--       (instHMul.hMul (Real.instNeg.neg (instHDiv.hDiv 1 c.val))
+--         ((Electromagnetism.ElectromagneticPotential.electricField c A (LinearMap.instFunLike.coe (SpaceTime.time c) x)
+--               (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--           i))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential : optParam Nat 3 → Type
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.c)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_c : Electromagnetism.FreeSpace → SpeedOfLight
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.c_val)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_c_val : ∀ (𝓕 : Electromagnetism.FreeSpace), Eq 𝓕.c.val (instHDiv.hDiv 1 (instHMul.hMul 𝓕.ε₀ 𝓕.μ₀).sqrt)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.scalarPotential_differentiable_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_scalarpotential_differentiable_time : ∀ {d : Nat} (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential d),
+--   Differentiable Real A →
+--     ∀ (x : Space d), Differentiable Real fun x_1 => Electromagnetism.ElectromagneticPotential.scalarPotential c A x_1 x
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrengthAux_eq_add)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrengthaux_eq_add : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq (A.fieldStrengthAux ε)
+--     (instHSub.hSub
+--       (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor.symm
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--             (LinearMap.instFunLike.coe
+--               (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                 (EquivLike.toFunLike.coe
+--                   (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                       (Matrix.vecCons realLorentzTensor.Color.up
+--                         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                   (realLorentzTensor.contrMetric d)))
+--               (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--                 (ContinuousLinearMap.funLike.coe
+--                   (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A) ε))))))
+--       (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor.symm
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT (Matrix.vecCons 1 (Matrix.vecCons 0 Matrix.vecEmpty)) ⋯)
+--           (LinearMap.instFunLike.coe (TensorSpecies.Tensor.contrT 2 1 2 ⋯)
+--             (LinearMap.instFunLike.coe
+--               (LinearMap.instFunLike.coe TensorSpecies.Tensor.prodT
+--                 (EquivLike.toFunLike.coe
+--                   (TensorSpecies.Tensorial.self (realLorentzTensor d)
+--                       (Matrix.vecCons realLorentzTensor.Color.up
+--                         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).toTensor
+--                   (realLorentzTensor.contrMetric d)))
+--               (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor
+--                 (ContinuousLinearMap.funLike.coe
+--                   (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A) ε)))))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_div_electricField_eq_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_div_electricfield_eq_zero : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real),
+--   Ne k 0 →
+--     ∀ (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ),
+--       Eq
+--         (Space.div
+--           (fun x =>
+--             Electromagnetism.ElectromagneticPotential.electricField 𝓕.c
+--               (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x)
+--           x)
+--         0
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_zero : ∀ {d : Nat} {c : SpeedOfLight}, Eq (Electromagnetism.LorentzCurrentDensity.currentDensity c 0) 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradLagrangian_eq_electricField_magneticField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradlagrangian_eq_electricfield_magneticfield : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         ∀ (x : SpaceTime d),
+--           Eq (Electromagnetism.ElectromagneticPotential.gradLagrangian 𝓕 A J x)
+--             (instHAdd.hAdd
+--               (instHSMul.hSMul
+--                 (instHAdd.hAdd
+--                   (instHMul.hMul (instHDiv.hDiv 1 (instHMul.hMul 𝓕.μ₀ 𝓕.c.val))
+--                     (Space.div
+--                       (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                         (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x))
+--                       (ContinuousLinearMap.funLike.coe SpaceTime.space x)))
+--                   (instHMul.hMul (Real.instNeg.neg 𝓕.c.val)
+--                     (Electromagnetism.LorentzCurrentDensity.chargeDensity 𝓕.c J
+--                       (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                       (ContinuousLinearMap.funLike.coe SpaceTime.space x))))
+--                 (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inl 0)))
+--               (Finset.univ.sum fun i =>
+--                 instHSMul.hSMul
+--                   (instHAdd.hAdd
+--                     (instHMul.hMul (Real.instInv.inv 𝓕.μ₀)
+--                       (instHSub.hSub
+--                         (instHMul.hMul (instHMul.hMul 𝓕.ε₀ 𝓕.μ₀)
+--                           ((Time.deriv
+--                                 (fun x_1 =>
+--                                   Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A x_1
+--                                     (ContinuousLinearMap.funLike.coe SpaceTime.space x))
+--                                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)).ofLp
+--                             i))
+--                         (Finset.univ.sum fun j =>
+--                           Space.deriv j
+--                             (fun x_1 =>
+--                               Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A
+--                                 (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x) x_1 { fst := j, snd := i })
+--                             (ContinuousLinearMap.funLike.coe SpaceTime.space x))))
+--                     ((Electromagnetism.LorentzCurrentDensity.currentDensity 𝓕.c J
+--                           (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                           (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--                       i))
+--                   (Module.Basis.instFunLike.coe Lorentz.Vector.basis (Sum.inr i))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_space_deriv_eq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_space_deriv_eq : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (x : Space d) (i j k : Fin d),
+--       Eq
+--         (Space.deriv k
+--           (fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := i, snd := j }) x)
+--         (instHSub.hSub
+--           (Space.deriv i
+--             (fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := k, snd := j }) x)
+--           (Space.deriv j
+--             (fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := k, snd := i }) x))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradKineticTerm_eq_fieldStrength)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradkineticterm_eq_fieldstrength : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.gradKineticTerm 𝓕) A) ε)
+--     (Finset.univ.sum fun ν =>
+--       instHSMul.hSMul (instHMul.hMul (instHDiv.hDiv 1 𝓕.μ₀) (minkowskiMatrix ν ν))
+--         (instHSMul.hSMul
+--           (Finset.univ.sum fun μ =>
+--             Finsupp.instFunLike.coe
+--               (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr
+--                 (ContinuousLinearMap.funLike.coe
+--                   (LinearMap.instFunLike.coe (SpaceTime.distDeriv μ)
+--                     (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A))
+--                   ε))
+--               { fst := μ, snd := ν })
+--           (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity_currentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticlecurrentdensity_currentdensity : ∀ (c : SpeedOfLight) (q : Real) (r₀ : Space),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.currentDensity c)
+--       (Electromagnetism.DistElectromagneticPotential.threeDimPointParticleCurrentDensity c q r₀))
+--     0
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle_electricField_timeDeriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle_electricfield_timederiv : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space),
+--   Eq
+--     (LinearMap.instFunLike.coe Space.distTimeDeriv
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c)
+--         (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle 𝓕 q r₀)))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticField_eq_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfield_eq_magneticfieldmatrix : ∀ {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential),
+--   Differentiable Real A →
+--     Eq (Electromagnetism.ElectromagneticPotential.magneticField c A) fun t x =>
+--       {
+--         ofLp := fun i =>
+--           Electromagnetism.ElectromagneticPotential.magneticField_eq_magneticFieldMatrix.match_1 (fun i => Real) i
+--             (fun _ =>
+--               Real.instNeg.neg
+--                 (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := 1, snd := 2 }))
+--             (fun _ => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := 0, snd := 2 })
+--             fun _ =>
+--             Real.instNeg.neg
+--               (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := 0, snd := 1 }) }
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.μ₀_pos)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_μ₀_pos : ∀ (self : Electromagnetism.FreeSpace), Real.instLT.lt 0 self.μ₀
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticField_curl_eq_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfield_curl_eq_magneticfieldmatrix : ∀ {x : Space} {i : Fin 3} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential),
+--   ContDiff Real 2 A →
+--     ∀ (t : Time),
+--       Eq ((Space.curl (Electromagnetism.ElectromagneticPotential.magneticField c A t) x).ofLp i)
+--         (Finset.univ.sum fun j =>
+--           Space.deriv j
+--             (fun x => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := j, snd := i }) x)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toFieldStrength_basis_repr_apply)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_tofieldstrength_basis_repr_apply : ∀ {d : Nat} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))} (A : Electromagnetism.ElectromagneticPotential d)
+--   (x : SpaceTime d),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.CoVector.basis.tensorProduct Lorentz.Vector.basis).repr (A.toFieldStrength x))
+--       μν)
+--     (Finset.univ.sum fun κ =>
+--       instHSub.hSub (instHMul.hMul (minkowskiMatrix μν.fst κ) (SpaceTime.deriv κ A x μν.snd))
+--         (instHMul.hMul (minkowskiMatrix μν.snd κ) (SpaceTime.deriv κ A x μν.fst)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity_currentDensity_snd)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_wirecurrentdensity_currentdensity_snd : ∀ (c : SpeedOfLight) (I : Real) (ε : SchwartzMap (Prod Time Space) Real),
+--   Eq
+--     ((ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.currentDensity c)
+--             (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity c) I))
+--           ε).ofLp
+--       1)
+--     0
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.deriv_basis_repr_apply)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_deriv_basis_repr_apply : ∀ {d : Nat} {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))}
+--   (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.CoVector.basis.tensorProduct Lorentz.Vector.basis).repr
+--         (ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.deriv A) ε))
+--       μν)
+--     (ContinuousLinearMap.funLike.coe (LinearMap.instFunLike.coe (SpaceTime.distDeriv μν.fst) A) ε μν.snd)
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.μ₀_ne_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_μ₀_ne_zero : ∀ (𝓕 : Electromagnetism.FreeSpace), Ne 𝓕.μ₀ 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.deriv.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_deriv_eq_1 : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   Eq (A.deriv x)
+--     (Finset.univ.sum fun μ =>
+--       Finset.univ.sum fun ν =>
+--         instHSMul.hSMul (SpaceTime.deriv μ A x ν)
+--           (TensorProduct.tmul Real (Module.Basis.instFunLike.coe Lorentz.CoVector.basis μ)
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.hasVarAdjDerivAt_component)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_hasvaradjderivat_component : ∀ {d : Nat} (μ : Sum (Fin 1) (Fin d)) (A : SpaceTime d → Lorentz.Vector d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     HasVarAdjDerivAt (fun A' x => A' x μ)
+--       (fun A' x => instHSMul.hSMul (A' x) (Module.Basis.instFunLike.coe Lorentz.Vector.basis μ)) A
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.μ₀_nonneg)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_μ₀_nonneg : ∀ (𝓕 : Electromagnetism.FreeSpace), Real.instLE.le 0 𝓕.μ₀
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradFreeCurrentPotential_eq_tensor)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradfreecurrentpotential_eq_tensor : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         ∀ (x : SpaceTime d) (ν : Sum (Fin 1) (Fin d)),
+--           Eq (A.gradFreeCurrentPotential J x ν)
+--             (instHMul.hMul (minkowskiMatrix ν ν)
+--               (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor.symm
+--                 (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--                   (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor (J x)))
+--                 ν))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle_scalarPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle_scalarpotential : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space 1),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.scalarPotential 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle 𝓕 q r₀))
+--     (LinearMap.instFunLike.coe Space.constantTime
+--       (Space.distOfFunction
+--         (fun x =>
+--           instHSMul.hSMul
+--             (Real.instNeg.neg (instHDiv.hDiv (instHMul.hMul (instHMul.hMul q 𝓕.μ₀) (instHPow.hPow 𝓕.c.val 2)) 2))
+--             (Space.instNorm.norm (instHSub.hSub x r₀)))
+--         ⋯))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradKineticTerm_eq_sum_fderiv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradkineticterm_eq_sum_fderiv : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     have F' := fun μν ψ x =>
+--       instHAdd.hAdd
+--         (instHAdd.hAdd
+--           (instHSMul.hSMul
+--             (Real.instNeg.neg
+--               (ContinuousLinearMap.funLike.coe
+--                 (fderiv Real
+--                   (fun x' =>
+--                     instHMul.hMul
+--                       ((fun x' =>
+--                           instHMul.hMul (instHMul.hMul (minkowskiMatrix μν.fst μν.fst) (minkowskiMatrix μν.snd μν.snd))
+--                             (ψ x'))
+--                         x')
+--                       (SpaceTime.deriv μν.fst A x' μν.snd))
+--                   x)
+--                 (Module.Basis.instFunLike.coe Lorentz.Vector.basis μν.fst)))
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis μν.snd))
+--           (instHSMul.hSMul
+--             (Real.instNeg.neg
+--               (ContinuousLinearMap.funLike.coe
+--                 (fderiv Real
+--                   (fun x' =>
+--                     instHMul.hMul (SpaceTime.deriv μν.fst A x' μν.snd)
+--                       ((fun x' =>
+--                           instHMul.hMul (instHMul.hMul (minkowskiMatrix μν.fst μν.fst) (minkowskiMatrix μν.snd μν.snd))
+--                             (ψ x'))
+--                         x'))
+--                   x)
+--                 (Module.Basis.instFunLike.coe Lorentz.Vector.basis μν.fst)))
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis μν.snd)))
+--         (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--           (instHAdd.hAdd
+--             (instHSMul.hSMul
+--               (Real.instNeg.neg
+--                 (ContinuousLinearMap.funLike.coe
+--                   (fderiv Real (fun x' => instHMul.hMul (ψ x') (SpaceTime.deriv μν.snd A x' μν.fst)) x)
+--                   (Module.Basis.instFunLike.coe Lorentz.Vector.basis μν.fst)))
+--               (Module.Basis.instFunLike.coe Lorentz.Vector.basis μν.snd))
+--             (instHSMul.hSMul
+--               (Real.instNeg.neg
+--                 (ContinuousLinearMap.funLike.coe
+--                   (fderiv Real (fun x' => instHMul.hMul (SpaceTime.deriv μν.fst A x' μν.snd) (ψ x')) x)
+--                   (Module.Basis.instFunLike.coe Lorentz.Vector.basis μν.snd)))
+--               (Module.Basis.instFunLike.coe Lorentz.Vector.basis μν.fst))));
+--     Eq (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A) fun x =>
+--       Finset.univ.sum fun μν =>
+--         F' μν (fun x' => instHMul.hMul (instHDiv.hDiv (-1) (instHMul.hMul 2 𝓕.μ₀)) ((fun x => 1) x')) x
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_apply_contDiff_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_apply_contdiff_space : ∀ {d : Nat} {i : Fin d} {n : WithTop ENat} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   ContDiff Real (instHAdd.hAdd n 1) A →
+--     ∀ (t : Time), ContDiff Real n fun x => (Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.chargeDensity_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_chargedensity_contdiff : ∀ {n : WithTop ENat} {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   ContDiff Real n J →
+--     ContDiff Real n (Function.hasUncurryInduction.uncurry (Electromagnetism.LorentzCurrentDensity.chargeDensity c J))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_apply_x_boost_succ)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_apply_x_boost_succ : ∀ {d : Nat} {c : SpeedOfLight} (β : Real) (hβ : Real.instLT.lt (abs β) 1)
+--   (A : Electromagnetism.ElectromagneticPotential d.succ),
+--   Differentiable Real A →
+--     ∀ (t : Time) (x : Space d.succ) (i : Fin d),
+--       have Λ := LorentzGroup.boost 0 β hβ;
+--       have t' :=
+--         {
+--           val :=
+--             instHMul.hMul (LorentzGroup.γ β) (instHAdd.hAdd t.val (instHMul.hMul (instHDiv.hDiv β c.val) (x.val 0))) };
+--       have x' :=
+--         {
+--           val := fun x_1 =>
+--             Electromagnetism.ElectromagneticPotential.electricField_apply_x_boost_zero.match_1 (fun x => Real) x_1
+--               (fun _ =>
+--                 instHMul.hMul (LorentzGroup.γ β)
+--                   (instHAdd.hAdd (x.val 0) (instHMul.hMul (instHMul.hMul c.val β) t.val)))
+--               fun n ih => x.val ⟨n.succ, ih⟩ };
+--       Eq
+--         ((Electromagnetism.ElectromagneticPotential.electricField c
+--               (fun x =>
+--                 instHSMul.hSMul Λ (A (instHSMul.hSMul (DivisionMonoid.toDivInvOneMonoid.toInvOneClass.inv Λ) x)))
+--               t x).ofLp
+--           i.succ)
+--         (instHMul.hMul (LorentzGroup.γ β)
+--           (instHAdd.hAdd ((Electromagnetism.ElectromagneticPotential.electricField c A t' x').ofLp i.succ)
+--             (instHMul.hMul (instHMul.hMul c.val β)
+--               (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t' x' { fst := 0, snd := i.succ }))))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.time_deriv_electricField_eq_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_time_deriv_electricfield_eq_fieldstrengthmatrix : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (x : Space d) (i : Fin d),
+--       Eq ((Time.deriv (fun t => Electromagnetism.ElectromagneticPotential.electricField c A t x) t).ofLp i)
+--         (instHMul.hMul (Real.instNeg.neg (instHPow.hPow c.val 2))
+--           (SpaceTime.deriv (Sum.inl 0)
+--             (fun x => Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := Sum.inl 0, snd := Sum.inr i })
+--             (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x })))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.hamiltonian_eq_electricField_vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_hamiltonian_eq_electricfield_vectorpotential : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d) (x : SpaceTime d),
+--       Eq (Electromagnetism.ElectromagneticPotential.hamiltonian 𝓕 A J x)
+--         (instHSub.hSub
+--           (instHMul.hMul
+--             (Real.instNeg.neg (instHMul.hMul (instHDiv.hDiv 1 (instHPow.hPow 𝓕.c.val 2)) (Real.instInv.inv 𝓕.μ₀)))
+--             (Finset.univ.sum fun i =>
+--               instHMul.hMul
+--                 ((Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A
+--                       (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)
+--                       (ContinuousLinearMap.funLike.coe SpaceTime.space x)).ofLp
+--                   i)
+--                 ((Time.deriv
+--                       (fun x_1 =>
+--                         Electromagnetism.ElectromagneticPotential.vectorPotential 𝓕.c A x_1
+--                           (ContinuousLinearMap.funLike.coe SpaceTime.space x))
+--                       (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x)).ofLp
+--                   i)))
+--           (Electromagnetism.ElectromagneticPotential.lagrangian 𝓕 A J x))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradKineticTerm_eq_fieldStrength)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradkineticterm_eq_fieldstrength : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     Eq (Electromagnetism.ElectromagneticPotential.gradKineticTerm 𝓕 A x)
+--       (Finset.univ.sum fun ν =>
+--         instHSMul.hSMul (instHMul.hMul (instHDiv.hDiv 1 𝓕.μ₀) (minkowskiMatrix ν ν))
+--           (instHSMul.hSMul
+--             (Finset.univ.sum fun μ =>
+--               SpaceTime.deriv μ (fun x => Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := ν }) x)
+--             (Module.Basis.instFunLike.coe Lorentz.Vector.basis ν)))
+
+-- Source: PhysLean (Electromagnetism.MagneticField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_magneticfield : optParam Nat 3 → Type
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.electricField_eq_electricFunction)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_electricfield_eq_electricfunction : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s) (t : Time) (x : Space d),
+--   Eq (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A t x)
+--     (P.electricFunction (instHSub.hSub (Space.instInnerReal.inner Real x s.unit) (instHMul.hMul 𝓕.c.val t.val)))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity_currentDensity_fst)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_wirecurrentdensity_currentdensity_fst : ∀ (c : SpeedOfLight) (I : Real) (η : SchwartzMap (Prod Time Space) Real),
+--   Eq
+--     ((ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.currentDensity c)
+--             (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity c) I))
+--           η).ofLp
+--       0)
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe Space.constantTime
+--         (LinearMap.instFunLike.coe (Space.constantSliceDist 0) (instHSMul.hSMul I (Distribution.diracDelta Real 0))))
+--       η)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.time_deriv_vectorPotential_eq_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_time_deriv_vectorpotential_eq_electricfield : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d) (t : Time) (x : Space d),
+--   Eq (Time.deriv (fun t => Electromagnetism.ElectromagneticPotential.vectorPotential c A t x) t)
+--     (instHSub.hSub
+--       (SubtractionMonoid.toSubNegZeroMonoid.toNegZeroClass.neg
+--         (Electromagnetism.ElectromagneticPotential.electricField c A t x))
+--       (Space.grad (Electromagnetism.ElectromagneticPotential.scalarPotential c A t) x))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle_scalarPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_threedimpointparticle_scalarpotential : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.scalarPotential 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.threeDimPointParticle 𝓕 q r₀))
+--     (LinearMap.instFunLike.coe Space.constantTime
+--       (Space.distOfFunction
+--         (fun x =>
+--           instHSMul.hSMul (instHDiv.hDiv q (instHMul.hMul (instHMul.hMul 4 Real.pi) 𝓕.ε₀))
+--             (Real.instInv.inv (Space.instNorm.norm (instHSub.hSub x r₀))))
+--         ⋯))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_differentiable_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_differentiable_time : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (x : Space d) (ij : Prod (Fin d) (Fin d)),
+--       Differentiable Real fun t => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x ij
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.div_electricField_eq_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_div_electricfield_eq_fieldstrengthmatrix : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (x : Space d),
+--       Eq (Space.div (Electromagnetism.ElectromagneticPotential.electricField c A t) x)
+--         (instHMul.hMul c.val
+--           (Finset.univ.sum fun μ =>
+--             SpaceTime.deriv μ
+--               (fun x => Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := Sum.inl 0 })
+--               (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x })))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.isExtrema_iff_vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_isextrema_iff_vectorpotential : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.DistElectromagneticPotential d)
+--   (J : Electromagnetism.DistLorentzCurrentDensity d),
+--   Iff (Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕 A J)
+--     (And
+--       (∀ (ε : SchwartzMap (Prod Time (Space d)) Real),
+--         Eq
+--           (ContinuousLinearMap.funLike.coe
+--             (LinearMap.instFunLike.coe Space.distSpaceDiv
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c) A))
+--             ε)
+--           (instHMul.hMul (instHDiv.hDiv 1 𝓕.ε₀)
+--             (ContinuousLinearMap.funLike.coe
+--               (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.chargeDensity 𝓕.c) J) ε)))
+--       (∀ (ε : SchwartzMap (Prod Time (Space d)) Real) (i : Fin d),
+--         Eq
+--           (instHAdd.hAdd
+--             (instHSub.hSub
+--               (instHMul.hMul (instHMul.hMul 𝓕.μ₀ 𝓕.ε₀)
+--                 ((ContinuousLinearMap.funLike.coe
+--                       (LinearMap.instFunLike.coe Space.distTimeDeriv
+--                         (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c) A))
+--                       ε).ofLp
+--                   i))
+--               (Finset.univ.sum fun x =>
+--                 Real.instNeg.neg
+--                   (instHSub.hSub
+--                     ((ContinuousLinearMap.funLike.coe
+--                           (LinearMap.instFunLike.coe (Space.distSpaceDeriv x)
+--                             (LinearMap.instFunLike.coe (Space.distSpaceDeriv x)
+--                               (LinearMap.instFunLike.coe
+--                                 (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c) A)))
+--                           ε).ofLp
+--                       i)
+--                     ((ContinuousLinearMap.funLike.coe
+--                           (LinearMap.instFunLike.coe (Space.distSpaceDeriv x)
+--                             (LinearMap.instFunLike.coe (Space.distSpaceDeriv i)
+--                               (LinearMap.instFunLike.coe
+--                                 (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c) A)))
+--                           ε).ofLp
+--                       x))))
+--             (instHMul.hMul 𝓕.μ₀
+--               ((ContinuousLinearMap.funLike.coe
+--                     (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.currentDensity 𝓕.c) J)
+--                     ε).ofLp
+--                 i)))
+--           0))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.isExtrema_iff_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isextrema_iff_fieldstrengthmatrix : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         Iff (Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A J)
+--           (∀ (x : SpaceTime d) (ν : Sum (Fin 1) (Fin d)),
+--             Eq
+--               (Finset.univ.sum fun μ =>
+--                 SpaceTime.deriv μ (fun x => Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := ν }) x)
+--               (instHMul.hMul 𝓕.μ₀ (J x ν)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_contdiff : ∀ {d : Nat} {n : WithTop ENat} {A : Electromagnetism.ElectromagneticPotential d}
+--   {μν : Prod (Sum (Fin 1) (Fin d)) (Sum (Fin 1) (Fin d))},
+--   ContDiff Real (instHAdd.hAdd n 1) A → ContDiff Real n fun x => Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) μν
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity_chargeDesnity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_wirecurrentdensity_chargedesnity : ∀ (c : SpeedOfLight) (I : Real),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.chargeDensity c)
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity c) I))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.vectorPotential_contDiff_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_vectorpotential_contdiff_time : ∀ {n : WithTop ENat} {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real n A →
+--     ∀ (x : Space d), ContDiff Real n fun x_1 => Electromagnetism.ElectromagneticPotential.vectorPotential c A x_1 x
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire_isExterma)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_isexterma : ∀ {𝓕 : Electromagnetism.FreeSpace} {I : Real},
+--   Electromagnetism.DistElectromagneticPotential.IsExtrema 𝓕
+--     (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I)
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.wireCurrentDensity 𝓕.c) I)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_electricfield : ∀ {d : Nat} {c : SpeedOfLight} {E₀ : EuclideanSpace Real (Fin d)} {B₀ : Prod (Fin d) (Fin d) → Real}
+--   {B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i }))},
+--   Eq
+--     (Electromagnetism.ElectromagneticPotential.electricField c
+--       (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm))
+--     fun x x_1 => E₀
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX.eq_3)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_eq_3 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real) (x : SpaceTime d.succ) (i : Nat)
+--   (h : instLTNat.lt i.succ d.succ),
+--   Eq (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ x (Sum.inr ⟨i.succ, h⟩))
+--     (instHMul.hMul (instHDiv.hDiv (instHMul.hMul (Real.instNeg.neg (E₀ ⟨i, ⋯⟩)) 1) (instHMul.hMul 𝓕.c.val k))
+--       (Real.sin
+--         (instHAdd.hAdd
+--           (instHMul.hMul k
+--             (instHSub.hSub (instHMul.hMul 𝓕.c.val (LinearMap.instFunLike.coe (SpaceTime.time 𝓕.c) x).val)
+--               ((ContinuousLinearMap.funLike.coe SpaceTime.space x).val 0)))
+--           (φ ⟨i, ⋯⟩))))
+
+-- Source: PhysLean (Electromagnetism.CurrentDensity)
+/-- Current density.  -/
+axiom electromagnetism_currentdensity :
+  Type
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX.eq_2)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_eq_2 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real) (x : SpaceTime d.succ),
+--   Eq (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ x (Sum.inr ⟨0, ⋯⟩)) 0
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire_vectorPotential_distSpaceDeriv_0)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_vectorpotential_distspacederiv_0 : ∀ (𝓕 : Electromagnetism.FreeSpace) (I : Real),
+--   Eq
+--     (LinearMap.instFunLike.coe (Space.distSpaceDeriv 0)
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.vectorPotential 𝓕.c)
+--         (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I)))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFunction_unique)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfunction_unique : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s) (B1 : Real → Prod (Fin d) (Fin d) → Real),
+--   (∀ (t : Time) (x : Space d),
+--       Eq (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x)
+--         (B1 (instHSub.hSub (Space.instInnerReal.inner Real x s.unit) (instHMul.hMul 𝓕.c.val t.val)))) →
+--     Eq B1 P.magneticFunction
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.infiniteWire_electricField)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_infinitewire_electricfield : ∀ (𝓕 : Electromagnetism.FreeSpace) (I : Real),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c)
+--       (Electromagnetism.DistElectromagneticPotential.infiniteWire 𝓕 I))
+--     0
+
+-- Source: PhysLean (Electromagnetism.VectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_vectorpotential : optParam Nat 3 → Type
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_differentiable : ∀ {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Differentiable Real J →
+--     Differentiable Real
+--       (Function.hasUncurryInduction.uncurry (Electromagnetism.LorentzCurrentDensity.currentDensity c J))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticField_div_eq_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfield_div_eq_zero : ∀ {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential),
+--   ContDiff Real 2 A → ∀ (t : Time), Eq (Space.div (Electromagnetism.ElectromagneticPotential.magneticField c A t)) 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_deriv : {d : Nat} →
+--   Electromagnetism.ElectromagneticPotential d → SpaceTime d → TensorProduct Real (Lorentz.CoVector d) (Lorentz.Vector d)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.time_deriv_electricField_eq_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_time_deriv_electricfield_eq_magneticfieldmatrix : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d},
+--   Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s →
+--     ContDiff Real (WithTop.some instTopENat.top) A →
+--       Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A 0 →
+--         ∀ (t : Time) (x : Space d) (i : Fin d),
+--           Eq (Time.deriv (fun x_1 => (Electromagnetism.ElectromagneticPotential.electricField 𝓕.c A x_1 x).ofLp i) t)
+--             (Time.deriv
+--               (fun t =>
+--                 instHMul.hMul 𝓕.c.val
+--                   (Finset.univ.sum fun j =>
+--                     instHMul.hMul
+--                       (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A t x { fst := i, snd := j })
+--                       (s.unit.val j)))
+--               t)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential_eq_sum_basis)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradfreecurrentpotential_eq_sum_basis : ∀ {d : Nat} (J : Electromagnetism.DistLorentzCurrentDensity d) (ε : SchwartzMap (SpaceTime d) Real),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential J) ε)
+--     (Finset.univ.sum fun μ =>
+--       instHSMul.hSMul (minkowskiMatrix μ μ)
+--         (instHSMul.hSMul (ContinuousLinearMap.funLike.coe J ε μ) (Module.Basis.instFunLike.coe Lorentz.Vector.basis μ)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_contDiff)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_contdiff : ∀ {d : Nat} {n : WithTop ENat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (instHAdd.hAdd n 1) A →
+--     ∀ (ij : Prod (Fin d) (Fin d)),
+--       ContDiff Real n
+--         (Function.hasUncurryInduction.uncurry fun t x =>
+--           Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x ij)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle : Electromagnetism.FreeSpace → Real → Space 1 → Electromagnetism.DistElectromagneticPotential 1
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradFreeCurrentPotential_eq_sum_basis)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradfreecurrentpotential_eq_sum_basis : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real (WithTop.some instTopENat.top) A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       ContDiff Real (WithTop.some instTopENat.top) J →
+--         Eq (A.gradFreeCurrentPotential J)
+--           (Finset.univ.sum fun μ x =>
+--             instHSMul.hSMul (instHMul.hMul (minkowskiMatrix μ μ) (J x μ))
+--               (Module.Basis.instFunLike.coe Lorentz.Vector.basis μ))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.fieldStrength.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_fieldstrength_eq_1 : ∀ {d : Nat},
+--   Eq Electromagnetism.DistElectromagneticPotential.fieldStrength
+--     { toFun := fun A => { toFun := fun ε => A.fieldStrengthAux ε, map_add' := ⋯, map_smul' := ⋯, cont := ⋯ },
+--       map_add' := ⋯, map_smul' := ⋯ }
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.distDeriv_fieldStrength_diag_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_distderiv_fieldstrength_diag_zero : ∀ {d : Nat} (A : Electromagnetism.DistElectromagneticPotential d) (ε : SchwartzMap (SpaceTime d) Real)
+--   (μ ν : Sum (Fin 1) (Fin d)),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe (Lorentz.Vector.basis.tensorProduct Lorentz.Vector.basis).repr
+--         (ContinuousLinearMap.funLike.coe
+--           (LinearMap.instFunLike.coe (SpaceTime.distDeriv ν)
+--             (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.fieldStrength A))
+--           ε))
+--       { fst := μ, snd := μ })
+--     0
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity_currentDensity)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticlecurrentdensity_currentdensity : ∀ (c : SpeedOfLight) (q : Real) (r₀ : Space 1),
+--   Eq
+--     (LinearMap.instFunLike.coe (Electromagnetism.DistLorentzCurrentDensity.currentDensity c)
+--       (Electromagnetism.DistElectromagneticPotential.oneDimPointParticleCurrentDensity c q r₀))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.scalarPotential_differentiable_space)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_scalarpotential_differentiable_space : ∀ {d : Nat} (c : SpeedOfLight) (A : Electromagnetism.ElectromagneticPotential d),
+--   Differentiable Real A →
+--     ∀ (t : Time), Differentiable Real (Electromagnetism.ElectromagneticPotential.scalarPotential c A t)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.canonicalMomentum_eq)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_canonicalmomentum_eq : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (J : Electromagnetism.LorentzCurrentDensity d),
+--       Eq (Electromagnetism.ElectromagneticPotential.canonicalMomentum 𝓕 A J) fun x μ =>
+--         instHMul.hMul (instHDiv.hDiv 1 𝓕.μ₀)
+--           (instHSMul.hSMul (minkowskiMatrix μ μ)
+--             (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := Sum.inl 0 }))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFieldMatrix_time_deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfieldmatrix_time_deriv : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s),
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (x : Space d) (i j : Fin d),
+--       Eq
+--         (Time.deriv
+--           (fun x_1 => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix 𝓕.c A x_1 x { fst := i, snd := j })
+--           t)
+--         (instHSMul.hSMul (Real.instNeg.neg 𝓕.c.val)
+--           (ContinuousLinearMap.funLike.coe
+--             (fderiv Real (fun u => P.magneticFunction u { fst := i, snd := j })
+--               (instHSub.hSub (Space.instInnerReal.inner Real x s.unit) (instHMul.hMul 𝓕.c.val t.val)))
+--             1))
+
+-- Source: PhysLean (Electromagnetism.FreeSpace.ε₀_pos)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_freespace_ε₀_pos : ∀ (self : Electromagnetism.FreeSpace), Real.instLT.lt 0 self.ε₀
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_eq_fieldStrengthMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_eq_fieldstrengthmatrix : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d) (t : Time) (x : Space d) (i : Fin d),
+--   Differentiable Real A →
+--     Eq ((Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i)
+--       (instHMul.hMul (Real.instNeg.neg c.val)
+--         (Finsupp.instFunLike.coe
+--           (A.fieldStrengthMatrix (EquivLike.toFunLike.coe (SpaceTime.toTimeAndSpace c).symm { fst := t, snd := x }))
+--           { fst := Sum.inl 0, snd := Sum.inr i }))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.gradLagrangian)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_gradlagrangian : {d : Nat} →
+--   Electromagnetism.FreeSpace →
+--     Electromagnetism.ElectromagneticPotential d →
+--       Electromagnetism.LorentzCurrentDensity d → SpaceTime d → Lorentz.Vector d
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_apply_differentiable_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_apply_differentiable_time : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   ContDiff Real 2 A →
+--     ∀ (x : Space d) (i : Fin d),
+--       Differentiable Real fun t => (Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.chargeDensity_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_chargedensity_differentiable : ∀ {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Differentiable Real J →
+--     Differentiable Real
+--       (Function.hasUncurryInduction.uncurry (Electromagnetism.LorentzCurrentDensity.chargeDensity c J))
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity_differentiable_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_differentiable_time : ∀ {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Differentiable Real J →
+--     ∀ (x : Space d), Differentiable Real fun t => Electromagnetism.LorentzCurrentDensity.currentDensity c J t x
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle_electricField_timeDeriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_onedimpointparticle_electricfield_timederiv : ∀ (𝓕 : Electromagnetism.FreeSpace) (q : Real) (r₀ : Space 1),
+--   Eq
+--     (LinearMap.instFunLike.coe Space.distTimeDeriv
+--       (LinearMap.instFunLike.coe (Electromagnetism.DistElectromagneticPotential.electricField 𝓕.c)
+--         (Electromagnetism.DistElectromagneticPotential.oneDimPointParticle 𝓕 q r₀)))
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.constantEB_vectorPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_constanteb_vectorpotential : ∀ {d : Nat} {c : SpeedOfLight} {E₀ : EuclideanSpace Real (Fin d)} {B₀ : Prod (Fin d) (Fin d) → Real}
+--   {B₀_antisymm : ∀ (i j : Fin d), Eq (B₀ { fst := i, snd := j }) (Real.instNeg.neg (B₀ { fst := j, snd := i }))},
+--   Eq
+--     (Electromagnetism.ElectromagneticPotential.vectorPotential c
+--       (Electromagnetism.ElectromagneticPotential.constantEB c E₀ B₀ B₀_antisymm))
+--     fun x x_1 =>
+--     {
+--       ofLp := fun i =>
+--         instHMul.hMul (1 / 2) (Finset.univ.sum fun j => instHMul.hMul (B₀ { fst := i, snd := j }) (x_1.val j)) }
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.differentiable_component)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_differentiable_component : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d),
+--   Differentiable Real A → ∀ (μ : Sum (Fin 1) (Fin d)), Differentiable Real fun x => A x μ
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_eq_tensor_basis_repr)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_fieldstrengthmatrix_eq_tensor_basis_repr : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d) (μ ν : Sum (Fin 1) (Fin d)),
+--   Eq (Finsupp.instFunLike.coe (A.fieldStrengthMatrix x) { fst := μ, snd := ν })
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe
+--         (TensorSpecies.Tensor.basis
+--             (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--               (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).repr
+--         (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.toFieldStrength x)))
+--       fun x =>
+--       Electromagnetism.ElectromagneticPotential.fieldStrengthMatrix_eq_tensor_basis_repr.match_1
+--         (fun x =>
+--           Fin
+--             ((realLorentzTensor d).repDim
+--               (Fin.append (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty)
+--                 (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty) x)))
+--         x (fun _ => EquivLike.toFunLike.coe finSumFinEquiv μ) fun _ => EquivLike.toFunLike.coe finSumFinEquiv ν)
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_magneticfieldmatrix : {d : Nat} →
+--   SpeedOfLight →
+--     LinearMap (RingHom.id Real) (Electromagnetism.DistElectromagneticPotential d)
+--       (Distribution Real (Prod Time (Space d))
+--         (TensorProduct Real (EuclideanSpace Real (Fin d)) (EuclideanSpace Real (Fin d))))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential_eq_tensor)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_gradfreecurrentpotential_eq_tensor : ∀ {d : Nat} (J : Electromagnetism.DistLorentzCurrentDensity d) (ε : SchwartzMap (SpaceTime d) Real)
+--   (ν : Sum (Fin 1) (Fin d)),
+--   Eq
+--     (ContinuousLinearMap.funLike.coe
+--       (LinearMap.instFunLike.coe Electromagnetism.DistElectromagneticPotential.gradFreeCurrentPotential J) ε ν)
+--     (instHMul.hMul (minkowskiMatrix ν ν)
+--       (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor.symm
+--         (LinearMap.instFunLike.coe (TensorSpecies.Tensor.permT id ⋯)
+--           (EquivLike.toFunLike.coe Lorentz.Vector.tensorial.toTensor (ContinuousLinearMap.funLike.coe J ε)))
+--         ν))
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.deriv)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_deriv : {d : Nat} →
+--   LinearMap (RingHom.id Real) (Electromagnetism.DistElectromagneticPotential d)
+--     (Distribution Real (SpaceTime d) (TensorProduct Real (Lorentz.CoVector d) (Lorentz.Vector d)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsPlaneWave.magneticFunction_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isplanewave_magneticfunction_differentiable : ∀ {d : Nat} {𝓕 : Electromagnetism.FreeSpace} {A : Electromagnetism.ElectromagneticPotential d} {s : Space.Direction d}
+--   (P : Electromagnetism.ElectromagneticPotential.IsPlaneWave 𝓕 A s),
+--   ContDiff Real 2 A → ∀ (ij : Prod (Fin d) (Fin d)), Differentiable Real fun u => P.magneticFunction u ij
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix_diag_eq_zero)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_magneticfieldmatrix_diag_eq_zero : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d) (t : Time) (x : Space d) (i : Fin d),
+--   Eq (Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A t x { fst := i, snd := i }) 0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.harmonicWaveX_vectorPotential_space_deriv_succ)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_harmonicwavex_vectorpotential_space_deriv_succ : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (k : Real) (E₀ φ : Fin d → Real) (t : Time) (x : Space d.succ) (j : Fin d)
+--   (i : Fin d.succ),
+--   Eq
+--     (Space.deriv j.succ
+--       (fun x =>
+--         (Electromagnetism.ElectromagneticPotential.vectorPotential 𝓕.c
+--               (Electromagnetism.ElectromagneticPotential.harmonicWaveX 𝓕 k E₀ φ) t x).ofLp
+--           i)
+--       x)
+--     0
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.time_deriv_magneticFieldMatrix)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_time_deriv_magneticfieldmatrix : ∀ {d : Nat} {c : SpeedOfLight} (A : Electromagnetism.ElectromagneticPotential d),
+--   ContDiff Real 2 A →
+--     ∀ (t : Time) (x : Space d) (i j : Fin d),
+--       Eq
+--         (Time.deriv
+--           (fun x_1 => Electromagnetism.ElectromagneticPotential.magneticFieldMatrix c A x_1 x { fst := i, snd := j }) t)
+--         (instHSub.hSub
+--           (Space.deriv i (fun x => (Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp j) x)
+--           (Space.deriv j (fun x => (Electromagnetism.ElectromagneticPotential.electricField c A t x).ofLp i) x))
+
+-- Source: PhysLean (Electromagnetism.LorentzCurrentDensity.currentDensity_apply_differentiable_time)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_lorentzcurrentdensity_currentdensity_apply_differentiable_time : ∀ {d : Nat} {c : SpeedOfLight} {J : Electromagnetism.LorentzCurrentDensity d},
+--   Differentiable Real J →
+--     ∀ (x : Space d) (i : Fin d),
+--       Differentiable Real fun t => (Electromagnetism.LorentzCurrentDensity.currentDensity c J t x).ofLp i
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.toTensor_deriv_basis_repr_apply)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_totensor_deriv_basis_repr_apply : ∀ {d : Nat} (A : Electromagnetism.ElectromagneticPotential d) (x : SpaceTime d)
+--   (b :
+--     TensorSpecies.Tensor.ComponentIdx
+--       (Fin.append (Matrix.vecCons realLorentzTensor.Color.down Matrix.vecEmpty)
+--         (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))),
+--   Eq
+--     (Finsupp.instFunLike.coe
+--       (EquivLike.toFunLike.coe
+--         (TensorSpecies.Tensor.basis
+--             (Fin.append (Matrix.vecCons realLorentzTensor.Color.down Matrix.vecEmpty)
+--               (Matrix.vecCons realLorentzTensor.Color.up Matrix.vecEmpty))).repr
+--         (EquivLike.toFunLike.coe TensorSpecies.Tensorial.prod.toTensor (A.deriv x)))
+--       b)
+--     (SpaceTime.deriv (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 0)) A x
+--       (EquivLike.toFunLike.coe finSumFinEquiv.symm (b 1)))
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.hamiltonian)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_hamiltonian : {d : Nat} →
+--   Electromagnetism.FreeSpace →
+--     Electromagnetism.ElectromagneticPotential d → Electromagnetism.LorentzCurrentDensity d → SpaceTime d → Real
+
+-- Source: PhysLean (Electromagnetism.DistElectromagneticPotential.scalarPotential)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_distelectromagneticpotential_scalarpotential : {d : Nat} →
+--   SpeedOfLight →
+--     LinearMap (RingHom.id Real) (Electromagnetism.DistElectromagneticPotential d)
+--       (Distribution Real (Prod Time (Space d)) Real)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.IsExtrema.eq_1)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_isextrema_eq_1 : ∀ {d : Nat} (𝓕 : Electromagnetism.FreeSpace) (A : Electromagnetism.ElectromagneticPotential d)
+--   (J : Electromagnetism.LorentzCurrentDensity d),
+--   Eq (Electromagnetism.ElectromagneticPotential.IsExtrema 𝓕 A J)
+--     (Eq (Electromagnetism.ElectromagneticPotential.gradLagrangian 𝓕 A J) 0)
+
+-- Source: PhysLean (Electromagnetism.ElectromagneticPotential.electricField_differentiable)
+-- [complex signature, not re-axiomatized]
+-- electromagnetism_electromagneticpotential_electricfield_differentiable : ∀ {d : Nat} {A : Electromagnetism.ElectromagneticPotential d} {c : SpeedOfLight},
+--   ContDiff Real 2 A →
+--     Differentiable Real
+--       (Function.hasUncurryInduction.uncurry (Electromagnetism.ElectromagneticPotential.electricField c A))
 
 end PhysicsGenerator.Electromagnetism

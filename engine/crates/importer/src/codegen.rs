@@ -7,7 +7,7 @@
 //! - Declares theorems as axioms (proven in PhysLean, re-axiomatized here)
 //! - Adds source comments for traceability
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -147,13 +147,19 @@ fn render_domain_file(file: &DomainFile, catalog: &PhysLeanCatalog) -> String {
     out.push_str(&format!("namespace {}\n\n", file.namespace));
     out.push_str("open PhysicsGenerator\n\n");
 
-    // Types first
+    // Types first (deduplicated by short name)
     if !file.types.is_empty() {
         out.push_str("-- ══════════════════════════════════════════════════════════════\n");
         out.push_str("-- Types (from PhysLean)\n");
         out.push_str("-- ══════════════════════════════════════════════════════════════\n\n");
 
+        let mut seen_type_names: HashSet<String> = HashSet::new();
         for ty in &file.types {
+            if seen_type_names.contains(&ty.name) {
+                out.push_str(&format!("-- [skipped duplicate: {} from {}]\n\n", ty.name, ty.physlean_name));
+                continue;
+            }
+            seen_type_names.insert(ty.name.clone());
             render_type(&mut out, ty);
         }
     }
@@ -189,6 +195,13 @@ fn render_domain_helpers(out: &mut String, namespace: &str) {
             out.push_str("-- ══════════════════════════════════════════════════════════════\n");
             out.push_str("-- Helper Definitions (for derivation proofs)\n");
             out.push_str("-- ══════════════════════════════════════════════════════════════\n\n");
+
+            out.push_str("/-- A four-momentum vector in special relativity -/\n");
+            out.push_str("structure FourMomentum where\n");
+            out.push_str("  energy : ℝ\n");
+            out.push_str("  px : ℝ\n");
+            out.push_str("  py : ℝ\n");
+            out.push_str("  pz : ℝ\n\n");
 
             out.push_str("/-- Squared magnitude of 3-momentum: |p⃗|² = px² + py² + pz² -/\n");
             out.push_str("noncomputable def FourMomentum.three_momentum_sq (p : FourMomentum) : ℝ :=\n");
@@ -268,28 +281,131 @@ fn render_domain_helpers(out: &mut String, namespace: &str) {
     }
 }
 
+/// PhysLean-specific namespace prefixes that won't exist in the prover.
+const PHYSLEAN_TYPE_PREFIXES: &[&str] = &[
+    "Lorentz.", "LorentzGroup.", "SpaceTime.", "Electromagnetism.",
+    "Fermion.", "Higgs.", "StandardModel.", "CliffordAlgebra.",
+    "PhysLean.", "SchwartzMap", "complexLorentzTensor.", "realLorentzTensor.",
+];
+
+/// Check if a field type string references PhysLean-specific types.
+fn field_has_physlean_refs(field: &str) -> bool {
+    PHYSLEAN_TYPE_PREFIXES.iter().any(|pfx| field.contains(pfx))
+}
+
 /// Render a type as a Lean structure or axiom.
+///
+/// If a structure's fields reference PhysLean-specific types (which don't exist
+/// in the prover), the type is emitted as a plain axiom instead.
 fn render_type(out: &mut String, ty: &CatalogType) {
     // Source comment
     out.push_str(&format!("-- Source: PhysLean ({})\n", ty.physlean_name));
 
+    // Doc string from PhysLean (if available)
+    let doc_label = ty.doc_string.as_deref().unwrap_or(&ty.name);
+
     if ty.kind == "structure" && !ty.fields.is_empty() {
-        out.push_str(&format!("/-- {} -/\n", ty.name));
-        out.push_str(&format!("structure {} where\n", ty.name));
-        for field in &ty.fields {
-            out.push_str(&format!("  {field}\n"));
+        // Check if any field references PhysLean-specific types
+        let has_physlean_refs = ty.fields.iter().any(|f| field_has_physlean_refs(f));
+        if has_physlean_refs {
+            // Emit as axiom only — fields reference types not available in prover
+            out.push_str(&format!("/-- {} -/\n", doc_label));
+            out.push_str(&format!("axiom {} : Type\n", ty.name));
+        } else {
+            out.push_str(&format!("/-- {} -/\n", doc_label));
+            out.push_str(&format!("structure {} where\n", ty.name));
+            for field in &ty.fields {
+                out.push_str(&format!("  {field}\n"));
+            }
         }
     } else {
-        out.push_str(&format!("/-- {} -/\n", ty.name));
+        out.push_str(&format!("/-- {} -/\n", doc_label));
         out.push_str(&format!("axiom {} : Type\n", ty.name));
     }
     out.push('\n');
 }
 
+/// Check if a type signature can't be used standalone in the prover.
+///
+/// Filters out:
+/// - PhysLean-specific type references
+/// - Universe polymorphism (u_1, u_2, etc.)
+/// - Metavariables (?m.)
+/// - Very long signatures (likely too complex)
+fn sig_has_physlean_refs(sig: &str) -> bool {
+    // PhysLean-specific patterns
+    const ADDITIONAL_PATTERNS: &[&str] = &[
+        "SpaceTime", "SpeedOfLight", "minkowskiMatrix", "minkowskiMetric",
+        "Lean.ParserDescr", "Lean.Macro", "Lean.TrailingParserDescr",
+        "InformalLemma", "InformalDefinition",
+    ];
+    // Lean internals / structural issues that can't be standalone
+    const STRUCTURAL_ISSUES: &[&str] = &[
+        "u_1", "u_2", "u_3", "u_4",   // Universe variables
+        "?m.",                          // Metavariables
+        "instFunLike.coe",             // Low-level instance projections
+        "instCategory.Hom",            // Category theory internals
+        "instMonoidalCategory",        // Monoidal category instances
+        "EquivLike.toFunLike",         // Low-level coercions
+        "ModuleCat.",                   // Category-wrapped modules
+        "Action.",                      // Representation theory internals
+        "V.carrier",                    // Internal carrier access
+        ".timeComponent",              // PhysLean field accessors
+        ".spaceComponent",             // PhysLean field accessors
+        "Subtype.val",                 // Often underspecified without context
+        "fun v => v ",                 // Lambda where var is used as function (type ambiguity)
+        "fun x => x ",                 // Same pattern
+        "Set.univ",                    // Underspecified without type annotation
+        "MonoidHom.instFunLike",       // Low-level instance
+        "RingHom.id",                  // Low-level ring hom
+        "instHSMul.hSMul",            // Low-level scalar mult
+        "instHMul.hMul",              // Low-level multiplication
+        "instHAdd.hAdd",              // Low-level addition
+        "instHSub.hSub",              // Low-level subtraction
+        "Real.instLT.lt",             // Low-level less-than
+        "Real.instLE.le",             // Low-level less-eq
+        "Real.instNeg.neg",           // Low-level negation
+        "Finsupp.",                    // Finitely supported functions
+        "LinearMap.instFunLike",       // Low-level linear map coercion
+        "ContinuousLinearMap.funLike", // Low-level CLM coercion
+        "Eq (0 ",                      // Zero applied as function (needs function type context)
+        "Eq (1 ",                      // One applied as function
+        "optParam",                    // Optional parameters (type definitions, not theorems)
+        "→ Type",                      // Type-returning functions (definitions, not theorems)
+        "AddSubgroup",                 // Abstract subgroups (underspecified)
+        "ContinuousMap",              // Continuous map type (usually needs context)
+    ];
+    PHYSLEAN_TYPE_PREFIXES.iter().any(|pfx| sig.contains(pfx))
+        || ADDITIONAL_PATTERNS.iter().any(|pat| sig.contains(pat))
+        || STRUCTURAL_ISSUES.iter().any(|pat| sig.contains(pat))
+        || sig.len() > 300  // Long signatures are likely too complex for standalone use
+}
+
 /// Render a theorem as a Lean axiom with source traceability.
+///
+/// Only emits `axiom` declarations for theorems marked `can_reaxiomatize`
+/// AND whose signatures don't reference PhysLean-specific types.
+/// Complex theorems are emitted as comments for reference.
 fn render_theorem(out: &mut String, theorem: &CatalogTheorem) {
     // Source comment
     out.push_str(&format!("-- Source: PhysLean ({})\n", theorem.physlean_name));
+
+    // Double-check: even if catalog says can_reaxiomatize, verify the signature
+    // doesn't reference PhysLean-specific types that don't exist in the prover
+    let actually_reaxiomatizable = theorem.can_reaxiomatize
+        && !sig_has_physlean_refs(&theorem.type_signature);
+
+    if !actually_reaxiomatizable {
+        // Complex signature — emit as comment only.
+        // Must comment each line since type_signature may be multiline.
+        out.push_str("-- [complex signature, not re-axiomatized]\n");
+        let full_sig = format!("{} : {}", theorem.name, theorem.type_signature);
+        for line in full_sig.lines() {
+            out.push_str(&format!("-- {line}\n"));
+        }
+        out.push('\n');
+        return;
+    }
 
     // Doc string
     if let Some(ref doc) = theorem.doc_string {

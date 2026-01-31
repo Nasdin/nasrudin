@@ -1,0 +1,18 @@
+[Unit]
+Description=Physics Generator - Theorem Discovery Daemon
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/physics-generator/engine
+Environment=PROVER_ROOT=../prover
+Environment=ROCKS_DB_PATH=../data/theorems.db
+Environment=API_PORT=3001
+ExecStart=/usr/bin/cargo run --release --bin physics-api
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/physics-generator/engine.log
+StandardError=append:/var/log/physics-generator/engine.log
+
+[Install]
+WantedBy=multi-user.target

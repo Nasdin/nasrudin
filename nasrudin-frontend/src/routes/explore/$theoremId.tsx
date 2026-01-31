@@ -16,8 +16,34 @@ import dagre from "@dagrejs/dagre";
 import { useMemo } from "react";
 import { BlockMath } from "react-katex";
 import DomainBadge from "../../components/DomainBadge";
+import { RouteError } from "../../components/RouteError";
+import { domainDisplay, theoremHexId } from "../../lib/api";
+import {
+	lineageQueryOptions,
+	theoremQueryOptions,
+	useLineage,
+	useTheorem,
+} from "../../lib/queries";
+import type { ApiTheorem, LineageRecord } from "../../lib/types";
 
 export const Route = createFileRoute("/explore/$theoremId")({
+	loader: ({ context: { queryClient }, params }) => {
+		queryClient.ensureQueryData(theoremQueryOptions(params.theoremId));
+		queryClient.ensureQueryData(lineageQueryOptions(params.theoremId));
+	},
+	head: ({ params }) => ({
+		meta: [{ title: `Explore ${params.theoremId} — Nasrudin` }],
+	}),
+	pendingComponent: () => (
+		<div className="h-screen w-full flex items-center justify-center bg-slate-50">
+			<div className="animate-pulse text-slate-400">
+				Loading derivation graph...
+			</div>
+		</div>
+	),
+	errorComponent: ({ error, reset }) => (
+		<RouteError error={error} reset={reset} />
+	),
 	component: ExploreCanvas,
 });
 
@@ -72,7 +98,11 @@ function TheoremNode({ data }: NodeProps<Node<TheoremNodeData>>) {
 		<div
 			className={`${bgColor} border ${borderColor} rounded-lg p-3 min-w-[240px] max-w-[280px] shadow-sm`}
 		>
-			<Handle type="target" position={Position.Top} className="!bg-slate-400" />
+			<Handle
+				type="target"
+				position={Position.Top}
+				className="!bg-slate-400"
+			/>
 			<div className="overflow-x-auto mb-2 text-sm">
 				<BlockMath math={data.latex} />
 			</div>
@@ -93,7 +123,8 @@ function TheoremNode({ data }: NodeProps<Node<TheoremNodeData>>) {
 
 const nodeTypes = { theorem: TheoremNode };
 
-const initialNodes: Node<TheoremNodeData>[] = [
+// Fallback demo data when lineage isn't available
+const demoNodes: Node<TheoremNodeData>[] = [
 	{
 		id: "ax-1",
 		type: "theorem",
@@ -168,7 +199,7 @@ const initialNodes: Node<TheoremNodeData>[] = [
 	},
 ];
 
-const initialEdges: Edge[] = [
+const demoEdges: Edge[] = [
 	{ id: "e-ax1-thm1", source: "ax-1", target: "thm-1", animated: true },
 	{ id: "e-ax3-thm1", source: "ax-3", target: "thm-1", animated: true },
 	{ id: "e-ax1-thm2", source: "ax-1", target: "thm-2" },
@@ -177,13 +208,80 @@ const initialEdges: Edge[] = [
 	{ id: "e-ax2-thm3", source: "ax-2", target: "thm-3" },
 ];
 
+function buildGraphFromLineage(
+	mainTheorem: ApiTheorem,
+	lineage: LineageRecord,
+	parentTheorems: Array<ApiTheorem | null>,
+): { nodes: Node<TheoremNodeData>[]; edges: Edge[] } {
+	const nodes: Node<TheoremNodeData>[] = [];
+	const edges: Edge[] = [];
+
+	const mainHex = theoremHexId(mainTheorem.id);
+
+	// Add the main theorem node
+	nodes.push({
+		id: mainHex,
+		type: "theorem",
+		position: { x: 0, y: 0 },
+		data: {
+			label: mainTheorem.canonical,
+			latex: mainTheorem.latex,
+			domain: domainDisplay(mainTheorem.domain),
+			depth: mainTheorem.depth,
+			isAxiom: mainTheorem.origin === "Axiom",
+		},
+	});
+
+	// Add parent nodes and edges
+	for (let i = 0; i < lineage.parents.length; i++) {
+		const parentId = lineage.parents[i];
+		const parentHex = theoremHexId(parentId);
+		const parent = parentTheorems[i];
+
+		nodes.push({
+			id: parentHex,
+			type: "theorem",
+			position: { x: 0, y: 0 },
+			data: {
+				label: parent?.canonical ?? parentHex,
+				latex: parent?.latex ?? parentHex,
+				domain: parent ? domainDisplay(parent.domain) : "Unknown",
+				depth: parent?.depth ?? 0,
+				isAxiom: parent?.origin === "Axiom",
+			},
+		});
+
+		edges.push({
+			id: `e-${parentHex}-${mainHex}`,
+			source: parentHex,
+			target: mainHex,
+			animated: true,
+		});
+	}
+
+	return { nodes, edges };
+}
+
 function ExploreCanvas() {
 	const { theoremId } = Route.useParams();
+	const { data: theorem } = useTheorem(theoremId);
+	const { data: lineage } = useLineage(theoremId);
 
-	const { nodes, edges } = useMemo(
-		() => getLayoutedElements(initialNodes, initialEdges),
-		[],
-	);
+	const hasLineage =
+		theorem && lineage && lineage.parents && lineage.parents.length > 0;
+
+	const { nodes, edges } = useMemo(() => {
+		if (!hasLineage || !theorem || !lineage) {
+			return getLayoutedElements(demoNodes, demoEdges);
+		}
+
+		const graph = buildGraphFromLineage(
+			theorem,
+			lineage,
+			lineage.parents.map(() => null),
+		);
+		return getLayoutedElements(graph.nodes, graph.edges);
+	}, [hasLineage, theorem, lineage]);
 
 	return (
 		<div className="h-screen w-full relative bg-slate-50">

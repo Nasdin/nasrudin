@@ -43,7 +43,7 @@ impl Default for ProcessVerifyConfig {
             prover_root: PathBuf::from("../prover"),
             output_subdir: "PhysicsGenerator/Derived".into(),
             namespace: "PhysicsGenerator.Derived".into(),
-            timeout: Duration::from_secs(60),
+            timeout: Duration::from_secs(120),
         }
     }
 }
@@ -162,8 +162,8 @@ impl ProcessVerifier {
             return Ok(false);
         }
 
-        // Check if lake is on PATH
-        match Command::new("lake").arg("--version").output() {
+        // Check if lake is on PATH (with elan augmentation)
+        match lake_command().arg("--version").output() {
             Ok(output) if output.status.success() => {
                 let version = String::from_utf8_lossy(&output.stdout);
                 tracing::info!("Lake available: {}", version.trim());
@@ -264,6 +264,26 @@ fn generate_lean_file(
     out
 }
 
+/// Build a Command for `lake` with elan PATH augmentation.
+///
+/// Ensures `~/.elan/bin` is on PATH so `lake` and `lean` are found
+/// even when running from a process that doesn't inherit the user's shell profile.
+pub fn lake_command() -> Command {
+    let mut cmd = Command::new("lake");
+    // Augment PATH with elan's bin directory
+    if let Some(home) = std::env::var_os("HOME") {
+        let elan_bin = PathBuf::from(home).join(".elan/bin");
+        if elan_bin.exists() {
+            let current_path = std::env::var_os("PATH").unwrap_or_default();
+            let mut new_path = std::ffi::OsString::from(&elan_bin);
+            new_path.push(":");
+            new_path.push(&current_path);
+            cmd.env("PATH", new_path);
+        }
+    }
+    cmd
+}
+
 /// Run `lake build` on a module and return the verification result.
 fn run_lake_build(
     prover_root: &Path,
@@ -272,7 +292,7 @@ fn run_lake_build(
 ) -> Result<VerifyResult> {
     tracing::debug!("Running: lake build {module_path} in {}", prover_root.display());
 
-    let child = Command::new("lake")
+    let child = lake_command()
         .arg("build")
         .arg(module_path)
         .current_dir(prover_root)

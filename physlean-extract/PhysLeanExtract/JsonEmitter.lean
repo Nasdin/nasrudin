@@ -1,13 +1,13 @@
+import Lean
+import PhysLeanExtract.Walker
+import PhysLeanExtract.DomainTagger
+
 /-!
 # JSON Emitter
 
 Serializes extracted theorems, types, and constants to the catalog JSON format
 consumed by the Rust importer crate.
 -/
-
-import Lean
-import PhysLeanExtract.Walker
-import PhysLeanExtract.DomainTagger
 
 namespace PhysLeanExtract
 
@@ -23,38 +23,48 @@ private def jsonEscape (s : String) : String :=
 
 /-- Render a JSON string value. -/
 private def jsonString (s : String) : String :=
-  s!"\"{ jsonEscape s }\""
+  "\"" ++ jsonEscape s ++ "\""
 
 /-- Render an optional JSON string value. -/
 private def jsonOptString : Option String → String
   | some s => jsonString s
   | none => "null"
 
+/-- Render a boolean as JSON. -/
+private def jsonBool (b : Bool) : String :=
+  if b then "true" else "false"
+
 /-- Render a theorem entry as JSON. -/
 def theoremToJson (t : ExtractedTheorem) (domain : PhysDomain) : String :=
   let shortName := t.name.toString.replace "PhysLean." ""
     |>.replace "." "_"
     |>.toLower
-  s!"\{
-    \"name\": {jsonString shortName},
-    \"physlean_name\": {jsonString t.name.toString},
-    \"domain\": {jsonString domain.toJsonString},
-    \"type_signature\": {jsonString t.typeSignature},
-    \"source\": \"physlean\",
-    \"doc_string\": {jsonOptString t.docString}
-  \}"
+  "{" ++
+    "\n    \"name\": " ++ jsonString shortName ++
+    ",\n    \"physlean_name\": " ++ jsonString t.name.toString ++
+    ",\n    \"domain\": " ++ jsonString domain.toJsonString ++
+    ",\n    \"type_signature\": " ++ jsonString t.typeSignature ++
+    ",\n    \"raw_signature\": " ++ jsonString t.rawSignature ++
+    ",\n    \"can_reaxiomatize\": " ++ jsonBool t.canReaxiomatize ++
+    ",\n    \"source\": \"physlean\"" ++
+    ",\n    \"doc_string\": " ++ jsonOptString t.docString ++
+    "\n  }"
 
 /-- Render a type entry as JSON. -/
 def typeToJson (t : ExtractedType) : String :=
   let fieldArr := t.fields.toList.map jsonString
   let fieldsStr := ", ".intercalate fieldArr
-  s!"\{
-    \"name\": {jsonString t.name.getString!},
-    \"physlean_name\": {jsonString t.name.toString},
-    \"kind\": {jsonString t.kind},
-    \"type_signature\": {jsonString t.typeSignature},
-    \"fields\": [{fieldsStr}]
-  \}"
+  let typeName := match t.name.toString.splitOn "." |>.getLast? with
+    | some n => n
+    | none => t.name.toString
+  "{" ++
+    "\n    \"name\": " ++ jsonString typeName ++
+    ",\n    \"physlean_name\": " ++ jsonString t.name.toString ++
+    ",\n    \"kind\": " ++ jsonString t.kind ++
+    ",\n    \"type_signature\": " ++ jsonString t.typeSignature ++
+    ",\n    \"fields\": [" ++ fieldsStr ++ "]" ++
+    ",\n    \"doc_string\": " ++ jsonOptString t.docString ++
+    "\n  }"
 
 /-- Render the full catalog JSON. -/
 def renderCatalog
@@ -85,43 +95,21 @@ def renderCatalog
     ("Thermodynamics", "PhysicsGenerator.Generated.Thermodynamics")
   ]
   let importsEntries := domainImports.map fun (k, v) =>
-    s!"    {jsonString k}: {jsonString v}"
+    "    " ++ jsonString k ++ ": " ++ jsonString v
   let importsStr := ",\n".intercalate importsEntries
 
-  s!"\{
-  \"physlean_version\": {jsonString physleanVersion},
-  \"lean_version\": {jsonString leanVersion},
-  \"theorems\": [
-    {thmsStr}
-  ],
-  \"types\": [
-    {typesStr}
-  ],
-  \"constants\": [
-    \{
-      \"name\": \"c\",
-      \"type\": \"ℝ\",
-      \"positivity\": \"0 < c\"
-    \},
-    \{
-      \"name\": \"G\",
-      \"type\": \"ℝ\",
-      \"positivity\": \"0 < G\"
-    \},
-    \{
-      \"name\": \"hbar\",
-      \"type\": \"ℝ\",
-      \"positivity\": \"0 < hbar\"
-    \},
-    \{
-      \"name\": \"k_B\",
-      \"type\": \"ℝ\",
-      \"positivity\": \"0 < k_B\"
-    \}
-  ],
-  \"domain_imports\": \{
-{importsStr}
-  \}
-\}"
+  "{\n" ++
+  "  \"physlean_version\": " ++ jsonString physleanVersion ++ ",\n" ++
+  "  \"lean_version\": " ++ jsonString leanVersion ++ ",\n" ++
+  "  \"theorems\": [\n    " ++ thmsStr ++ "\n  ],\n" ++
+  "  \"types\": [\n    " ++ typesStr ++ "\n  ],\n" ++
+  "  \"constants\": [\n" ++
+  "    {\"name\": \"c\", \"type\": \"\\u211d\", \"positivity\": \"0 < c\"},\n" ++
+  "    {\"name\": \"G\", \"type\": \"\\u211d\", \"positivity\": \"0 < G\"},\n" ++
+  "    {\"name\": \"hbar\", \"type\": \"\\u211d\", \"positivity\": \"0 < hbar\"},\n" ++
+  "    {\"name\": \"k_B\", \"type\": \"\\u211d\", \"positivity\": \"0 < k_B\"}\n" ++
+  "  ],\n" ++
+  "  \"domain_imports\": {\n" ++ importsStr ++ "\n  }\n" ++
+  "}"
 
 end PhysLeanExtract
