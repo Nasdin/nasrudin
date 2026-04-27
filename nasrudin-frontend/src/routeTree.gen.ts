@@ -14,6 +14,7 @@ import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TheoremIdRouteImport } from './routes/theorem.$id'
 
 const SigninRoute = SigninRouteImport.update({
   id: '/signin',
@@ -40,6 +41,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TheoremIdRoute = TheoremIdRouteImport.update({
+  id: '/theorem/$id',
+  path: '/theorem/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -47,6 +53,7 @@ export interface FileRoutesByFullPath {
   '/browse': typeof BrowseRoute
   '/profile': typeof ProfileRoute
   '/signin': typeof SigninRoute
+  '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +61,7 @@ export interface FileRoutesByTo {
   '/browse': typeof BrowseRoute
   '/profile': typeof ProfileRoute
   '/signin': typeof SigninRoute
+  '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,13 +70,27 @@ export interface FileRoutesById {
   '/browse': typeof BrowseRoute
   '/profile': typeof ProfileRoute
   '/signin': typeof SigninRoute
+  '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api-keys' | '/browse' | '/profile' | '/signin'
+  fullPaths:
+    | '/'
+    | '/api-keys'
+    | '/browse'
+    | '/profile'
+    | '/signin'
+    | '/theorem/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api-keys' | '/browse' | '/profile' | '/signin'
-  id: '__root__' | '/' | '/api-keys' | '/browse' | '/profile' | '/signin'
+  to: '/' | '/api-keys' | '/browse' | '/profile' | '/signin' | '/theorem/$id'
+  id:
+    | '__root__'
+    | '/'
+    | '/api-keys'
+    | '/browse'
+    | '/profile'
+    | '/signin'
+    | '/theorem/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -77,6 +99,7 @@ export interface RootRouteChildren {
   BrowseRoute: typeof BrowseRoute
   ProfileRoute: typeof ProfileRoute
   SigninRoute: typeof SigninRoute
+  TheoremIdRoute: typeof TheoremIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -116,6 +139,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/theorem/$id': {
+      id: '/theorem/$id'
+      path: '/theorem/$id'
+      fullPath: '/theorem/$id'
+      preLoaderRoute: typeof TheoremIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -125,7 +155,17 @@ const rootRouteChildren: RootRouteChildren = {
   BrowseRoute: BrowseRoute,
   ProfileRoute: ProfileRoute,
   SigninRoute: SigninRoute,
+  TheoremIdRoute: TheoremIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}
