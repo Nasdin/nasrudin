@@ -16,6 +16,7 @@ use sea_orm_migration::MigratorTrait;
 use std::time::Duration;
 
 // Re-export key types for convenience.
+pub use entity::api_keys;
 pub use entity::workers::WorkerStatus;
 pub use migrator::Migrator;
 pub use sea_orm;
