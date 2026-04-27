@@ -1,4 +1,4 @@
-import type { QueryClient } from '@tanstack/react-query';
+import { type QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
 
 import '~/styles/tokens.css';
@@ -22,13 +22,16 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 });
 
 function RootDocument() {
+  const { queryClient } = Route.useRouteContext();
   return (
     <html lang="en">
       <head>
         <HeadContent />
       </head>
       <body>
-        <Outlet />
+        <QueryClientProvider client={queryClient}>
+          <Outlet />
+        </QueryClientProvider>
         <Scripts />
       </body>
     </html>
