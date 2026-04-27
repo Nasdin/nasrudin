@@ -24,11 +24,8 @@ function Landing() {
           </div>
           <nav className="nav">
             <Link to="/browse">Browse corpus</Link>
-            {/* @ts-expect-error route added in Phase 8.x */}
             <Link to="/leaderboard">Contributors</Link>
-            {/* @ts-expect-error route added in Phase 8.x */}
             <Link to="/api-docs">API</Link>
-            {/* @ts-expect-error route added in Phase 8.x */}
             <Link to="/pricing">Pricing</Link>
             <span className="nav-sep" aria-hidden />
             <Link to="/signin" className="nav-secondary">

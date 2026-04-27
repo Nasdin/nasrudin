@@ -41,11 +41,9 @@ export function AppHeader({ active }: { active?: string }) {
             <kbd>⌘K</kbd>
           </div>
           <div className="app-actions">
-            {/* @ts-expect-error route added in Phase 7+ */}
             <Link to="/pricing" className="app-nav-link">
               Pricing
             </Link>
-            {/* @ts-expect-error route added in Phase 7+ */}
             <Link to="/api-docs" className="app-nav-link">
               API
             </Link>
@@ -64,7 +62,6 @@ export function AppHeader({ active }: { active?: string }) {
       <nav className="app-subnav">
         <div className="app-subnav-inner">
           {NAV.map((n) => (
-            // @ts-expect-error route added in Phase 7+
             <Link key={n.key} to={n.to} className={active === n.key ? 'active' : ''}>
               {n.label}
             </Link>

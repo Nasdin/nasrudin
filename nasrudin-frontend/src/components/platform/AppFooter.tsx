@@ -30,11 +30,9 @@ export function AppFooter() {
           <Link to="/" style={{ color: 'var(--paper-200)', textDecoration: 'none' }}>
             Landing
           </Link>
-          {/* @ts-expect-error route added in Phase 7+ */}
           <Link to="/api-docs" style={{ color: 'var(--paper-200)', textDecoration: 'none' }}>
             API
           </Link>
-          {/* @ts-expect-error route added in Phase 7+ */}
           <Link to="/pricing" style={{ color: 'var(--paper-200)', textDecoration: 'none' }}>
             Pricing
           </Link>

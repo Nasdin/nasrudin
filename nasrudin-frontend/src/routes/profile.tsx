@@ -35,7 +35,6 @@ function ProfilePage() {
           </div>
           <div className="profile-tier">
             <div className="tier-pill">★ Researcher</div>
-            {/* @ts-expect-error route added in Phase 8 */}
             <Link to="/pricing" style={{ fontSize: 12, marginTop: 6, display: 'inline-block' }}>
               Manage billing →
             </Link>
