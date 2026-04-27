@@ -4,6 +4,8 @@
 //! and NSGA-II multi-objective selection. Domain-focused islands explore
 //! different physics areas in parallel.
 
+pub mod chain_engine;
+pub mod chain_ga;
 pub mod config;
 pub mod crossover;
 pub mod dedup;

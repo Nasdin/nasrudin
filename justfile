@@ -127,6 +127,36 @@ clean:
     cd prover && lake clean
     cd physlean-extract && lake clean
 
+# ── Spontaneous Discovery ──────────────────────────────────
+
+# Derive E=mc² from truly upstream SR axioms (no mass_shell_condition
+# axiom; no DeriveRestEnergy strategy). Emits a Lean proof file and
+# verifies it via `lake build`. The deterministic Phase 8.1 demo path:
+# guaranteed to work; hand-coded DeriveRestEnergyFromUpstream strategy
+# composes the upstream chain.
+spontaneous-emc2:
+    @echo "═══════════════════════════════════════════════════════"
+    @echo "  Nasrudin — Deriving E=mc² from upstream SR axioms"
+    @echo "  (no mass_shell_condition; chain primitives only)"
+    @echo "═══════════════════════════════════════════════════════"
+    cd engine && cargo build -p nasrudin-derive --bin derive_emc2_upstream --release 2>&1 | grep -E "(Compiling|Finished|error)" || true
+    cd engine && PATH="$HOME/.elan/bin:$PATH" ./target/release/derive_emc2_upstream \
+        --emit ../prover/PhysicsGenerator/Derived/AutoRestEnergyUpstream.lean \
+        --verify ../prover
+
+# Run the chain-based GA discovery and lake-verify the top novel
+# candidates per generation (Phase 8.2). The GA evolves chains over
+# the upstream axiom set, with no DeriveRestEnergy* strategy. Verified
+# discoveries land in `prover/PhysicsGenerator/Derived/DiscoverGen{n}.lean`.
+discover-physics gens="100" pop="64" max-lake="12":
+    @echo "═══════════════════════════════════════════════════════"
+    @echo "  Nasrudin — Spontaneous physics discovery via GA"
+    @echo "═══════════════════════════════════════════════════════"
+    cd engine && cargo build -p nasrudin-ga --bin discover_emc2 --release 2>&1 | grep -E "(Compiling|Finished|error)" || true
+    cd engine && PATH="$HOME/.elan/bin:$PATH" ./target/release/discover_emc2 \
+        --gens {{gens}} --pop {{pop}} --max-len 14 --max-lake {{max-lake}} \
+        --verify ../prover
+
 # ── Continuous Operation ───────────────────────────────────
 
 # Update PhysLean to a specific version (e.g., just update-physlean v4.27.0)

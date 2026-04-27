@@ -20,6 +20,7 @@
 //! ```
 
 pub mod axiom_store;
+pub mod chain;
 pub mod context;
 pub mod derivation;
 pub mod dimension_checker;
@@ -31,6 +32,7 @@ pub mod rules;
 pub mod strategies;
 
 pub use axiom_store::{Axiom, AxiomStore};
+pub use chain::{Chain, RuleStep};
 pub use context::{DerivationContext, DerivationStep};
 pub use derivation::{DerivationEngine, DerivationResult};
 pub use dimension_checker::{check_equation_dimensions, domain_variable_dimensions, infer_dimension, sr_variable_dimensions};

@@ -191,4 +191,203 @@ impl AxiomStore {
             description: "Speed of light is positive".into(),
         });
     }
+
+    /// Load **truly upstream** SR axioms suitable for spontaneous E=mc²
+    /// derivation.
+    ///
+    /// The forbidden `mass_shell_condition` (which contains `m·c²` as a
+    /// sub-expression and pre-supposes E=mc²) is **not** registered here.
+    /// Instead, this loads the more fundamental definitions of
+    /// four-momentum components and the Minkowski invariant. From these,
+    /// the mass-shell condition becomes a *derivable* theorem.
+    ///
+    /// Encoding choice: four-momentum is represented as 4 scalar
+    /// components (`p0`, `p1`, `p2`, `p3`) with `psq` standing for the
+    /// squared 3-momentum magnitude `p1²+p2²+p3²` and `Msq` standing for
+    /// the Minkowski invariant `p0²−psq`. Lean term `c` resolves to the
+    /// PhysicsGenerator constant.
+    ///
+    /// Registers:
+    /// - `four_momentum_time_component`:  `c · p0 = E`
+    ///   (definition: energy is c × the time component of four-momentum)
+    /// - `minkowski_invariant_def`:       `Msq = p0² − psq`
+    ///   (definition of the Lorentz-invariant inner-product squared)
+    /// - `invariant_mass_postulate`:      `Msq = m² · c²`
+    ///   (postulate: the geometric invariant equals m²c² — the *physics*)
+    /// - `rest_frame_psq_zero`:           `psq = 0`
+    ///   (rest frame existence + spatial-momentum-squared vanishes)
+    /// - `c_positive`, `mass_nonneg`, `energy_nonneg`: sign conditions
+    ///
+    /// Note that `psq = p1²+p2²+p3²` is *not* registered as a separate
+    /// axiom; it is folded into `rest_frame_psq_zero` directly. A future
+    /// version could add this as a separate definition once the
+    /// derivation engine supports it.
+    pub fn load_special_relativity_upstream(&mut self) {
+        let e = Expr::Var("E".into());
+        let m = Expr::Var("m".into());
+        let c = Expr::Const(PhysConst::SpeedOfLight);
+        let two = Expr::Lit(2, 1);
+        let zero = Expr::Lit(0, 1);
+        let p0 = Expr::Var("p0".into());
+        let psq = Expr::Var("psq".into());
+        let big_m_sq = Expr::Var("Msq".into());
+
+        // c · p0 = E
+        let four_mom_time = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(Expr::BinOp(BinOp::Mul, Box::new(c.clone()), Box::new(p0.clone()))),
+            Box::new(e.clone()),
+        );
+        self.register(Axiom {
+            name: "four_momentum_time_component".into(),
+            domain: Domain::SpecialRelativity,
+            statement: four_mom_time,
+            description: "Definition: c · p0 = E (energy is c times the time component of four-momentum)".into(),
+        });
+
+        // Msq = p0² − psq
+        let p0_sq = Expr::BinOp(BinOp::Pow, Box::new(p0.clone()), Box::new(two.clone()));
+        let invariant_def = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(big_m_sq.clone()),
+            Box::new(Expr::BinOp(BinOp::Sub, Box::new(p0_sq), Box::new(psq.clone()))),
+        );
+        self.register(Axiom {
+            name: "minkowski_invariant_def".into(),
+            domain: Domain::SpecialRelativity,
+            statement: invariant_def,
+            description: "Definition: Msq = p0² − psq (Minkowski invariant of four-momentum)".into(),
+        });
+
+        // Msq = m² · c²
+        let m_sq = Expr::BinOp(BinOp::Pow, Box::new(m.clone()), Box::new(two.clone()));
+        let c_sq = Expr::BinOp(BinOp::Pow, Box::new(c.clone()), Box::new(two.clone()));
+        let m_sq_c_sq = Expr::BinOp(BinOp::Mul, Box::new(m_sq), Box::new(c_sq));
+        let mass_postulate = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(big_m_sq.clone()),
+            Box::new(m_sq_c_sq),
+        );
+        self.register(Axiom {
+            name: "invariant_mass_postulate".into(),
+            domain: Domain::SpecialRelativity,
+            statement: mass_postulate,
+            description: "Postulate: Msq = m²·c² (the Minkowski invariant equals invariant rest mass squared times c²)".into(),
+        });
+
+        // psq = 0 (rest frame)
+        let rest = Expr::BinOp(BinOp::Eq, Box::new(psq.clone()), Box::new(zero));
+        self.register(Axiom {
+            name: "rest_frame_psq_zero".into(),
+            domain: Domain::SpecialRelativity,
+            statement: rest,
+            description: "Rest-frame existence: in some inertial frame the spatial-momentum magnitude squared vanishes (psq = 0)".into(),
+        });
+
+        // Sign conditions.
+        let c_pos = Expr::BinOp(BinOp::Gt, Box::new(c.clone()), Box::new(Expr::Lit(0, 1)));
+        self.register(Axiom {
+            name: "c_positive".into(),
+            domain: Domain::SpecialRelativity,
+            statement: c_pos,
+            description: "Speed of light is positive".into(),
+        });
+        let m_nn = Expr::BinOp(BinOp::Ge, Box::new(m.clone()), Box::new(Expr::Lit(0, 1)));
+        self.register(Axiom {
+            name: "mass_nonneg".into(),
+            domain: Domain::SpecialRelativity,
+            statement: m_nn,
+            description: "Mass is non-negative".into(),
+        });
+        let e_nn = Expr::BinOp(BinOp::Ge, Box::new(e.clone()), Box::new(Expr::Lit(0, 1)));
+        self.register(Axiom {
+            name: "energy_nonneg".into(),
+            domain: Domain::SpecialRelativity,
+            statement: e_nn,
+            description: "Energy is non-negative".into(),
+        });
+    }
+
+    /// Load **truly upstream** electromagnetism axioms suitable for
+    /// spontaneous derivation of photon and wave-energy theorems.
+    ///
+    /// The headline EM result we want to derive is the photon
+    /// energy-momentum relation `E_photon = c · p_photon`. To not
+    /// cheat, we don't axiomatise that directly; instead we register
+    /// the underlying postulates from which it follows:
+    ///
+    /// - `photon_energy_def`:    `Eph = hbar · omega`  (Planck-Einstein)
+    /// - `photon_momentum_def`:  `pph = hbar · k`      (de Broglie)
+    /// - `dispersion_relation`:  `omega = c · k`        (massless wave)
+    /// - sign conditions: `c > 0`, `hbar > 0`
+    ///
+    /// From these, the GA / `linarith` chain produces:
+    /// `Eph = hbar · omega = hbar · (c · k) = c · (hbar · k) = c · pph`.
+    ///
+    /// Note: `Eph`, `pph`, `omega`, `k`, `hbar` are scalar Expr Vars.
+    pub fn load_electromagnetism_upstream(&mut self) {
+        let e_ph = Expr::Var("Eph".into());
+        let p_ph = Expr::Var("pph".into());
+        let omega = Expr::Var("omega".into());
+        let k = Expr::Var("k".into());
+        let hbar = Expr::Var("hbar".into());
+        let c = Expr::Const(PhysConst::SpeedOfLight);
+
+        // Eph = hbar * omega
+        let photon_energy = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(e_ph.clone()),
+            Box::new(Expr::BinOp(BinOp::Mul, Box::new(hbar.clone()), Box::new(omega.clone()))),
+        );
+        self.register(Axiom {
+            name: "photon_energy_def".into(),
+            domain: Domain::Electromagnetism,
+            statement: photon_energy,
+            description: "Planck-Einstein: Eph = ℏ · ω".into(),
+        });
+
+        // pph = hbar * k
+        let photon_momentum = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(p_ph.clone()),
+            Box::new(Expr::BinOp(BinOp::Mul, Box::new(hbar.clone()), Box::new(k.clone()))),
+        );
+        self.register(Axiom {
+            name: "photon_momentum_def".into(),
+            domain: Domain::Electromagnetism,
+            statement: photon_momentum,
+            description: "de Broglie momentum: pph = ℏ · k".into(),
+        });
+
+        // omega = c * k
+        let dispersion = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(omega.clone()),
+            Box::new(Expr::BinOp(BinOp::Mul, Box::new(c.clone()), Box::new(k.clone()))),
+        );
+        self.register(Axiom {
+            name: "dispersion_relation".into(),
+            domain: Domain::Electromagnetism,
+            statement: dispersion,
+            description: "Massless wave dispersion: ω = c · k".into(),
+        });
+
+        // c > 0
+        let c_pos = Expr::BinOp(BinOp::Gt, Box::new(c.clone()), Box::new(Expr::Lit(0, 1)));
+        self.register(Axiom {
+            name: "c_positive_em".into(),
+            domain: Domain::Electromagnetism,
+            statement: c_pos,
+            description: "Speed of light positive (EM)".into(),
+        });
+
+        // hbar > 0
+        let hbar_pos = Expr::BinOp(BinOp::Gt, Box::new(hbar.clone()), Box::new(Expr::Lit(0, 1)));
+        self.register(Axiom {
+            name: "hbar_positive".into(),
+            domain: Domain::Electromagnetism,
+            statement: hbar_pos,
+            description: "Reduced Planck constant positive".into(),
+        });
+    }
 }

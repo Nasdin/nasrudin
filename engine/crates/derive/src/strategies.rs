@@ -6,8 +6,8 @@ use crate::axiom_store::AxiomStore;
 use crate::context::DerivationContext;
 use crate::error::DeriveError;
 use crate::rules::{
-    AlgebraicSimplify, IntroduceAxiom, RearrangeEquation, SubstituteValue, TakePositiveRoot,
-    DerivationRule,
+    AlgebraicSimplify, DerivationRule, IntroduceAxiom, RearrangeEquation, SubstituteValue,
+    TakePositiveRoot,
 };
 use nasrudin_core::{BinOp, Expr, PhysConst};
 
@@ -116,3 +116,104 @@ impl DerivationStrategy for DeriveRestEnergy {
         Ok(result)
     }
 }
+
+/// Derive E = mc² from the **truly upstream** axiom set.
+///
+/// Unlike `DeriveRestEnergy` (which uses the forbidden `mass_shell_condition`
+/// axiom — see `memory/feedback_no_cheating.md`), this strategy starts from
+/// the four-momentum / Minkowski-invariant postulates and derives the
+/// rest-energy theorem without pre-supposing E=mc² in any axiom.
+///
+/// Required axioms in the store (call
+/// `AxiomStore::load_special_relativity_upstream` first):
+/// - `four_momentum_time_component`: `c · p0 = E`
+/// - `minkowski_invariant_def`:      `Msq = p0² − psq`
+/// - `invariant_mass_postulate`:     `Msq = m² · c²`
+/// - `rest_frame_psq_zero`:          `psq = 0`
+///
+/// Steps:
+/// 1. Introduce all four upstream axioms (each becomes a hypothesis in the
+///    emitted Lean theorem).
+/// 2. Rearrange to `E² = (m·c²)²`.  Lean closes the gap by polynomial
+///    arithmetic over the four hypotheses.
+/// 3. Take positive square root → `E = m·c²`.
+///
+/// The Lean emitter (`lean_emitter::emit_chain_theorem`) sees that the chain
+/// ends with `take_positive_root`, threads all four axiom hypotheses into a
+/// `nlinarith` / `polyrith` cascade for step 2, and produces the structured
+/// `congr_arg Real.sqrt + Real.sqrt_sq` move for step 3.
+#[derive(Debug)]
+pub struct DeriveRestEnergyFromUpstream;
+
+impl DerivationStrategy for DeriveRestEnergyFromUpstream {
+    fn name(&self) -> &str {
+        "derive_rest_energy_from_upstream"
+    }
+
+    fn execute(
+        &self,
+        store: &AxiomStore,
+        ctx: &mut DerivationContext,
+    ) -> Result<Expr, DeriveError> {
+        // Helper expressions
+        let e = Expr::Var("E".into());
+        let m = Expr::Var("m".into());
+        let c = Expr::Const(PhysConst::SpeedOfLight);
+        let two = Expr::Lit(2, 1);
+
+        // ── Step 1-4: Introduce the four upstream axioms ──────────
+        for axiom_name in [
+            "four_momentum_time_component",
+            "minkowski_invariant_def",
+            "invariant_mass_postulate",
+            "rest_frame_psq_zero",
+        ] {
+            let axiom = store
+                .get(axiom_name)
+                .ok_or_else(|| DeriveError::AxiomNotFound {
+                    name: axiom_name.into(),
+                })?;
+            let intro = IntroduceAxiom {
+                axiom_name: axiom_name.into(),
+                statement: axiom.statement.clone(),
+            };
+            intro.apply(ctx)?;
+        }
+
+        // ── Step 5: Claim E² = (m·c²)² as the rearranged goal ────
+        // Build the expression `E^2 = (m * c^2)^2`.
+        let e_sq = Expr::BinOp(BinOp::Pow, Box::new(e.clone()), Box::new(two.clone()));
+        let c_sq = Expr::BinOp(BinOp::Pow, Box::new(c.clone()), Box::new(two.clone()));
+        let mc_sq = Expr::BinOp(BinOp::Mul, Box::new(m.clone()), Box::new(c_sq.clone()));
+        let mc_sq_squared =
+            Expr::BinOp(BinOp::Pow, Box::new(mc_sq.clone()), Box::new(two.clone()));
+        let e_sq_eq_mc_sq_sq = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(e_sq.clone()),
+            Box::new(mc_sq_squared.clone()),
+        );
+
+        let rearrange = RearrangeEquation {
+            description: "From upstream axioms: E² = (m·c²)²".into(),
+            target: e_sq_eq_mc_sq_sq.clone(),
+        };
+        rearrange.apply(ctx)?;
+
+        // Belt-and-suspenders: also run a simplify pass so the emitter sees
+        // a stable normal form in `current` before take_positive_root.
+        AlgebraicSimplify.apply(ctx)?;
+
+        // Re-canonicalise the form so TakePositiveRoot has the X² = Y² shape.
+        ctx.record_step(
+            "Establish E² = (m·c²)² in canonical form",
+            "canonicalize",
+            e_sq_eq_mc_sq_sq,
+        );
+
+        // ── Step 6: Take positive root → E = m·c² ────────────────
+        TakePositiveRoot.apply(ctx)?;
+
+        Ok(Expr::BinOp(BinOp::Eq, Box::new(e), Box::new(mc_sq)))
+    }
+}
+

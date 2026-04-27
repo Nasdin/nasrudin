@@ -1,0 +1,948 @@
+//! Chain-based GA: mutation + crossover over `Chain<RuleStep>`.
+//!
+//! Phase 5 of the project plan. The GA evolves `Chain`s — sequences of
+//! generic `RuleStep`s — instead of raw `Expr` ASTs. The pre-filter
+//! is `Chain::execute`: any chain that fails to apply (axiom missing,
+//! rule preconditions not met, etc.) is rejected before reaching the
+//! Lean verifier.
+//!
+//! ## Mutation operators
+//!
+//! - `Insert`        — insert a random valid `RuleStep` at a random position.
+//! - `Delete`        — remove a random step (with at-least-one bound).
+//! - `Swap`          — swap two adjacent steps.
+//! - `MutateAxiom`   — change the axiom name of an `IntroduceAxiom` step
+//!                     to a different one in the store.
+//! - `MutateParam`   — perturb a parameter (e.g. swap the substitution
+//!                     `value` of `SubstituteValue`, change the `target`
+//!                     expression of `RearrangeEquation` to a small
+//!                     variant). v1 is conservative; many parameters are
+//!                     deliberately not mutated since they're hard to
+//!                     re-roll productively.
+//!
+//! ## Crossover
+//!
+//! `splice_chains` picks a random cut point in each parent and exchanges
+//! the suffix. The resulting children may not execute — they're rejected
+//! by the pre-filter rather than repaired.
+
+use nasrudin_core::{BinOp, Expr, FitnessScore, PhysConst};
+use nasrudin_derive::lean_emitter::{LeanEmitConfig, emit_lean_file};
+use nasrudin_derive::lean_verify::{LeanVerifier, LeanVerifyResult};
+use nasrudin_derive::{AxiomStore, Chain, DerivationContext, DerivationStrategy, RuleStep};
+use rand::Rng;
+use rand::seq::IteratorRandom;
+use std::path::Path;
+
+/// Mutate `chain` by exactly one operator chosen uniformly at random.
+///
+/// `store` is needed for `Insert` / `MutateAxiom` to pick a valid axiom
+/// name and for fact-combining target synthesis (`MutateParam` on a
+/// `RearrangeEquation`). If the chain is empty, only `Insert` runs.
+/// The mutation is purely *syntactic* — no execution check is
+/// performed here. Use the pre-filter (`Chain::execute`) to reject
+/// chains that don't run.
+pub fn mutate_chain(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
+    if chain.is_empty() {
+        insert_random(chain, store, rng);
+        return;
+    }
+    // **Iter 18 reverted to uniform weights** — iter 16's aggressive
+    // re-weighting (suffix 4/12, take_root_bonus on fitness) regressed
+    // verification rate from 3/10 (iter 13) to 0/8 (iter 17). The
+    // take_root_bonus pushed selection toward chains whose forced
+    // suffixes had un-derivable targets. Uniform weights performed
+    // better empirically. 6 ops, 1/6 each.
+    let pick = rng.random_range(0..6u8);
+    match pick {
+        0 => insert_random(chain, store, rng),
+        1 => delete_random(chain, rng),
+        2 => swap_adjacent(chain, rng),
+        3 => mutate_axiom_name(chain, store, rng),
+        4 => mutate_param(chain, store, rng),
+        _ => append_productive_suffix(chain, store, rng),
+    }
+}
+
+/// **Phase 6.5.8** — append a `RearrangeEquation{X²=Y²}` followed by
+/// `TakePositiveRoot` to the chain. `X`, `Y` are sampled from the
+/// chain's existing fact LHS/RHS atoms, so the synthesized target
+/// is grounded in the running context.
+///
+/// No-op if the chain already ends with `TakePositiveRoot` (we don't
+/// stack roots). No-op if the chain has no facts to pull atoms from.
+fn append_productive_suffix(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
+    if matches!(chain.0.last(), Some(RuleStep::TakePositiveRoot)) {
+        return;
+    }
+    let facts = collect_chain_facts(chain, store);
+    if facts.is_empty() {
+        return;
+    }
+
+    // **Iter 24 enrichment:** sample X and Y from a hybrid pool:
+    // 60 % chance of fact-side atom (LHS or RHS of an existing fact —
+    // always derivable), 40 % chance of physics-shape compound (from
+    // the same library used by `random_atom_expr`). The compounds
+    // give the suffix mutation access to expressions like `m · c²`,
+    // `m² · c²`, `c · p0` that don't appear directly as fact atoms
+    // but ARE the building blocks for cross-axiom theorems like
+    // `E² = (m·c²)²`. Without this hybrid, the suffix can only
+    // synthesise targets that are already direct consequences of
+    // single facts (e.g. squaring `c·p0 = E` → `(c·p0)² = E²` →
+    // take-root → `c·p0 = E` — a cycle).
+    let pool: Vec<&Expr> = facts
+        .iter()
+        .flat_map(|(_, expr)| {
+            if let Expr::BinOp(BinOp::Eq, lhs, rhs) = expr {
+                vec![lhs.as_ref(), rhs.as_ref()]
+            } else {
+                vec![]
+            }
+        })
+        .collect();
+    if pool.is_empty() {
+        return;
+    }
+    let x: Expr = if rng.random_bool(0.4) {
+        random_physics_compound(rng)
+    } else {
+        (*pool.iter().choose(rng).unwrap()).clone()
+    };
+    let y: Expr = if rng.random_bool(0.4) {
+        random_physics_compound(rng)
+    } else {
+        (*pool.iter().choose(rng).unwrap()).clone()
+    };
+
+    let two = Expr::Lit(2, 1);
+    let x_sq = Expr::BinOp(BinOp::Pow, Box::new(x), Box::new(two.clone()));
+    let y_sq = Expr::BinOp(BinOp::Pow, Box::new(y), Box::new(two));
+    let target = Expr::BinOp(BinOp::Eq, Box::new(x_sq), Box::new(y_sq));
+
+    chain.push(RuleStep::RearrangeEquation {
+        description: "Suffix: X²=Y² for take-root".into(),
+        target,
+    });
+    chain.push(RuleStep::TakePositiveRoot);
+}
+
+fn insert_random(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
+    let facts = collect_chain_facts(chain, store);
+    let step = random_step(store, &facts, rng);
+    let pos = if chain.is_empty() {
+        0
+    } else {
+        rng.random_range(0..=chain.len())
+    };
+    chain.0.insert(pos, step);
+}
+
+fn delete_random(chain: &mut Chain, rng: &mut impl Rng) {
+    if chain.len() <= 1 {
+        // Don't drain to empty; an empty chain can't `execute`.
+        return;
+    }
+    let pos = rng.random_range(0..chain.len());
+    chain.0.remove(pos);
+}
+
+fn swap_adjacent(chain: &mut Chain, rng: &mut impl Rng) {
+    if chain.len() < 2 {
+        return;
+    }
+    let pos = rng.random_range(0..chain.len() - 1);
+    chain.0.swap(pos, pos + 1);
+}
+
+fn mutate_axiom_name(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
+    let axiom_steps: Vec<usize> = chain
+        .0
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| match s {
+            RuleStep::IntroduceAxiom { .. } => Some(i),
+            _ => None,
+        })
+        .collect();
+    let Some(&i) = axiom_steps.iter().choose(rng) else {
+        return;
+    };
+    let names = store.names();
+    let Some(new_name) = names.into_iter().choose(rng) else {
+        return;
+    };
+    chain.0[i] = RuleStep::IntroduceAxiom {
+        axiom_name: new_name.to_string(),
+    };
+}
+
+fn mutate_param(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
+    // Pick a step with mutatable parameters and tweak it.
+    let pos = rng.random_range(0..chain.len());
+    match &chain.0[pos] {
+        RuleStep::SubstituteValue { var, .. } => {
+            // Cycle the substitution variable through a small physics-vocab
+            // ring.
+            let new_var = match var.as_str() {
+                "p" | "psq" => "p0".to_string(),
+                "p0" => "psq".to_string(),
+                other => other.to_string(),
+            };
+            if let RuleStep::SubstituteValue { var, .. } = &mut chain.0[pos] {
+                *var = new_var;
+            }
+        }
+        RuleStep::RearrangeEquation { .. } => {
+            // Phase 6.5.4: target synthesis from existing facts. We
+            // collect the axiom statements that this chain has loaded
+            // so far and combine them via algebraic transformations.
+            // This shrinks the target space from O(atom_tree) to
+            // O(facts²) and biases targets toward expressions actually
+            // derivable by `nlinarith` from the chain's hypotheses.
+            let facts = collect_chain_facts(chain, store);
+            let new_target = synthesize_target_from_facts(&facts, rng);
+            if let RuleStep::RearrangeEquation {
+                description, target, ..
+            } = &mut chain.0[pos]
+            {
+                *description = "Synthesised from facts".into();
+                *target = new_target;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Collect (axiom_name, statement) pairs for every `IntroduceAxiom`
+/// step in `chain`, by resolving names via `store`. Used by mutation
+/// to do fact-combining target synthesis.
+fn collect_chain_facts<'a>(
+    chain: &'a Chain,
+    store: &'a AxiomStore,
+) -> Vec<(&'a str, &'a Expr)> {
+    chain
+        .0
+        .iter()
+        .filter_map(|step| match step {
+            RuleStep::IntroduceAxiom { axiom_name } => {
+                store.get(axiom_name).map(|ax| (axiom_name.as_str(), &ax.statement))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Synthesise a `RearrangeEquation` target by combining the existing
+/// chain facts via algebraic transformations.
+///
+/// **Phase 6.5.4** — this replaces the depth-2 random-atom synthesis
+/// (`synthesize_physics_target`) for inserted RearrangeEquation
+/// targets where the chain already has facts available. Fact-combining
+/// targets are *much* more likely to be derivable by `nlinarith`
+/// because they are linear/polynomial combinations of existing
+/// hypotheses.
+///
+/// Operators:
+/// - `same`: target = fact (trivial; baseline).
+/// - `square`: `a = b` → `a² = b²`.
+/// - `multc²`: `a = b` → `a·c² = b·c²`.
+/// - `multpair`: `a = b ∧ c = d` → `a·c = b·d`.
+/// - `transitivity`: `a = b ∧ a = c` → `b = c` (or rotated).
+/// - `swap`: `a = b` → `b = a`.
+///
+/// Falls back to atom-random synthesis when no facts are available.
+pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng) -> Expr {
+    if facts.is_empty() {
+        return synthesize_physics_target(rng);
+    }
+
+    let pick = rng.random_range(0..6u8);
+    match pick {
+        // same
+        0 => {
+            let (_, expr) = facts.iter().choose(rng).unwrap();
+            (*expr).clone()
+        }
+        // square
+        1 => {
+            let (_, expr) = facts.iter().choose(rng).unwrap();
+            if let Expr::BinOp(BinOp::Eq, lhs, rhs) = expr {
+                let two = Expr::Lit(2, 1);
+                Expr::BinOp(
+                    BinOp::Eq,
+                    Box::new(Expr::BinOp(
+                        BinOp::Pow,
+                        Box::new((**lhs).clone()),
+                        Box::new(two.clone()),
+                    )),
+                    Box::new(Expr::BinOp(
+                        BinOp::Pow,
+                        Box::new((**rhs).clone()),
+                        Box::new(two),
+                    )),
+                )
+            } else {
+                (*expr).clone()
+            }
+        }
+        // mult by c²
+        2 => {
+            let (_, expr) = facts.iter().choose(rng).unwrap();
+            if let Expr::BinOp(BinOp::Eq, lhs, rhs) = expr {
+                let c = Expr::Const(PhysConst::SpeedOfLight);
+                let two = Expr::Lit(2, 1);
+                let c_sq = Expr::BinOp(BinOp::Pow, Box::new(c), Box::new(two));
+                Expr::BinOp(
+                    BinOp::Eq,
+                    Box::new(Expr::BinOp(
+                        BinOp::Mul,
+                        Box::new((**lhs).clone()),
+                        Box::new(c_sq.clone()),
+                    )),
+                    Box::new(Expr::BinOp(
+                        BinOp::Mul,
+                        Box::new((**rhs).clone()),
+                        Box::new(c_sq),
+                    )),
+                )
+            } else {
+                (*expr).clone()
+            }
+        }
+        // mult-pair: (a = b) ∧ (c = d) → a·c = b·d
+        3 => {
+            if facts.len() >= 2 {
+                let (_, f1) = facts.iter().choose(rng).unwrap();
+                let (_, f2) = facts.iter().choose(rng).unwrap();
+                if let (
+                    Expr::BinOp(BinOp::Eq, l1, r1),
+                    Expr::BinOp(BinOp::Eq, l2, r2),
+                ) = (*f1, *f2)
+                {
+                    return Expr::BinOp(
+                        BinOp::Eq,
+                        Box::new(Expr::BinOp(
+                            BinOp::Mul,
+                            Box::new((**l1).clone()),
+                            Box::new((**l2).clone()),
+                        )),
+                        Box::new(Expr::BinOp(
+                            BinOp::Mul,
+                            Box::new((**r1).clone()),
+                            Box::new((**r2).clone()),
+                        )),
+                    );
+                }
+            }
+            (*facts[0].1).clone()
+        }
+        // transitivity: try matching equal sides between two facts.
+        4 => {
+            if facts.len() >= 2 {
+                let (_, f1) = facts.iter().choose(rng).unwrap();
+                let (_, f2) = facts.iter().choose(rng).unwrap();
+                if let (
+                    Expr::BinOp(BinOp::Eq, l1, r1),
+                    Expr::BinOp(BinOp::Eq, l2, r2),
+                ) = (*f1, *f2)
+                {
+                    if l1 == l2 {
+                        return Expr::BinOp(
+                            BinOp::Eq,
+                            Box::new((**r1).clone()),
+                            Box::new((**r2).clone()),
+                        );
+                    }
+                    if r1 == r2 {
+                        return Expr::BinOp(
+                            BinOp::Eq,
+                            Box::new((**l1).clone()),
+                            Box::new((**l2).clone()),
+                        );
+                    }
+                    if l1 == r2 {
+                        return Expr::BinOp(
+                            BinOp::Eq,
+                            Box::new((**l2).clone()),
+                            Box::new((**r1).clone()),
+                        );
+                    }
+                }
+            }
+            (*facts[0].1).clone()
+        }
+        // swap: a = b → b = a
+        _ => {
+            let (_, expr) = facts.iter().choose(rng).unwrap();
+            if let Expr::BinOp(BinOp::Eq, lhs, rhs) = expr {
+                Expr::BinOp(BinOp::Eq, Box::new((**rhs).clone()), Box::new((**lhs).clone()))
+            } else {
+                (*expr).clone()
+            }
+        }
+    }
+}
+
+/// Synthesise a physics-shaped equation `Expr` for use as the target
+/// of a `RearrangeEquation` step.
+///
+/// **Phase 6.5.1.** The target needs to be:
+///  - A `BinOp::Eq` (equation form),
+///  - Built from SR-relevant atoms (`E`, `m`, `c`, `p0`, `psq`, `Msq`,
+///    plus small literals),
+///  - Of bounded depth (≤ 3) so the search space stays tractable.
+///
+/// We sample from a small library of structural templates — each
+/// template is a *shape* (e.g., `?lhs² = ?rhs²`, `?a = ?b * ?c`) that
+/// gets filled with random atoms. This is *generic*: the templates do
+/// not encode E=mc² or any specific theorem; they encode the kinds of
+/// algebraic relationships that physics theorems take. With nlinarith
+/// + sq_nonneg hints handling the proof obligation, the GA only needs
+/// to *eventually* sample a target that happens to be derivable from
+/// the current chain's facts. For the upstream rest-energy chain, the
+/// derivable target is `E^2 = (m*c^2)^2`, which fits the
+/// `?lhs² = ?rhs²` template with `?lhs = E` and `?rhs = m*c^2`.
+pub fn synthesize_physics_target(rng: &mut impl Rng) -> Expr {
+    let lhs = random_atom_expr(rng, 2);
+    let rhs = random_atom_expr(rng, 2);
+    let pick = rng.random_range(0..5u8);
+    let two = Expr::Lit(2, 1);
+    match pick {
+        // ?lhs² = ?rhs²  (most useful — feeds TakePositiveRoot)
+        0 | 1 => Expr::BinOp(
+            BinOp::Eq,
+            Box::new(Expr::BinOp(BinOp::Pow, Box::new(lhs), Box::new(two.clone()))),
+            Box::new(Expr::BinOp(BinOp::Pow, Box::new(rhs), Box::new(two))),
+        ),
+        // ?lhs = ?rhs
+        2 => Expr::BinOp(BinOp::Eq, Box::new(lhs), Box::new(rhs)),
+        // ?a = ?b * ?c
+        3 => {
+            let b = random_atom_expr(rng, 1);
+            let c = random_atom_expr(rng, 1);
+            Expr::BinOp(
+                BinOp::Eq,
+                Box::new(lhs),
+                Box::new(Expr::BinOp(BinOp::Mul, Box::new(b), Box::new(c))),
+            )
+        }
+        // ?lhs² = ?a * ?b² + ?c
+        _ => {
+            let lhs_sq = Expr::BinOp(BinOp::Pow, Box::new(lhs), Box::new(two.clone()));
+            let a = random_atom_expr(rng, 1);
+            let b = random_atom_expr(rng, 1);
+            let bsq = Expr::BinOp(BinOp::Pow, Box::new(b), Box::new(two));
+            let prod = Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(bsq));
+            let c = random_atom_expr(rng, 1);
+            let sum = Expr::BinOp(BinOp::Add, Box::new(prod), Box::new(c));
+            Expr::BinOp(BinOp::Eq, Box::new(lhs_sq), Box::new(sum))
+        }
+    }
+}
+
+/// Generate a random "atom" Expr at most `depth` levels deep using SR-
+/// relevant variables, the speed-of-light constant, and small literals.
+///
+/// **Phase 7+ (iter 23):** when picking a leaf, with 40 % probability
+/// we draw from a *physics-shape compound pool* instead — small
+/// pre-built compounds like `m · c²`, `c · p0`, `p0²`, `m² · c²` that
+/// appear ubiquitously in SR/EM derivations. This is generic (the
+/// compounds aren't theorem-specific) but it dramatically improves
+/// the probability of synthesising targets like `E² = (m·c²)²` in
+/// the chain-based GA.
+fn random_atom_expr(rng: &mut impl Rng, depth: u32) -> Expr {
+    if depth == 0 || rng.random_bool(0.5) {
+        // Leaf or compound from the physics-shape pool.
+        if rng.random_bool(0.4) {
+            return random_physics_compound(rng);
+        }
+        let pick = rng.random_range(0..10u8);
+        return match pick {
+            0 => Expr::Var("E".into()),
+            1 => Expr::Var("m".into()),
+            2 => Expr::Var("p0".into()),
+            3 => Expr::Var("psq".into()),
+            4 => Expr::Var("Msq".into()),
+            5 => Expr::Const(PhysConst::SpeedOfLight),
+            6 => Expr::Lit(1, 1),
+            7 => Expr::Lit(2, 1),
+            8 => Expr::Lit(0, 1),
+            _ => Expr::Var("E".into()),
+        };
+    }
+    // Compound.
+    let l = random_atom_expr(rng, depth - 1);
+    let r = random_atom_expr(rng, depth - 1);
+    let pick = rng.random_range(0..4u8);
+    match pick {
+        0 => Expr::BinOp(BinOp::Mul, Box::new(l), Box::new(r)),
+        1 => Expr::BinOp(BinOp::Add, Box::new(l), Box::new(r)),
+        2 => Expr::BinOp(BinOp::Sub, Box::new(l), Box::new(r)),
+        _ => Expr::BinOp(BinOp::Pow, Box::new(l), Box::new(r)),
+    }
+}
+
+/// Pre-built physics-shape compound atoms.
+///
+/// Generic compounds that appear in many SR/EM derivations. Including
+/// these in the atom pool dramatically increases the chance that
+/// random target synthesis produces an `X² = Y²` target whose
+/// (X, Y) pair is derivable by `nlinarith` from the chain's facts.
+/// E.g., for `E = m·c²`, the GA needs to sample target
+/// `E² = (m·c²)²`; with `m·c²` in the compound pool that probability
+/// is O(1/N), instead of O((1/atoms)^depth) for raw atom sampling.
+fn random_physics_compound(rng: &mut impl Rng) -> Expr {
+    let two = Expr::Lit(2, 1);
+    let m = Expr::Var("m".into());
+    let p0 = Expr::Var("p0".into());
+    let c = Expr::Const(PhysConst::SpeedOfLight);
+    let e = Expr::Var("E".into());
+    let psq = Expr::Var("psq".into());
+
+    let pick = rng.random_range(0..8u8);
+    match pick {
+        // m · c²
+        0 => Expr::BinOp(
+            BinOp::Mul,
+            Box::new(m.clone()),
+            Box::new(Expr::BinOp(BinOp::Pow, Box::new(c.clone()), Box::new(two.clone()))),
+        ),
+        // c · p0
+        1 => Expr::BinOp(BinOp::Mul, Box::new(c.clone()), Box::new(p0.clone())),
+        // p0²
+        2 => Expr::BinOp(BinOp::Pow, Box::new(p0.clone()), Box::new(two.clone())),
+        // m² · c²
+        3 => Expr::BinOp(
+            BinOp::Mul,
+            Box::new(Expr::BinOp(BinOp::Pow, Box::new(m.clone()), Box::new(two.clone()))),
+            Box::new(Expr::BinOp(BinOp::Pow, Box::new(c.clone()), Box::new(two.clone()))),
+        ),
+        // E²
+        4 => Expr::BinOp(BinOp::Pow, Box::new(e.clone()), Box::new(two.clone())),
+        // p0² − psq
+        5 => Expr::BinOp(
+            BinOp::Sub,
+            Box::new(Expr::BinOp(BinOp::Pow, Box::new(p0.clone()), Box::new(two.clone()))),
+            Box::new(psq.clone()),
+        ),
+        // m · c
+        6 => Expr::BinOp(BinOp::Mul, Box::new(m.clone()), Box::new(c.clone())),
+        // c²
+        _ => Expr::BinOp(BinOp::Pow, Box::new(c), Box::new(two)),
+    }
+}
+
+fn random_step(store: &AxiomStore, facts: &[(&str, &Expr)], rng: &mut impl Rng) -> RuleStep {
+    // Weighted: most steps are IntroduceAxiom; the rest split between
+    // the four transforming rules. RearrangeEquation gets a *fact-
+    // combining* target (Phase 6.5.4) when facts are available, falling
+    // back to random atom synthesis (6.5.1) otherwise.
+    let pick = rng.random_range(0..8u8);
+    match pick {
+        0 | 1 | 2 => {
+            let names = store.names();
+            if names.is_empty() {
+                return RuleStep::AlgebraicSimplify;
+            }
+            let name = names.into_iter().choose(rng).unwrap().to_string();
+            RuleStep::IntroduceAxiom { axiom_name: name }
+        }
+        3 => RuleStep::AlgebraicSimplify,
+        4 => RuleStep::TakePositiveRoot,
+        5 => RuleStep::SubstituteValue {
+            var: "psq".into(),
+            value: nasrudin_core::Expr::Lit(0, 1),
+            reason: "rest_frame".into(),
+        },
+        _ => RuleStep::RearrangeEquation {
+            description: "Synthesised target".into(),
+            target: synthesize_target_from_facts(facts, rng),
+        },
+    }
+}
+
+/// A `Chain` wrapped with NSGA-II metadata and fitness.
+///
+/// Phase 5.2 of the project plan. The chain-based GA evolves
+/// `ChainIndividual`s through the same NSGA-II pipeline used by the
+/// AST-tree GA — selection by Pareto rank + crowding distance,
+/// fitness from `evaluate_chain_fitness`, mutation via `mutate_chain`,
+/// crossover via `splice_chains`.
+#[derive(Debug, Clone)]
+pub struct ChainIndividual {
+    pub chain: Chain,
+    pub fitness: FitnessScore,
+    pub pareto_rank: usize,
+    pub crowding_distance: f64,
+}
+
+impl ChainIndividual {
+    pub fn new(chain: Chain, fitness: FitnessScore) -> Self {
+        Self {
+            chain,
+            fitness,
+            pareto_rank: usize::MAX,
+            crowding_distance: 0.0,
+        }
+    }
+}
+
+/// Outcome of running a chain through `DerivationContext`.
+#[derive(Debug, Clone)]
+pub struct ChainEvalResult {
+    pub executes: bool,
+    pub depth: u32,
+    pub final_expr: Option<nasrudin_core::Expr>,
+    pub steps_run: usize,
+}
+
+/// Run the chain through a fresh `DerivationContext` and report.
+///
+/// Used by `evaluate_chain_fitness` and as the GA's pre-filter: if
+/// `executes` is false, the candidate is rejected before it reaches the
+/// Lean verifier.
+pub fn evaluate_chain(chain: &Chain, store: &AxiomStore) -> ChainEvalResult {
+    let mut ctx = DerivationContext::new();
+    let res = chain.execute(store, &mut ctx);
+    ChainEvalResult {
+        executes: res.is_ok(),
+        depth: ctx.steps().len() as u32,
+        final_expr: res.ok(),
+        steps_run: ctx.steps().len(),
+    }
+}
+
+/// Compute a `FitnessScore` for a chain individual.
+///
+/// Multi-objective scoring (NSGA-II — higher is better for each axis):
+/// - **novelty**: 1.0 if the chain executes; 0.0 otherwise. (Pre-filter
+///   surrogate; verified theorems get a Lean-side bump elsewhere.)
+/// - **complexity**: `1 / (1 + steps)` — prefer terse derivations.
+/// - **depth**: `min(steps / 8, 1.0)` — reward derivations of substantial
+///   length but cap at 8 steps to avoid pathological growth.
+/// - **dimensional**: 1.0 if the final expression has homogeneous
+///   dimensions (deferred to v2; placeholder 0.5 for now).
+/// - **symmetry**: 0.5 placeholder (Lorentz-symmetry detector is a
+///   v2 enhancement).
+/// - **connectivity**: count of distinct axioms referenced by chain
+///   `IntroduceAxiom` steps, normalised by 4.
+/// - **nasrudin_relevance**: 1.0 if the final expression is an equation
+///   (`BinOp::Eq`), else 0.0. Most physics theorems are equations.
+pub fn evaluate_chain_fitness(chain: &Chain, store: &AxiomStore) -> FitnessScore {
+    let eval = evaluate_chain(chain, store);
+    let executes = if eval.executes { 1.0 } else { 0.0 };
+    let steps = eval.steps_run as f64;
+    let depth_score = (steps / 8.0).min(1.0);
+    let complexity = 1.0 / (1.0 + steps);
+
+    // Distinct axiom names invoked.
+    use std::collections::BTreeSet;
+    let distinct_axioms: BTreeSet<&String> = chain
+        .0
+        .iter()
+        .filter_map(|s| match s {
+            RuleStep::IntroduceAxiom { axiom_name } => Some(axiom_name),
+            _ => None,
+        })
+        .collect();
+    let connectivity = (distinct_axioms.len() as f64 / 4.0).min(1.0);
+
+    let is_eq = matches!(
+        eval.final_expr,
+        Some(nasrudin_core::Expr::BinOp(nasrudin_core::BinOp::Eq, _, _))
+    );
+    let relevance = if is_eq { 1.0 } else { 0.0 };
+
+    FitnessScore {
+        novelty: executes,
+        complexity,
+        depth: depth_score,
+        dimensional: 0.5, // v2: thread `infer_dimension` here.
+        symmetry: 0.5,    // v2: detect Lorentz invariance.
+        connectivity,
+        nasrudin_relevance: relevance,
+    }
+}
+
+/// Verification outcome for a chain.
+#[derive(Debug, Clone)]
+pub enum ChainVerifyOutcome {
+    /// Chain ran, Lean accepted the proof. The .lean source is the
+    /// `proof_term`.
+    Verified { lean_source: String, module_path: String },
+    /// Chain ran, but Lean rejected the proof.
+    LeanRejected { lean_source: String, stderr: String },
+    /// Chain failed the pre-filter (didn't execute).
+    PreFilterFailed { reason: String },
+    /// Lean toolchain wasn't reachable.
+    ToolchainError { message: String },
+}
+
+/// Run a chain end-to-end: pre-filter via `Chain::execute`, emit Lean
+/// via the generic emitter, lake-build via `LeanVerifier`. Returns the
+/// outcome (pre-filter rejection, Lean rejection, or success with the
+/// emitted .lean source as the proof witness).
+///
+/// The `module_basename` is appended to `PhysicsGenerator.Derived.` to
+/// form the full Lean module path; the verifier will write a file at
+/// `<prover_root>/PhysicsGenerator/Derived/<module_basename>.lean` and
+/// run `lake build` on it. Use a unique basename per call (e.g. include
+/// a hash) to avoid file collisions when verifying many candidates.
+pub fn verify_chain(
+    chain: &Chain,
+    store: &AxiomStore,
+    prover_root: impl AsRef<Path>,
+    module_basename: &str,
+    theorem_name: &str,
+) -> ChainVerifyOutcome {
+    // Pre-filter: run the chain.
+    let mut ctx = DerivationContext::new();
+    if let Err(e) = chain.execute(store, &mut ctx) {
+        return ChainVerifyOutcome::PreFilterFailed {
+            reason: format!("{e}"),
+        };
+    }
+    if ctx.current().is_none() {
+        return ChainVerifyOutcome::PreFilterFailed {
+            reason: "chain produced no current expression".into(),
+        };
+    }
+
+    // Emit Lean via the generic emitter.
+    let cfg = LeanEmitConfig {
+        namespace: "PhysicsGenerator.Derived".into(),
+        theorem_name: theorem_name.to_string(),
+        use_mathlib: true,
+    };
+    let lean_source = emit_lean_file(&ctx, &cfg);
+    let module_path = format!("PhysicsGenerator.Derived.{module_basename}");
+
+    // Lake-build it.
+    let verifier = LeanVerifier::new(prover_root.as_ref());
+    let outcome = verifier.verify_file(&lean_source, &module_path);
+
+    // Iter 17 fix: on Lean rejection or toolchain error, remove the
+    // emitted .lean file from the prover directory so it doesn't
+    // pollute the workspace with un-verified content. Successful
+    // verifications keep the file (for inspection / archival).
+    if !matches!(outcome, LeanVerifyResult::Success) {
+        let relative = format!("{}.lean", module_path.replace('.', "/"));
+        let file_path = prover_root.as_ref().join(&relative);
+        let _ = std::fs::remove_file(&file_path);
+    }
+
+    match outcome {
+        LeanVerifyResult::Success => ChainVerifyOutcome::Verified {
+            lean_source,
+            module_path,
+        },
+        LeanVerifyResult::Failed { stderr } => ChainVerifyOutcome::LeanRejected {
+            lean_source,
+            stderr,
+        },
+        LeanVerifyResult::ProcessError { message } => ChainVerifyOutcome::ToolchainError { message },
+    }
+}
+
+/// Splice two chains at a random cut point, returning two children.
+pub fn splice_chains(a: &Chain, b: &Chain, rng: &mut impl Rng) -> (Chain, Chain) {
+    let cut_a = if a.is_empty() {
+        0
+    } else {
+        rng.random_range(0..=a.len())
+    };
+    let cut_b = if b.is_empty() {
+        0
+    } else {
+        rng.random_range(0..=b.len())
+    };
+    let mut child_a = Chain(a.0[..cut_a].to_vec());
+    child_a.0.extend_from_slice(&b.0[cut_b..]);
+    let mut child_b = Chain(b.0[..cut_b].to_vec());
+    child_b.0.extend_from_slice(&a.0[cut_a..]);
+    (child_a, child_b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nasrudin_derive::{AxiomStore, Chain, DerivationContext, DerivationStrategy};
+
+    fn upstream_store() -> AxiomStore {
+        let mut s = AxiomStore::new();
+        s.load_special_relativity_upstream();
+        s
+    }
+
+    #[test]
+    fn mutate_does_not_panic_on_empty() {
+        let store = upstream_store();
+        let mut chain = Chain::new();
+        let mut rng = rand::rng();
+        for _ in 0..50 {
+            mutate_chain(&mut chain, &store, &mut rng);
+        }
+        // Should now be non-empty (insert kicks in repeatedly).
+        assert!(!chain.is_empty());
+    }
+
+    #[test]
+    fn mutated_chain_either_executes_or_pre_filters() {
+        // Property: after mutation, either the chain runs successfully
+        // (producing a current expression) or it fails with a clean
+        // DeriveError — never panics.
+        let store = upstream_store();
+        let seed = Chain::rest_energy_from_upstream();
+        let mut rng = rand::rng();
+        for trial in 0..100 {
+            let mut chain = seed.clone();
+            mutate_chain(&mut chain, &store, &mut rng);
+            let mut ctx = DerivationContext::new();
+            let _ = chain.execute(&store, &mut ctx); // Ok or Err is fine.
+            let _ = trial;
+        }
+    }
+
+    #[test]
+    fn splice_lengths_are_compatible() {
+        // |child_a| + |child_b| = |a| + |b|
+        let mut rng = rand::rng();
+        let a = Chain::rest_energy_from_upstream();
+        let b = Chain::rest_energy_from_upstream();
+        for _ in 0..20 {
+            let (ca, cb) = splice_chains(&a, &b, &mut rng);
+            assert_eq!(ca.len() + cb.len(), a.len() + b.len());
+        }
+    }
+
+    /// Heavy: actually runs `lake build`. Requires the prover dir to be
+    /// set up (Mathlib cached, RestEnergyUpstream.olean reachable).
+    /// Marked `#[ignore]` so it doesn't run in normal `cargo test`.
+    #[test]
+    #[ignore = "calls lake build (5+ min); run with --ignored"]
+    fn upstream_chain_verifies_via_lake() {
+        let store = upstream_store();
+        let chain = Chain::rest_energy_from_upstream();
+        // Use the repo's prover dir relative to engine/crates/ga (tests run
+        // from there).
+        let prover_root = std::path::PathBuf::from("../../../prover");
+        let outcome = verify_chain(
+            &chain,
+            &store,
+            prover_root,
+            "ChainTestRestEnergy",
+            "rest_energy_chain_test",
+        );
+        match outcome {
+            ChainVerifyOutcome::Verified { .. } => {}
+            other => panic!("expected Verified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pre_filter_rejects_broken_chain() {
+        let store = upstream_store();
+        // Chain referencing a missing axiom. Should fail pre-filter
+        // *before* attempting lake build.
+        let bad = Chain(vec![RuleStep::IntroduceAxiom {
+            axiom_name: "no_such_axiom_xyz".into(),
+        }]);
+        let outcome = verify_chain(
+            &bad,
+            &store,
+            std::path::PathBuf::from("/nonexistent"),
+            "Junk",
+            "junk",
+        );
+        matches!(outcome, ChainVerifyOutcome::PreFilterFailed { .. });
+    }
+
+    #[test]
+    fn append_productive_suffix_grows_chain() {
+        let store = upstream_store();
+        let mut rng = rand::rng();
+        let mut chain = Chain(vec![
+            RuleStep::IntroduceAxiom {
+                axiom_name: "four_momentum_time_component".into(),
+            },
+            RuleStep::IntroduceAxiom {
+                axiom_name: "minkowski_invariant_def".into(),
+            },
+        ]);
+        let before = chain.len();
+        super::append_productive_suffix(&mut chain, &store, &mut rng);
+        // Either grew by exactly 2 (RearrangeEquation + TakePositiveRoot)
+        // or stayed the same (already ends in TakePositiveRoot — not the
+        // case here).
+        assert_eq!(chain.len(), before + 2);
+        assert!(matches!(
+            chain.0.last(),
+            Some(RuleStep::TakePositiveRoot)
+        ));
+    }
+
+    #[test]
+    fn append_productive_suffix_no_op_if_already_root() {
+        let store = upstream_store();
+        let mut rng = rand::rng();
+        let mut chain = Chain(vec![
+            RuleStep::IntroduceAxiom {
+                axiom_name: "four_momentum_time_component".into(),
+            },
+            RuleStep::TakePositiveRoot,
+        ]);
+        let before = chain.len();
+        super::append_productive_suffix(&mut chain, &store, &mut rng);
+        assert_eq!(chain.len(), before, "shouldn't append after TakePositiveRoot");
+    }
+
+    #[test]
+    fn fitness_of_seed_chain_executes_and_is_eq() {
+        let store = upstream_store();
+        let chain = Chain::rest_energy_from_upstream();
+        let fit = evaluate_chain_fitness(&chain, &store);
+        assert_eq!(fit.novelty, 1.0, "seed chain should execute");
+        assert_eq!(fit.nasrudin_relevance, 1.0, "result should be an equation");
+        assert!(fit.connectivity > 0.0, "seed uses ≥1 axiom");
+    }
+
+    #[test]
+    fn fitness_of_empty_chain_is_zero() {
+        let store = upstream_store();
+        let fit = evaluate_chain_fitness(&Chain::new(), &store);
+        assert_eq!(fit.novelty, 0.0);
+    }
+
+    #[test]
+    fn chain_individual_constructible() {
+        let store = upstream_store();
+        let chain = Chain::rest_energy_from_upstream();
+        let fit = evaluate_chain_fitness(&chain, &store);
+        let ind = ChainIndividual::new(chain, fit);
+        assert!(!ind.chain.is_empty());
+        assert_eq!(ind.pareto_rank, usize::MAX);
+    }
+
+    #[test]
+    fn upstream_chain_post_mutation_can_still_succeed() {
+        // Run many mutations; assert that *at least one* mutated chain
+        // still executes (i.e., we haven't broken the search space).
+        let store = upstream_store();
+        let mut rng = rand::rng();
+        let mut any_success = false;
+        for _ in 0..200 {
+            let mut chain = Chain::rest_energy_from_upstream();
+            mutate_chain(&mut chain, &store, &mut rng);
+            let mut ctx = DerivationContext::new();
+            if chain.execute(&store, &mut ctx).is_ok() {
+                any_success = true;
+                break;
+            }
+        }
+        assert!(
+            any_success,
+            "mutation broke the search space — no mutated chain executed in 200 trials"
+        );
+    }
+}
