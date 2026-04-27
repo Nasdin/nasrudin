@@ -23,7 +23,6 @@ function Landing() {
             <span className="brand-tag">Synthetic theorem · Lean 4</span>
           </div>
           <nav className="nav">
-            {/* @ts-expect-error route added in Phase 8.x */}
             <Link to="/browse">Browse corpus</Link>
             {/* @ts-expect-error route added in Phase 8.x */}
             <Link to="/leaderboard">Contributors</Link>
@@ -61,7 +60,6 @@ function Landing() {
                 <a className="btn btn-primary" href="#run">
                   Run a worker node <span className="btn-arrow">→</span>
                 </a>
-                {/* @ts-expect-error route added in Phase 8.x */}
                 <Link className="btn btn-secondary" to="/browse">
                   Browse the corpus
                 </Link>
