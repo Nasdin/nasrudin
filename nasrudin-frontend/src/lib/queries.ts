@@ -1,195 +1,136 @@
-import { queryOptions, useQuery } from "@tanstack/react-query";
-import { RateLimitError } from "./api";
-import {
-	fetchAxioms,
-	fetchDomains,
-	fetchGaStatus,
-	fetchHealth,
-	fetchLineage,
-	fetchProof,
-	fetchRecentTheorems,
-	fetchSearchTheorems,
-	fetchStats,
-	fetchTheorem,
-} from "./server-fns";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiFetch, isApiError } from './api';
 import type {
-	ApiTheorem,
-	AxiomsResponse,
-	DbStats,
-	GaStatus,
-	HealthResponse,
-	LineageRecord,
-	SearchResponse,
-} from "./types";
+  ApiKeySummary,
+  AuthUser,
+  MeStats,
+  NewApiKey,
+  SavedSearch,
+  Theorem,
+  Worker,
+} from './types';
 
-// ---------------------------------------------------------------------------
-// Shared retry logic: never retry on 429 (rate limit)
-// ---------------------------------------------------------------------------
+// --- auth ---
 
-function shouldRetry(failureCount: number, error: Error): boolean {
-	if (error instanceof RateLimitError) return false;
-	return failureCount < 3;
+export const meQueryKey = ['me'] as const;
+
+export function useMe() {
+  return useQuery<AuthUser | null>({
+    queryKey: meQueryKey,
+    queryFn: async () => {
+      try {
+        return await apiFetch<AuthUser>('/api/auth/me');
+      } catch (e) {
+        if (isApiError(e) && e.status === 401) return null;
+        throw e;
+      }
+    },
+    staleTime: 60_000,
+  });
 }
 
-// ---------------------------------------------------------------------------
-// Query option factories — exported so loaders can call ensureQueryData()
-// ---------------------------------------------------------------------------
-
-export const healthQueryOptions = () =>
-	queryOptions({
-		queryKey: ["health"],
-		queryFn: () => fetchHealth() as Promise<HealthResponse>,
-		staleTime: 30_000,
-		retry: shouldRetry,
-	});
-
-export const statsQueryOptions = () =>
-	queryOptions({
-		queryKey: ["stats"],
-		queryFn: () => fetchStats() as Promise<DbStats>,
-		staleTime: 30_000,
-		refetchOnWindowFocus: true,
-		retry: shouldRetry,
-	});
-
-export const gaStatusQueryOptions = () =>
-	queryOptions({
-		queryKey: ["ga-status"],
-		queryFn: () => fetchGaStatus() as Promise<GaStatus>,
-		staleTime: 30_000,
-		refetchOnWindowFocus: true,
-		retry: shouldRetry,
-	});
-
-export const theoremQueryOptions = (id: string) =>
-	queryOptions({
-		queryKey: ["theorem", id],
-		queryFn: () => fetchTheorem({ data: { id } }) as Promise<ApiTheorem>,
-		staleTime: 60_000,
-		enabled: !!id,
-		retry: shouldRetry,
-	});
-
-export interface SearchParams {
-	domain?: string;
-	depth?: number;
-	generation?: number;
-	latex?: string;
-	axiom?: string;
-	verified?: boolean;
-	limit?: number;
+export function useLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (creds: { email: string; password: string }) =>
+      apiFetch<AuthUser>('/api/auth/login', { method: 'POST', body: JSON.stringify(creds) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
+  });
 }
 
-function buildSearchQueryString(params: SearchParams): string {
-	const searchParams = new URLSearchParams();
-	if (params.domain) searchParams.set("domain", params.domain);
-	if (params.depth != null) searchParams.set("depth", String(params.depth));
-	if (params.generation != null)
-		searchParams.set("generation", String(params.generation));
-	if (params.latex) searchParams.set("latex", params.latex);
-	if (params.axiom) searchParams.set("axiom", params.axiom);
-	if (params.verified != null)
-		searchParams.set("verified", String(params.verified));
-	if (params.limit != null) searchParams.set("limit", String(params.limit));
-	return searchParams.toString();
+export function useRegister() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { email: string; password: string; display_name?: string }) =>
+      apiFetch<AuthUser>('/api/auth/register', { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
+  });
 }
 
-export const searchTheoremsQueryOptions = (params: SearchParams) => {
-	const qs = buildSearchQueryString(params);
-	return queryOptions({
-		queryKey: ["search-theorems", params],
-		queryFn: () =>
-			fetchSearchTheorems({
-				data: { queryString: qs },
-			}) as Promise<SearchResponse>,
-		staleTime: 60_000,
-		retry: shouldRetry,
-	});
-};
-
-export const recentTheoremsQueryOptions = (limit = 20) =>
-	queryOptions({
-		queryKey: ["recent-theorems", limit],
-		queryFn: () =>
-			fetchRecentTheorems({ data: { limit } }) as Promise<SearchResponse>,
-		staleTime: 30_000,
-		retry: shouldRetry,
-	});
-
-export const lineageQueryOptions = (id: string) =>
-	queryOptions({
-		queryKey: ["lineage", id],
-		queryFn: () => fetchLineage({ data: { id } }) as Promise<LineageRecord>,
-		staleTime: 60_000,
-		enabled: !!id,
-		retry: shouldRetry,
-	});
-
-export const proofQueryOptions = (id: string) =>
-	queryOptions({
-		queryKey: ["proof", id],
-		queryFn: () => fetchProof({ data: { id } }) as Promise<unknown>,
-		staleTime: 60_000,
-		enabled: !!id,
-		retry: shouldRetry,
-	});
-
-export const domainsQueryOptions = () =>
-	queryOptions({
-		queryKey: ["domains"],
-		queryFn: () => fetchDomains() as Promise<Record<string, number>>,
-		staleTime: 5 * 60_000,
-		retry: shouldRetry,
-	});
-
-// ---------------------------------------------------------------------------
-// Convenience hooks — thin wrappers around the option factories
-// ---------------------------------------------------------------------------
-
-export function useHealth() {
-	return useQuery(healthQueryOptions());
+export function useLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<{ logged_out: true }>('/api/auth/logout', { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
+  });
 }
 
-export function useStats() {
-	return useQuery(statsQueryOptions());
-}
+// --- theorems ---
 
-export function useGaStatus() {
-	return useQuery(gaStatusQueryOptions());
+export function useRecentTheorems(limit = 20) {
+  return useQuery({
+    queryKey: ['theorems', 'recent', limit],
+    queryFn: () =>
+      apiFetch<{ theorems: Theorem[]; total: number }>(`/api/theorems/recent?limit=${limit}`),
+  });
 }
 
 export function useTheorem(id: string) {
-	return useQuery(theoremQueryOptions(id));
-}
-
-export function useSearchTheorems(params: SearchParams) {
-	return useQuery(searchTheoremsQueryOptions(params));
-}
-
-export function useRecentTheorems(limit = 20) {
-	return useQuery(recentTheoremsQueryOptions(limit));
-}
-
-export function useLineage(id: string) {
-	return useQuery(lineageQueryOptions(id));
-}
-
-export function useProof(id: string) {
-	return useQuery(proofQueryOptions(id));
+  return useQuery({
+    queryKey: ['theorem', id],
+    queryFn: () => apiFetch<Theorem>(`/api/theorems/${id}`),
+    enabled: !!id,
+  });
 }
 
 export function useDomains() {
-	return useQuery(domainsQueryOptions());
+  return useQuery({
+    queryKey: ['domains'],
+    queryFn: () => apiFetch<Record<string, number>>('/api/domains'),
+  });
 }
 
-export const axiomsQueryOptions = (domain?: string) =>
-	queryOptions({
-		queryKey: ["axioms", domain],
-		queryFn: () => fetchAxioms({ data: { domain } }) as Promise<AxiomsResponse>,
-		staleTime: 5 * 60_000,
-		retry: shouldRetry,
-	});
+// --- api keys ---
 
-export function useAxioms(domain?: string) {
-	return useQuery(axiomsQueryOptions(domain));
+export function useApiKeys() {
+  return useQuery({
+    queryKey: ['api-keys'],
+    queryFn: () => apiFetch<{ keys: ApiKeySummary[] }>('/api/api-keys'),
+  });
+}
+
+export function useCreateApiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; expires_in_days?: number }) =>
+      apiFetch<NewApiKey>('/api/api-keys', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
+  });
+}
+
+export function useRevokeApiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<{ revoked: true }>(`/api/api-keys/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
+  });
+}
+
+// --- saved searches ---
+
+export function useSavedSearches() {
+  return useQuery({
+    queryKey: ['saved-searches'],
+    queryFn: () => apiFetch<{ saved_searches: SavedSearch[] }>('/api/saved-searches'),
+  });
+}
+
+// --- workers ---
+
+export function useWorkers() {
+  return useQuery({
+    queryKey: ['workers'],
+    queryFn: () => apiFetch<{ workers: Worker[] }>('/api/workers'),
+    refetchInterval: 30_000,
+  });
+}
+
+// --- me/stats ---
+
+export function useMeStats() {
+  return useQuery({
+    queryKey: ['me', 'stats'],
+    queryFn: () => apiFetch<MeStats>('/api/me/stats'),
+  });
 }
