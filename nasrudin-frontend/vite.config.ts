@@ -1,40 +1,13 @@
-import { fileURLToPath, URL } from "node:url";
-import tailwindcss from "@tailwindcss/vite";
-import { devtools } from "@tanstack/devtools-vite";
-import { tanstackStart } from "@tanstack/react-start/plugin/vite";
-import viteReact from "@vitejs/plugin-react";
-import { nitro } from "nitro/vite";
-import { defineConfig } from "vite";
-import viteTsConfigPaths from "vite-tsconfig-paths";
+import { tanstackStart } from '@tanstack/react-start/plugin/vite';
+import { tanstackRouter } from '@tanstack/router-plugin/vite';
+import { defineConfig } from 'vite';
+import tsconfigPaths from 'vite-tsconfig-paths';
 
-const config = defineConfig({
-	resolve: {
-		alias: {
-			"@": fileURLToPath(new URL("./src", import.meta.url)),
-		},
-	},
-	server: {
-		proxy: {
-			"/api": {
-				target: "http://localhost:3001",
-				changeOrigin: true,
-			},
-		},
-	},
-	ssr: {
-		noExternal: ["react-katex"],
-	},
-	plugins: [
-		devtools(),
-		nitro(),
-		// this is the plugin that enables path aliases
-		viteTsConfigPaths({
-			projects: ["./tsconfig.json"],
-		}),
-		tailwindcss(),
-		tanstackStart(),
-		viteReact(),
-	],
+export default defineConfig({
+  plugins: [
+    tsconfigPaths(),
+    tanstackRouter({ target: 'react', autoCodeSplitting: true }),
+    tanstackStart(),
+  ],
+  server: { port: 3000 },
 });
-
-export default config;
