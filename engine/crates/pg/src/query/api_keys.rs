@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::entity::api_keys;
 
+/// Insert an api-key row. The caller is responsible for hashing the secret.
 #[allow(clippy::too_many_arguments)]
 pub async fn create(
     db: &DatabaseConnection,
@@ -28,6 +29,7 @@ pub async fn create(
     model.insert(db).await
 }
 
+/// Find an active (non-revoked) key by its 12-char prefix.
 pub async fn find_by_prefix(
     db: &DatabaseConnection,
     prefix: &str,
@@ -39,6 +41,7 @@ pub async fn find_by_prefix(
         .await
 }
 
+/// List all non-revoked, non-expired keys for a user.
 pub async fn list_by_user(
     db: &DatabaseConnection,
     user_id: Uuid,
@@ -57,6 +60,7 @@ pub async fn list_by_user(
         .await
 }
 
+/// Update `last_used_at = now()` on an api-key. Best-effort.
 pub async fn mark_used(db: &DatabaseConnection, id: Uuid) -> Result<(), DbErr> {
     let active = api_keys::ActiveModel {
         id: Set(id),
@@ -67,6 +71,7 @@ pub async fn mark_used(db: &DatabaseConnection, id: Uuid) -> Result<(), DbErr> {
     Ok(())
 }
 
+/// Revoke an api-key owned by `user_id`. Returns the row if owned, None otherwise.
 pub async fn revoke(
     db: &DatabaseConnection,
     id: Uuid,
