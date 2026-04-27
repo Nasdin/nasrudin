@@ -85,7 +85,6 @@ function ProfilePage() {
             <h3 className="section-h">API keys</h3>
             {(keys?.keys ?? []).length === 0 ? (
               <p style={{ color: 'var(--ink-500)' }}>
-                {/* @ts-expect-error route added in Phase 7.3 */}
                 No keys yet — <Link to="/api-keys">create one →</Link>
               </p>
             ) : (
@@ -103,7 +102,6 @@ function ProfilePage() {
                 ))}
               </ul>
             )}
-            {/* @ts-expect-error route added in Phase 7.3 */}
             <Link to="/api-keys" style={{ display: 'inline-block', marginTop: 16 }}>
               Manage all keys →
             </Link>
