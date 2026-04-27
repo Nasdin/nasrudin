@@ -1,3 +1,4 @@
+pub mod api_keys;
 pub mod saved_searches;
 pub mod sessions;
 pub mod user_preferences;
