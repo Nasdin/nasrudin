@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { GAViz } from '~/components/landing/GAViz';
 import { HeroLiveTheorem } from '~/components/landing/HeroLiveTheorem';
+import { PipelineDiagram } from '~/components/landing/PipelineDiagram';
 import { AppFooter } from '~/components/platform/AppFooter';
 
 export const Route = createFileRoute('/')({ component: Landing });
@@ -69,6 +71,35 @@ function Landing() {
               <HeroLiveTheorem />
             </div>
           </div>
+        </div>
+      </section>
+      <section className="section" id="how">
+        <div className="container-wide">
+          <div className="section-head">
+            <div className="section-num">§ 01 / 04</div>
+            <div className="section-title-block">
+              <span className="overline">The pipeline</span>
+              <h2 className="section-title">
+                Five stages, one rule:{' '}
+                <em>nothing enters the corpus that Lean&nbsp;4 hasn't proved twice.</em>
+              </h2>
+            </div>
+          </div>
+          <PipelineDiagram />
+        </div>
+      </section>
+      <section className="section compact">
+        <div className="container-wide">
+          <div className="section-head">
+            <div className="section-num">§ 02 / 04</div>
+            <div className="section-title-block">
+              <span className="overline">Inside one cycle</span>
+              <h2 className="section-title">
+                Watch the GA <em>arrive at Newton</em> — without being told.
+              </h2>
+            </div>
+          </div>
+          <GAViz />
         </div>
       </section>
       <AppFooter />
