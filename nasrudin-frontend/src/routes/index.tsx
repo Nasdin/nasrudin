@@ -1,7 +1,10 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { GAViz } from '~/components/landing/GAViz';
 import { HeroLiveTheorem } from '~/components/landing/HeroLiveTheorem';
+import { InstallNode } from '~/components/landing/InstallNode';
 import { PipelineDiagram } from '~/components/landing/PipelineDiagram';
+import { RediscoveryGrid } from '~/components/landing/RediscoveryGrid';
+import { WorkerMap } from '~/components/landing/WorkerMap';
 import { AppFooter } from '~/components/platform/AppFooter';
 
 export const Route = createFileRoute('/')({ component: Landing });
@@ -100,6 +103,48 @@ function Landing() {
             </div>
           </div>
           <GAViz />
+        </div>
+      </section>
+      <section className="section" id="discoveries">
+        <div className="container-wide">
+          <div className="section-head">
+            <div className="section-num">§ 03 / 04</div>
+            <div className="section-title-block">
+              <span className="overline">Featured rediscoveries</span>
+              <h2 className="section-title">
+                Physics that <em>found itself</em> — and physics still in the dark.
+              </h2>
+            </div>
+          </div>
+          <RediscoveryGrid />
+        </div>
+      </section>
+      <section className="section" id="network">
+        <div className="container-wide">
+          <div className="section-head">
+            <div className="section-num">§ 04 / 04</div>
+            <div className="section-title-block">
+              <span className="overline">The network</span>
+              <h2 className="section-title">
+                A distributed prover, <em>built from home PCs and cloud nodes.</em>
+              </h2>
+            </div>
+          </div>
+          <WorkerMap />
+        </div>
+      </section>
+      <section className="section" id="run">
+        <div className="container-wide">
+          <div className="section-head">
+            <div className="section-num">§ 05 / 05</div>
+            <div className="section-title-block">
+              <span className="overline">Contribute compute</span>
+              <h2 className="section-title">
+                Run a worker. <em>Help physics rediscover itself.</em>
+              </h2>
+            </div>
+          </div>
+          <InstallNode />
         </div>
       </section>
       <AppFooter />
