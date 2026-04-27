@@ -3,7 +3,7 @@
 //! Full daemon: REST endpoints, SSE discovery stream, GA evolution thread,
 //! and Lean4 verification workers.
 
-use physics_api::{auth, rate_limit};
+use physics_api::{auth, handlers, rate_limit, state::AppState};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -36,15 +36,6 @@ use nasrudin_lean_bridge::LeanBridge;
 use nasrudin_rocks::TheoremDb;
 
 use axum::routing::delete;
-
-/// Shared application state.
-struct AppState {
-    db: Arc<TheoremDb>,
-    pg: Option<nasrudin_pg::sea_orm::DatabaseConnection>,
-    axiom_store: Arc<AxiomStore>,
-    discovery_tx: tokio::sync::broadcast::Sender<DiscoveryEvent>,
-    ga_status: Arc<std::sync::Mutex<GaStatusSnapshot>>,
-}
 
 // GaStatusSnapshot is now imported from nasrudin_ga
 
@@ -194,11 +185,17 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/events/discoveries", get(discovery_stream))
         .route("/api/events/stats", get(stats_stream));
 
+    // Public workers list — readable without auth (returns [] if PG unavailable).
+    let workers_public = Router::new()
+        .route("/api/workers", get(handlers::workers::list))
+        .layer(GovernorLayer::new(rate_limit::api_standard()));
+
     // Start with core routes
     let mut app = Router::new()
         .merge(api)
         .merge(health)
-        .merge(sse);
+        .merge(sse)
+        .merge(workers_public);
 
     // Add auth routes only if PostgreSQL is available
     if let Some(ref pg_conn) = state.pg {
@@ -221,9 +218,53 @@ async fn main() -> anyhow::Result<()> {
             .route("/api/auth/me", get(auth::me))
             .layer(GovernorLayer::new(rate_limit::auth_session()));
 
+        // Platform-user: authenticated user CRUD on api keys, saved searches,
+        // preferences, and per-user stats. Cookie or Bearer nsk_live_ tokens.
+        let platform_user = Router::new()
+            .route(
+                "/api/api-keys",
+                axum::routing::post(handlers::api_keys::create),
+            )
+            .route("/api/api-keys", get(handlers::api_keys::list))
+            .route("/api/api-keys/{id}", delete(handlers::api_keys::revoke))
+            .route(
+                "/api/saved-searches",
+                axum::routing::post(handlers::saved_searches::create),
+            )
+            .route("/api/saved-searches", get(handlers::saved_searches::list))
+            .route(
+                "/api/saved-searches/{id}",
+                delete(handlers::saved_searches::delete),
+            )
+            .route(
+                "/api/saved-searches/{id}",
+                axum::routing::patch(handlers::saved_searches::patch_label),
+            )
+            .route("/api/preferences", get(handlers::preferences::get))
+            .route(
+                "/api/preferences",
+                axum::routing::patch(handlers::preferences::patch),
+            )
+            .route("/api/me/stats", get(handlers::me::stats))
+            .layer(GovernorLayer::new(rate_limit::platform_user()));
+
+        // Platform-worker: worker registration + heartbeat. Bearer nsk_worker_.
+        let platform_worker = Router::new()
+            .route(
+                "/api/workers/register",
+                axum::routing::post(handlers::workers::register),
+            )
+            .route(
+                "/api/workers/heartbeat",
+                axum::routing::post(handlers::workers::heartbeat),
+            )
+            .layer(GovernorLayer::new(rate_limit::platform_worker()));
+
         app = app
             .merge(auth_strict)
             .merge(auth_session)
+            .merge(platform_user)
+            .merge(platform_worker)
             .layer(auth_layer);
 
         tracing::info!("Auth endpoints enabled (PostgreSQL available)");

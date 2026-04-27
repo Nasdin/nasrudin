@@ -1,7 +1,8 @@
 use sea_orm::entity::prelude::*;
+use serde::Serialize;
 
 /// Worker status stored as TEXT in PostgreSQL.
-#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize)]
 #[sea_orm(rs_type = "String", db_type = "Text")]
 pub enum WorkerStatus {
     #[sea_orm(string_value = "active")]
@@ -16,7 +17,7 @@ pub enum WorkerStatus {
 ///
 /// Workers register via POST /api/workers/register and receive a text ID.
 /// They heartbeat periodically to update `last_seen` and `theorems_contributed`.
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "workers")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false, column_type = "Text")]

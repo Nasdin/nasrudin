@@ -52,3 +52,21 @@ pub fn health_relaxed() -> IpGovConfig {
         .finish()
         .expect("valid health_relaxed governor config")
 }
+
+/// Platform-user: 60 req/min sustained, burst 30.
+pub fn platform_user() -> IpGovConfig {
+    GovernorConfigBuilder::default()
+        .per_second(1) // 60/min replenish
+        .burst_size(30)
+        .finish()
+        .expect("valid platform_user governor config")
+}
+
+/// Platform-worker: 300 req/min sustained, burst 120.
+pub fn platform_worker() -> IpGovConfig {
+    GovernorConfigBuilder::default()
+        .per_millisecond(200) // 5/sec → 300/min replenish
+        .burst_size(120)
+        .finish()
+        .expect("valid platform_worker governor config")
+}

@@ -66,7 +66,7 @@ pub struct Credentials {
 /// Auth backend backed by the PostgreSQL `users` table.
 #[derive(Debug, Clone)]
 pub struct Backend {
-    db: DatabaseConnection,
+    pub db: DatabaseConnection,
 }
 
 impl Backend {
