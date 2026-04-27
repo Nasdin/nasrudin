@@ -25,7 +25,6 @@ export function AuthForm() {
           trimmed ? { email, password, display_name: trimmed } : { email, password },
         );
       }
-      // @ts-expect-error route added in Phase 7.2
       await navigate({ to: '/profile' });
     } catch (err) {
       if (isApiError(err)) {

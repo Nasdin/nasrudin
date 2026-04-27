@@ -50,7 +50,6 @@ export function AppHeader({ active }: { active?: string }) {
               API
             </Link>
             {me ? (
-              // @ts-expect-error route added in Phase 7+
               <Link to="/profile" className="app-avatar" title={me.email}>
                 {(me.display_name ?? me.email).slice(0, 2).toUpperCase()}
               </Link>
