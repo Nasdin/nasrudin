@@ -346,3 +346,68 @@ fn expired_response() -> (StatusCode, axum::Json<serde_json::Value>) {
         axum::Json(serde_json::json!({ "error": "expired api key" })),
     )
 }
+
+// ---------------------------------------------------------------------------
+// WorkerAuth: only `Authorization: Bearer nsk_worker_…`
+// ---------------------------------------------------------------------------
+
+/// Resolved identity of a worker (no `AuthUser` — workers are not users).
+#[derive(Debug, Clone)]
+pub struct WorkerCredential {
+    pub api_key_id: uuid::Uuid,
+    /// The associated `workers.id` row (set by the registration handler;
+    /// we look it up via `name` which is the worker handle).
+    pub worker_handle: String,
+}
+
+pub struct WorkerAuth(pub WorkerCredential);
+
+impl<S> FromRequestParts<S> for WorkerAuth
+where
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, axum::Json<serde_json::Value>);
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let bearer: String = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(|s| s.to_owned())
+            .ok_or_else(unauth_response)?;
+        if !bearer.starts_with("nsk_worker_") {
+            return Err(unauth_response());
+        }
+
+        let session = AuthSession::<Backend>::from_request_parts(parts, state)
+            .await
+            .map_err(|_| unauth_response())?;
+        let db: &DatabaseConnection = &session.backend.db;
+
+        let prefix: String = bearer.chars().take(14).collect();
+        let row = nasrudin_pg::query::api_keys::find_by_prefix(db, &prefix)
+            .await
+            .map_err(|_| unauth_response())?
+            .ok_or_else(unauth_response)?;
+        if row.kind != "worker" {
+            return Err(unauth_response());
+        }
+
+        let secret = bearer.to_owned();
+        let hash = row.key_hash.clone();
+        let valid = tokio::task::spawn_blocking(move || {
+            password_auth::verify_password(secret, &hash).is_ok()
+        })
+        .await
+        .map_err(|_| unauth_response())?;
+        if !valid {
+            return Err(unauth_response());
+        }
+
+        Ok(Self(WorkerCredential {
+            api_key_id: row.id,
+            worker_handle: row.name,
+        }))
+    }
+}
