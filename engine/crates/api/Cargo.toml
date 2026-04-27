@@ -39,3 +39,5 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
 dotenvy = { workspace = true }
+data-encoding = { workspace = true }
+rand = { workspace = true }

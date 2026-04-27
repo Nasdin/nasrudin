@@ -2,4 +2,5 @@
 //! and integration tests.
 
 pub mod auth;
+pub mod keygen;
 pub mod rate_limit;
