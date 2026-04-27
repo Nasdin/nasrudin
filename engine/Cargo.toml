@@ -37,6 +37,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Hashing & encoding
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 hex = "0.4"
+data-encoding = "2"
 bloomfilter = "1"
 
 # Web framework
