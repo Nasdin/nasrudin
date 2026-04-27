@@ -24,6 +24,18 @@ Nasrudin doesn't know what physics looks like. It generates candidate mathematic
 
 Every theorem carries its full Lean4 proof. Academics can inspect proofs in the web UI, download any theorem as a standalone `.lean` file, and independently re-verify it with `lake build` -- no trust in the server required.
 
+## Platform features
+
+The web UI and API server share a single auth model:
+
+- **Cookie sessions** for the web UI (axum-login + tower-sessions, Argon2 passwords).
+- **Bearer API keys** (`Authorization: Bearer nsk_live_…`) for programmatic clients.
+
+Both flow through the same `AuthOrApiKey` extractor and resolve to the same user.
+Worker registration uses a separate `nsk_worker_…` key issued at registration time.
+
+Generate keys at `/api-keys` once you're signed in.
+
 ## VISION: Distributed Architecture
 
 Nasrudin is designed as a **distributed compute network**. Anyone can contribute by running a worker node:
@@ -78,10 +90,13 @@ nasrudin/
 │   │   └── Bridge/          # FFI exports (pg_init, pg_verify, pg_shutdown)
 │   ├── lakefile.lean
 │   └── lean-toolchain       # Lean4 v4.27.0
-├── nasrudin-frontend/       # TanStack Start web UI
+├── nasrudin-frontend/       # TanStack Start v1 web UI (React 19, TS, Biome)
 │   └── src/
-│       ├── routes/          # Dashboard, search, explore canvas, axioms, timeline
-│       └── components/      # TheoremCard, DomainBadge, Sidebar
+│       ├── routes/          # /, /browse, /theorem/$id, /signin, /profile,
+│       │                    # /api-keys, /api-docs, /leaderboard, /pricing
+│       ├── components/      # platform shell, landing, browse, theorem, auth, apikeys
+│       ├── lib/             # apiFetch, queries, types, katex helper
+│       └── styles/          # tokens.css, styles.css, platform.css
 ├── docs/                    # Design documents
 │   ├── PLAN.md              # Master plan
 │   ├── ARCHITECTURE.md      # System diagrams
