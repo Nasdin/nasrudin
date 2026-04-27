@@ -114,7 +114,11 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
-                    .col(big_integer(Workers::TheoremsContributed).not_null().default(0))
+                    .col(
+                        big_integer(Workers::TheoremsContributed)
+                            .not_null()
+                            .default(0),
+                    )
                     .col(text(Workers::Status).not_null().default("inactive"))
                     .to_owned(),
             )

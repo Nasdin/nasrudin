@@ -44,7 +44,9 @@ pub async fn create(
 }
 
 pub async fn list(auth: AuthOrApiKey, auth_sess: AuthSess) -> impl IntoResponse {
-    match nasrudin_pg::query::saved_searches::list_by_user(&auth_sess.backend.db, auth.user.id).await {
+    match nasrudin_pg::query::saved_searches::list_by_user(&auth_sess.backend.db, auth.user.id)
+        .await
+    {
         Ok(rows) => (
             StatusCode::OK,
             Json(serde_json::json!({ "saved_searches": rows })),
@@ -61,7 +63,8 @@ pub async fn delete(
     auth_sess: AuthSess,
     Path(id): Path<Uuid>,
 ) -> impl IntoResponse {
-    match nasrudin_pg::query::saved_searches::delete(&auth_sess.backend.db, id, auth.user.id).await {
+    match nasrudin_pg::query::saved_searches::delete(&auth_sess.backend.db, id, auth.user.id).await
+    {
         Ok(res) if res.rows_affected > 0 => {
             (StatusCode::OK, Json(serde_json::json!({ "deleted": true })))
         }

@@ -11,12 +11,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // Load .env from project root
-    let env_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../.env");
+    let env_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../.env");
     let _ = dotenvy::from_path(&env_path);
 
-    let url = std::env::var("DATABASE_URL")
-        .map_err(|_| anyhow::anyhow!("DATABASE_URL is not set"))?;
+    let url =
+        std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is not set"))?;
 
     let db = nasrudin_pg::connect_simple(&url).await?;
     nasrudin_pg::run_migrations(&db).await?;

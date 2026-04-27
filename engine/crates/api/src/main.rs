@@ -20,13 +20,13 @@ use axum::{
     routing::get,
 };
 use axum_login::AuthManagerLayerBuilder;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::BroadcastStream;
 use tower_governor::GovernorLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
+use tower_sessions::{MemoryStore, SessionManagerLayer};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use nasrudin_core::{Domain, Theorem, TheoremId, VerificationStatus};
@@ -50,8 +50,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting Physics Generator API server");
 
     // Load environment from .env in project root (parent of engine/)
-    let env_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.env");
+    let env_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env");
     match dotenvy::from_path(&env_path) {
         Ok(_) => tracing::info!("Loaded .env from {}", env_path.display()),
         Err(e) => tracing::warn!("No .env loaded ({}): using existing env vars", e),
@@ -60,9 +59,8 @@ async fn main() -> anyhow::Result<()> {
     // Connect to PostgreSQL (optional — auth features require it)
     let pg = match std::env::var("DATABASE_URL") {
         Ok(database_url) => {
-            match nasrudin_pg::connect_and_migrate(
-                &nasrudin_pg::PgConfig::new(&database_url),
-            ).await {
+            match nasrudin_pg::connect_and_migrate(&nasrudin_pg::PgConfig::new(&database_url)).await
+            {
                 Ok(conn) => {
                     tracing::info!("PostgreSQL connected");
                     Some(conn)
@@ -87,11 +85,14 @@ async fn main() -> anyhow::Result<()> {
     // Load PhysLean axioms from catalog
     let mut axiom_store = AxiomStore::new();
     let prover_root = std::env::var("PROVER_ROOT").unwrap_or_else(|_| "../prover".into());
-    let catalog_path = std::path::Path::new(&prover_root)
-        .join("../physlean-extract/output/catalog.json");
+    let catalog_path =
+        std::path::Path::new(&prover_root).join("../physlean-extract/output/catalog.json");
     match axiom_store.load_from_catalog(&catalog_path) {
         Ok(count) => tracing::info!("Loaded {count} axioms from {}", catalog_path.display()),
-        Err(e) => tracing::warn!("Failed to load catalog ({}): GA will seed with random only", e),
+        Err(e) => tracing::warn!(
+            "Failed to load catalog ({}): GA will seed with random only",
+            e
+        ),
     }
     let axiom_store = Arc::new(axiom_store);
 
@@ -200,8 +201,7 @@ async fn main() -> anyhow::Result<()> {
     // Add auth routes only if PostgreSQL is available
     if let Some(ref pg_conn) = state.pg {
         let session_store = MemoryStore::default();
-        let session_layer = SessionManagerLayer::new(session_store)
-            .with_secure(false); // TODO: set true behind TLS in production
+        let session_layer = SessionManagerLayer::new(session_store).with_secure(false); // TODO: set true behind TLS in production
 
         let auth_backend = auth::Backend::new(pg_conn.clone());
         let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
@@ -283,15 +283,18 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     let shutdown_flag = Arc::clone(&shutdown);
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("Failed to listen for ctrl+c");
-            tracing::info!("Received shutdown signal, stopping...");
-            shutdown_flag.store(true, Ordering::Relaxed);
-        })
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen for ctrl+c");
+        tracing::info!("Received shutdown signal, stopping...");
+        shutdown_flag.store(true, Ordering::Relaxed);
+    })
+    .await?;
 
     Ok(())
 }
@@ -327,7 +330,10 @@ async fn run_verification_workers(
         LeanBridge::default()
     });
 
-    tracing::info!("Verification worker started (lean bridge available: {})", lean_bridge.is_available());
+    tracing::info!(
+        "Verification worker started (lean bridge available: {})",
+        lean_bridge.is_available()
+    );
 
     while let Some(batch) = async_rx.recv().await {
         let mut verified_batch: Vec<Theorem> = Vec::new();
@@ -380,11 +386,9 @@ async fn run_verification_workers(
             verified_batch.push(theorem);
         }
 
-        if !verified_batch.is_empty() {
-            if verified_tx.send(verified_batch).is_err() {
-                tracing::info!("Verified channel closed, stopping worker");
-                break;
-            }
+        if !verified_batch.is_empty() && verified_tx.send(verified_batch).is_err() {
+            tracing::info!("Verified channel closed, stopping worker");
+            break;
         }
     }
 
@@ -639,9 +643,7 @@ async fn delete_theorem_handler(
 }
 
 /// List all domains with their theorem counts.
-async fn list_domains(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+async fn list_domains(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     match state.db.count_by_domain() {
         Ok(counts) => Json(serde_json::to_value(counts).unwrap_or_default()),
         Err(e) => Json(serde_json::json!({ "error": format!("{e}") })),
@@ -698,7 +700,6 @@ async fn list_axioms(
     }))
 }
 
-
 /// Server-Sent Events stream for live discovery notifications.
 async fn discovery_stream(
     State(state): State<Arc<AppState>>,
@@ -723,7 +724,11 @@ async fn stats_stream(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     let interval = tokio::time::interval(std::time::Duration::from_secs(5));
     let stream = tokio_stream::wrappers::IntervalStream::new(interval).map(move |_| {
-        let snapshot = state.ga_status.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let snapshot = state
+            .ga_status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let data = serde_json::to_string(&snapshot).unwrap_or_default();
         Ok(Event::default().event("stats").data(data))
     });

@@ -66,10 +66,7 @@ pub async fn list(
     if let Some(status) = status_filter {
         query = query.filter(workers::Column::Status.eq(status));
     }
-    query
-        .order_by_desc(workers::Column::LastSeen)
-        .all(db)
-        .await
+    query.order_by_desc(workers::Column::LastSeen).all(db).await
 }
 
 /// Find a worker by ID.

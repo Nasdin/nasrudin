@@ -21,10 +21,7 @@ pub async fn create_user(
 }
 
 /// Find a user by their UUID.
-pub async fn find_by_id(
-    db: &DatabaseConnection,
-    id: Uuid,
-) -> Result<Option<users::Model>, DbErr> {
+pub async fn find_by_id(db: &DatabaseConnection, id: Uuid) -> Result<Option<users::Model>, DbErr> {
     users::Entity::find_by_id(id).one(db).await
 }
 

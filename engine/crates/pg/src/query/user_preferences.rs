@@ -4,11 +4,10 @@ use uuid::Uuid;
 use crate::entity::user_preferences;
 
 /// Get preferences for a user. Returns default empty JSON object if none set.
-pub async fn get(
-    db: &DatabaseConnection,
-    user_id: Uuid,
-) -> Result<serde_json::Value, DbErr> {
-    let row = user_preferences::Entity::find_by_id(user_id).one(db).await?;
+pub async fn get(db: &DatabaseConnection, user_id: Uuid) -> Result<serde_json::Value, DbErr> {
+    let row = user_preferences::Entity::find_by_id(user_id)
+        .one(db)
+        .await?;
     Ok(row.map(|r| r.preferences).unwrap_or(serde_json::json!({})))
 }
 

@@ -1,7 +1,7 @@
 //! Integration tests for the api_keys query layer.
 //! Skipped if DATABASE_URL is not set.
 
-use nasrudin_pg::{connect_and_migrate, query, PgConfig};
+use nasrudin_pg::{PgConfig, connect_and_migrate, query};
 use uuid::Uuid;
 
 async fn db() -> Option<sea_orm::DatabaseConnection> {

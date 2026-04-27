@@ -95,7 +95,13 @@ pub async fn heartbeat(
             Json(serde_json::json!({ "error": "postgres not configured" })),
         );
     };
-    match nasrudin_pg::query::workers::heartbeat(&db, &auth.0.worker_handle, body.theorems_contributed).await {
+    match nasrudin_pg::query::workers::heartbeat(
+        &db,
+        &auth.0.worker_handle,
+        body.theorems_contributed,
+    )
+    .await
+    {
         Ok(Some(row)) => (StatusCode::OK, Json(serde_json::to_value(row).unwrap())),
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -111,10 +117,7 @@ pub async fn heartbeat(
 /// `GET /api/workers` — public list of all known workers.
 pub async fn list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let Some(db) = state.pg.clone() else {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({ "workers": [] })),
-        );
+        return (StatusCode::OK, Json(serde_json::json!({ "workers": [] })));
     };
     match nasrudin_pg::query::workers::list(&db, None).await {
         Ok(rows) => (StatusCode::OK, Json(serde_json::json!({ "workers": rows }))),

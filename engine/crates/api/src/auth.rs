@@ -1,10 +1,6 @@
 //! Authentication module: axum-login backend, session handlers.
 
-use axum::{
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{Json, http::StatusCode, response::IntoResponse};
 use axum_login::{AuthSession, AuthnBackend};
 use nasrudin_pg::sea_orm::{DatabaseConnection, DbErr};
 use serde::{Deserialize, Serialize};
@@ -115,10 +111,7 @@ impl AuthnBackend for Backend {
         }
     }
 
-    async fn get_user(
-        &self,
-        user_id: &Uuid,
-    ) -> Result<Option<Self::User>, Self::Error> {
+    async fn get_user(&self, user_id: &Uuid) -> Result<Option<Self::User>, Self::Error> {
         let user = nasrudin_pg::query::users::find_by_id(&self.db, *user_id).await?;
         Ok(user.map(AuthUser::from_model))
     }
@@ -145,19 +138,16 @@ pub async fn register(
 ) -> impl IntoResponse {
     // Hash the password (CPU-intensive).
     let password = body.password.clone();
-    let hash = match tokio::task::spawn_blocking(move || {
-        password_auth::generate_hash(password)
-    })
-    .await
-    {
-        Ok(h) => h,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("hash error: {e}") })),
-            );
-        }
-    };
+    let hash =
+        match tokio::task::spawn_blocking(move || password_auth::generate_hash(password)).await {
+            Ok(h) => h,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("hash error: {e}") })),
+                );
+            }
+        };
 
     // Insert user into DB.
     let db = auth_session.backend.db.clone();
@@ -171,15 +161,13 @@ pub async fn register(
     {
         Ok(model) => AuthUser::from_model(model),
         Err(e) => {
-            let status = if e.to_string().contains("duplicate") || e.to_string().contains("unique") {
+            let status = if e.to_string().contains("duplicate") || e.to_string().contains("unique")
+            {
                 StatusCode::CONFLICT
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
             };
-            return (
-                status,
-                Json(serde_json::json!({ "error": format!("{e}") })),
-            );
+            return (status, Json(serde_json::json!({ "error": format!("{e}") })));
         }
     };
 
@@ -222,7 +210,10 @@ pub async fn logout(mut auth_session: AuthSess) -> impl IntoResponse {
             Json(serde_json::json!({ "error": format!("logout error: {e}") })),
         );
     }
-    (StatusCode::OK, Json(serde_json::json!({ "logged_out": true })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "logged_out": true })),
+    )
 }
 
 /// `GET /api/auth/me`
