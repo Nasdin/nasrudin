@@ -1,121 +1,73 @@
-// TypeScript types matching the Rust backend JSON serialization.
-// See: engine/crates/core/src/theorem.rs, engine/crates/rocks/src/lib.rs,
-//      engine/crates/ga/src/engine.rs
+export type Domain =
+  | 'PureMath'
+  | 'ClassicalMechanics'
+  | 'Electromagnetism'
+  | 'SpecialRelativity'
+  | 'GeneralRelativity'
+  | 'QuantumMechanics'
+  | 'QuantumFieldTheory'
+  | 'StatisticalMechanics'
+  | 'Thermodynamics'
+  | 'Optics'
+  | 'FluidDynamics';
 
-/** TheoremId is [u8; 8] in Rust — serialized as a JSON array of numbers. */
-export type TheoremId = number[];
-
-/** Matches engine/crates/core/src/theorem.rs FitnessScore */
-export interface FitnessScore {
-	novelty: number;
-	complexity: number;
-	depth: number;
-	dimensional: number;
-	symmetry: number;
-	connectivity: number;
-	nasrudin_relevance: number;
+export interface Theorem {
+  id: string;
+  domain: Domain;
+  statement: { Lean: string } | { Latex: string } | { Plain: string };
+  proof?: ProofTree;
+  verified: VerificationStatus;
+  generation: number;
+  depth: number;
+  parents: string[];
+  created_at: string;
 }
 
-/** Matches engine/crates/core/src/theorem.rs VerificationStatus (serde enum) */
+export type ProofTree = unknown;
+
 export type VerificationStatus =
-	| "Pending"
-	| "Timeout"
-	| { Verified: { proof_term: number[]; tactic_used: string } }
-	| { Rejected: { reason: string } };
+  | { Verified: { proof_term: string; tactic_used: string } }
+  | { Rejected: { reason: string } }
+  | 'Pending';
 
-/** Matches engine/crates/core/src/theorem.rs TheoremOrigin (serde enum) */
-export type TheoremOrigin =
-	| "Axiom"
-	| { Crossover: { parent_a: TheoremId; parent_b: TheoremId } }
-	| { Mutation: { parent: TheoremId; operator: string } }
-	| { Simplification: { parent: TheoremId } }
-	| { Imported: { source: string } }
-	| { DomainTransfer: { parent: TheoremId; from: string; to: string } };
-
-/** Matches engine/crates/core/src/theorem.rs Theorem */
-export interface ApiTheorem {
-	id: TheoremId;
-	statement: unknown; // Expr AST — opaque on the frontend
-	canonical: string;
-	latex: string;
-	proof: unknown; // ProofTree — opaque for now
-	depth: number;
-	complexity: number;
-	domain: string; // Serde serializes Domain enum variants as strings
-	dimension: unknown | null;
-	parents: TheoremId[];
-	children: TheoremId[];
-	verified: VerificationStatus;
-	fitness: FitnessScore;
-	generation: number;
-	created_at: number; // unix epoch seconds
-	origin: TheoremOrigin;
+export interface AuthUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  created_at: string;
 }
 
-/** Matches engine/crates/rocks/src/lib.rs DbStats */
-export interface DbStats {
-	total_theorems: number;
-	total_verified: number;
-	total_rejected: number;
-	total_pending: number;
-	total_axioms: number;
-	max_depth: number;
-	max_generation: number;
-	domain_counts: Record<string, number>;
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  prefix: string;
+  last_used_at: string | null;
+  created_at: string;
+  expires_at: string | null;
 }
 
-/** Matches engine/crates/ga/src/engine.rs GaStatusSnapshot */
-export interface GaStatus {
-	total_generations: number;
-	total_population: number;
-	num_islands: number;
-	candidates_sent: number;
-	verified_discoveries: number;
-	running: boolean;
+export interface NewApiKey extends ApiKeySummary {
+  full_key: string;
 }
 
-/** Matches engine/crates/ga/src/engine.rs DiscoveryEvent */
-export interface DiscoveryEvent {
-	theorem_id: string; // hex-encoded
-	canonical: string;
-	latex: string;
-	domain: string;
-	depth: number;
-	generation: number;
-	fitness: FitnessScore;
-	timestamp: number;
+export interface SavedSearch {
+  id: string;
+  user_id: string;
+  latex: string;
+  label: string | null;
+  created_at: string;
 }
 
-/** Search endpoint response shape from /api/theorems */
-export interface SearchResponse {
-	theorems: ApiTheorem[];
-	total: number;
-	error?: string;
+export interface Worker {
+  id: string;
+  name: string | null;
+  host: string | null;
+  last_seen: string;
+  theorems_contributed: number;
+  status: 'Active' | 'Inactive' | 'Disconnected' | 'active' | 'inactive' | 'disconnected';
 }
 
-/** Lineage record from /api/theorems/{id}/lineage */
-export interface LineageRecord {
-	theorem_id: TheoremId;
-	parents: TheoremId[];
-	children: TheoremId[];
-	axiom_ancestors: TheoremId[];
-}
-
-/** Axiom from /api/axioms */
-export interface ApiAxiom {
-	name: string;
-	domain: string;
-	description: string;
-}
-
-/** Response from /api/axioms */
-export interface AxiomsResponse {
-	axioms: ApiAxiom[];
-	total: number;
-}
-
-/** Health check response from /api/health */
-export interface HealthResponse {
-	status: string;
-	version: string;
+export interface MeStats {
+  saved_searches: number;
+  api_keys: number;
 }
