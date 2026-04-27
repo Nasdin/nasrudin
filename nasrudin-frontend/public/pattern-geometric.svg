@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80">
+  
+  <defs>
+    <pattern id="geo" x="0" y="0" width="80" height="80" patternUnits="userSpaceOnUse">
+      <g fill="none" stroke="#2A211A" stroke-width="0.8">
+        
+        <polygon points="40,8 57,15 65,32 65,48 57,65 40,72 23,65 15,48 15,32 23,15"></polygon>
+        
+        <polygon points="40,20 46,34 60,40 46,46 40,60 34,46 20,40 34,34"></polygon>
+        
+        <line x1="0" y1="40" x2="80" y2="40"></line>
+        <line x1="40" y1="0" x2="40" y2="80"></line>
+      </g>
+    </pattern>
+  </defs>
+  <rect width="80" height="80" fill="url(#geo)"></rect>
+</svg>

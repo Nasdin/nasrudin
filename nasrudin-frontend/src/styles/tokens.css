@@ -1,0 +1,315 @@
+/* ============================================================
+   NASRUDIN SALIM DESIGN SYSTEM
+   Colors & Type — the foundational tokens.
+   Vibe: warm, earthy, journal-like. Wise-elder meets modern app.
+   ============================================================ */
+
+/* ---- FONTS ----
+   Fraunces is a deliberately chosen swap out — the "Humanist serif + handwritten accents"
+   direction calls for a warm, slightly quirky serif. We use Source Serif 4 for the
+   display / serif, Inter Tight for sans / UI, Caveat for handwritten accents (margin
+   notes, Nasrudin's "voice"), and JetBrains Mono for numerals & code.
+   All served from Google Fonts. Local ttf/woff copies live in fonts/. */
+
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=Inter+Tight:wght@300;400;500;600;700&family=Caveat:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* ============ PRIMITIVE COLORS ============
+     Named for warmth & place. All earthy, all from nature.           */
+
+  /* Cream / paper — our base canvas. Pages feel like parchment. */
+  --paper-50:  #FBF7EF;  /* lightest — app bg */
+  --paper-100: #F5EFE2;  /* card bg on dark surfaces, secondary bg */
+  --paper-200: #EADFC9;  /* dividers, rules, faint panels */
+  --paper-300: #D9C9A8;  /* pressed paper, disabled */
+
+  /* Ink / fg — not pure black. Warm near-black like old printing. */
+  --ink-900: #2A211A;    /* primary text */
+  --ink-700: #4A3D33;    /* secondary text */
+  --ink-500: #6E5F52;    /* muted, metadata */
+  --ink-400: #8E7F71;    /* placeholder */
+  --ink-300: #B5A696;    /* faint text on paper */
+
+  /* Terracotta — our primary accent. Warm, inviting, "fire" color. */
+  --terracotta-50:  #FBEEE6;
+  --terracotta-100: #F4D6C3;
+  --terracotta-300: #E39F7E;
+  --terracotta-500: #C8633B;  /* PRIMARY BRAND */
+  --terracotta-700: #9A4724;
+  --terracotta-900: #5C2812;
+
+  /* Olive / deep green — secondary accent. Wisdom, growth, money.  */
+  --olive-50:  #EEF0E3;
+  --olive-100: #DADFBF;
+  --olive-300: #A8B381;
+  --olive-500: #6B7A3E;  /* SECONDARY BRAND */
+  --olive-700: #4A5528;
+  --olive-900: #242C0F;
+
+  /* Saffron / gold — tertiary. Highlights, notifications, light.   */
+  --saffron-50:  #FCF3DC;
+  --saffron-100: #F7E2A8;
+  --saffron-300: #EBC25F;
+  --saffron-500: #D69E2E;  /* tertiary */
+  --saffron-700: #96690D;
+
+  /* Indigo / evening sky — for data viz, links. Cool against warm. */
+  --indigo-50:  #E6E8F0;
+  --indigo-300: #8891B5;
+  --indigo-500: #3E4A7A;
+  --indigo-700: #242D53;
+
+  /* Feedback */
+  --success-500: #5A7A3E;
+  --success-50:  #E8EED9;
+  --warning-500: #D69E2E;
+  --warning-50:  #FCF3DC;
+  --danger-500:  #B33A2E;
+  --danger-50:   #FBE4E0;
+
+  /* ============ SEMANTIC COLORS ============ */
+  --bg:              var(--paper-50);
+  --bg-raised:       #FFFFFF;    /* cards above the paper */
+  --bg-sunken:       var(--paper-100);
+  --bg-inverse:      var(--ink-900);
+
+  --fg:              var(--ink-900);
+  --fg-secondary:    var(--ink-700);
+  --fg-muted:        var(--ink-500);
+  --fg-placeholder:  var(--ink-400);
+  --fg-inverse:      var(--paper-50);
+  --fg-on-accent:    var(--paper-50);
+
+  --border:          var(--paper-200);
+  --border-strong:   var(--paper-300);
+  --border-ink:      var(--ink-900);
+
+  --accent:          var(--terracotta-500);
+  --accent-hover:    var(--terracotta-700);
+  --accent-soft:     var(--terracotta-50);
+
+  --accent-2:        var(--olive-500);
+  --accent-2-soft:   var(--olive-50);
+
+  --accent-3:        var(--saffron-500);
+  --accent-3-soft:   var(--saffron-50);
+
+  --link:            var(--terracotta-700);
+  --focus-ring:      var(--terracotta-500);
+
+  /* ============ TYPOGRAPHY ============ */
+  --font-serif:  "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --font-sans:   "Inter Tight", system-ui, -apple-system, sans-serif;
+  --font-hand:   "Caveat", "Bradley Hand", cursive;
+  --font-mono:   "JetBrains Mono", ui-monospace, Menlo, monospace;
+
+  /* Type scale — modular, 1.25 */
+  --text-xs:   12px;
+  --text-sm:   14px;
+  --text-base: 16px;
+  --text-md:   18px;
+  --text-lg:   20px;
+  --text-xl:   24px;
+  --text-2xl:  30px;
+  --text-3xl:  38px;
+  --text-4xl:  48px;
+  --text-5xl:  64px;
+  --text-6xl:  84px;
+
+  --leading-tight:  1.15;
+  --leading-snug:   1.3;
+  --leading-normal: 1.5;
+  --leading-loose:  1.75;
+
+  --tracking-tight:  -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide:   0.04em;
+  --tracking-allcaps: 0.12em;
+
+  /* ============ SPACING / RADIUS / SHADOW ============ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;      /* default for buttons, inputs */
+  --radius-lg: 14px;      /* cards */
+  --radius-xl: 20px;      /* big panels */
+  --radius-2xl: 28px;
+  --radius-pill: 999px;
+
+  /* Shadows feel like warm paper casting against more paper. */
+  --shadow-xs: 0 1px 2px rgba(74, 61, 51, 0.06);
+  --shadow-sm: 0 1px 3px rgba(74, 61, 51, 0.08), 0 1px 2px rgba(74, 61, 51, 0.04);
+  --shadow-md: 0 4px 12px rgba(74, 61, 51, 0.08), 0 2px 4px rgba(74, 61, 51, 0.04);
+  --shadow-lg: 0 12px 28px rgba(74, 61, 51, 0.10), 0 4px 8px rgba(74, 61, 51, 0.05);
+  --shadow-xl: 0 24px 48px rgba(74, 61, 51, 0.14), 0 8px 16px rgba(74, 61, 51, 0.06);
+  --shadow-inset: inset 0 1px 2px rgba(74, 61, 51, 0.08);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-gentle: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 400ms;
+}
+
+/* ============ SEMANTIC TYPE ============ */
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, .h1 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: var(--text-4xl);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  font-variation-settings: "opsz" 44;
+  color: var(--fg);
+  margin: 0;
+}
+
+h2, .h2 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: var(--text-3xl);
+  line-height: var(--leading-snug);
+  letter-spacing: var(--tracking-tight);
+  font-variation-settings: "opsz" 36;
+  color: var(--fg);
+  margin: 0;
+}
+
+h3, .h3 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: var(--text-2xl);
+  line-height: var(--leading-snug);
+  color: var(--fg);
+  margin: 0;
+}
+
+h4, .h4 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--text-lg);
+  line-height: var(--leading-snug);
+  color: var(--fg);
+  margin: 0;
+}
+
+.display {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: var(--text-6xl);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-variation-settings: "opsz" 60;
+  color: var(--fg);
+}
+
+.overline {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+p {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--fg-secondary);
+  margin: 0;
+}
+
+.body-lg {
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  color: var(--fg-secondary);
+}
+
+.body-sm {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--fg-secondary);
+}
+
+.caption {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  letter-spacing: 0.01em;
+}
+
+.hand {
+  font-family: var(--font-hand);
+  font-weight: 500;
+  font-size: var(--text-xl);
+  color: var(--terracotta-700);
+  line-height: 1.2;
+}
+
+.hand-sm {
+  font-family: var(--font-hand);
+  font-weight: 500;
+  font-size: var(--text-md);
+  color: var(--terracotta-700);
+  line-height: 1.2;
+}
+
+.mono, code, pre, .numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.numeric-display {
+  font-family: var(--font-serif);
+  font-variation-settings: "opsz" 60;
+  font-weight: 400;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+a {
+  color: var(--link);
+  text-decoration-color: var(--terracotta-100);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  transition: text-decoration-color var(--dur-base) var(--ease-out);
+}
+a:hover {
+  text-decoration-color: var(--terracotta-500);
+}
+
+/* Selection */
+::selection {
+  background: var(--saffron-100);
+  color: var(--ink-900);
+}
+
+/* Focus */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
