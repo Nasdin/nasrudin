@@ -1705,6 +1705,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "data-encoding",
+ "dotenvy",
  "password-auth",
  "rand 0.9.2",
  "sea-orm",
@@ -1713,6 +1714,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
