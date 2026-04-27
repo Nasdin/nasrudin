@@ -55,7 +55,6 @@ export function AppHeader({ active }: { active?: string }) {
                 {(me.display_name ?? me.email).slice(0, 2).toUpperCase()}
               </Link>
             ) : (
-              // @ts-expect-error route added in Phase 7+
               <Link to="/signin" className="app-nav-link">
                 Sign in
               </Link>

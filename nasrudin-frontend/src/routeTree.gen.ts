@@ -9,41 +9,12 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TimelineRouteImport } from './routes/timeline'
-import { Route as SearchRouteImport } from './routes/search'
-import { Route as EngineRouteImport } from './routes/engine'
-import { Route as AxiomsRouteImport } from './routes/axioms'
+import { Route as SigninRouteImport } from './routes/signin'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as DomainsIndexRouteImport } from './routes/domains/index'
-import { Route as TheoremTheoremIdRouteImport } from './routes/theorem/$theoremId'
-import { Route as ExploreTheoremIdRouteImport } from './routes/explore/$theoremId'
-import { Route as DomainsDomainRouteImport } from './routes/domains/$domain'
-import { Route as DemoStartServerFuncsRouteImport } from './routes/demo/start.server-funcs'
-import { Route as DemoStartApiRequestRouteImport } from './routes/demo/start.api-request'
-import { Route as DemoApiNamesRouteImport } from './routes/demo/api.names'
-import { Route as DemoStartSsrIndexRouteImport } from './routes/demo/start.ssr.index'
-import { Route as DemoStartSsrSpaModeRouteImport } from './routes/demo/start.ssr.spa-mode'
-import { Route as DemoStartSsrFullSsrRouteImport } from './routes/demo/start.ssr.full-ssr'
-import { Route as DemoStartSsrDataOnlyRouteImport } from './routes/demo/start.ssr.data-only'
 
-const TimelineRoute = TimelineRouteImport.update({
-  id: '/timeline',
-  path: '/timeline',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SearchRoute = SearchRouteImport.update({
-  id: '/search',
-  path: '/search',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EngineRoute = EngineRouteImport.update({
-  id: '/engine',
-  path: '/engine',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AxiomsRoute = AxiomsRouteImport.update({
-  id: '/axioms',
-  path: '/axioms',
+const SigninRoute = SigninRouteImport.update({
+  id: '/signin',
+  path: '/signin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -51,221 +22,40 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DomainsIndexRoute = DomainsIndexRouteImport.update({
-  id: '/domains/',
-  path: '/domains/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TheoremTheoremIdRoute = TheoremTheoremIdRouteImport.update({
-  id: '/theorem/$theoremId',
-  path: '/theorem/$theoremId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ExploreTheoremIdRoute = ExploreTheoremIdRouteImport.update({
-  id: '/explore/$theoremId',
-  path: '/explore/$theoremId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DomainsDomainRoute = DomainsDomainRouteImport.update({
-  id: '/domains/$domain',
-  path: '/domains/$domain',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartServerFuncsRoute = DemoStartServerFuncsRouteImport.update({
-  id: '/demo/start/server-funcs',
-  path: '/demo/start/server-funcs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartApiRequestRoute = DemoStartApiRequestRouteImport.update({
-  id: '/demo/start/api-request',
-  path: '/demo/start/api-request',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiNamesRoute = DemoApiNamesRouteImport.update({
-  id: '/demo/api/names',
-  path: '/demo/api/names',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartSsrIndexRoute = DemoStartSsrIndexRouteImport.update({
-  id: '/demo/start/ssr/',
-  path: '/demo/start/ssr/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartSsrSpaModeRoute = DemoStartSsrSpaModeRouteImport.update({
-  id: '/demo/start/ssr/spa-mode',
-  path: '/demo/start/ssr/spa-mode',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartSsrFullSsrRoute = DemoStartSsrFullSsrRouteImport.update({
-  id: '/demo/start/ssr/full-ssr',
-  path: '/demo/start/ssr/full-ssr',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartSsrDataOnlyRoute = DemoStartSsrDataOnlyRouteImport.update({
-  id: '/demo/start/ssr/data-only',
-  path: '/demo/start/ssr/data-only',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/axioms': typeof AxiomsRoute
-  '/engine': typeof EngineRoute
-  '/search': typeof SearchRoute
-  '/timeline': typeof TimelineRoute
-  '/domains/$domain': typeof DomainsDomainRoute
-  '/explore/$theoremId': typeof ExploreTheoremIdRoute
-  '/theorem/$theoremId': typeof TheoremTheoremIdRoute
-  '/domains/': typeof DomainsIndexRoute
-  '/demo/api/names': typeof DemoApiNamesRoute
-  '/demo/start/api-request': typeof DemoStartApiRequestRoute
-  '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
-  '/demo/start/ssr/data-only': typeof DemoStartSsrDataOnlyRoute
-  '/demo/start/ssr/full-ssr': typeof DemoStartSsrFullSsrRoute
-  '/demo/start/ssr/spa-mode': typeof DemoStartSsrSpaModeRoute
-  '/demo/start/ssr/': typeof DemoStartSsrIndexRoute
+  '/signin': typeof SigninRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/axioms': typeof AxiomsRoute
-  '/engine': typeof EngineRoute
-  '/search': typeof SearchRoute
-  '/timeline': typeof TimelineRoute
-  '/domains/$domain': typeof DomainsDomainRoute
-  '/explore/$theoremId': typeof ExploreTheoremIdRoute
-  '/theorem/$theoremId': typeof TheoremTheoremIdRoute
-  '/domains': typeof DomainsIndexRoute
-  '/demo/api/names': typeof DemoApiNamesRoute
-  '/demo/start/api-request': typeof DemoStartApiRequestRoute
-  '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
-  '/demo/start/ssr/data-only': typeof DemoStartSsrDataOnlyRoute
-  '/demo/start/ssr/full-ssr': typeof DemoStartSsrFullSsrRoute
-  '/demo/start/ssr/spa-mode': typeof DemoStartSsrSpaModeRoute
-  '/demo/start/ssr': typeof DemoStartSsrIndexRoute
+  '/signin': typeof SigninRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/axioms': typeof AxiomsRoute
-  '/engine': typeof EngineRoute
-  '/search': typeof SearchRoute
-  '/timeline': typeof TimelineRoute
-  '/domains/$domain': typeof DomainsDomainRoute
-  '/explore/$theoremId': typeof ExploreTheoremIdRoute
-  '/theorem/$theoremId': typeof TheoremTheoremIdRoute
-  '/domains/': typeof DomainsIndexRoute
-  '/demo/api/names': typeof DemoApiNamesRoute
-  '/demo/start/api-request': typeof DemoStartApiRequestRoute
-  '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
-  '/demo/start/ssr/data-only': typeof DemoStartSsrDataOnlyRoute
-  '/demo/start/ssr/full-ssr': typeof DemoStartSsrFullSsrRoute
-  '/demo/start/ssr/spa-mode': typeof DemoStartSsrSpaModeRoute
-  '/demo/start/ssr/': typeof DemoStartSsrIndexRoute
+  '/signin': typeof SigninRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/axioms'
-    | '/engine'
-    | '/search'
-    | '/timeline'
-    | '/domains/$domain'
-    | '/explore/$theoremId'
-    | '/theorem/$theoremId'
-    | '/domains/'
-    | '/demo/api/names'
-    | '/demo/start/api-request'
-    | '/demo/start/server-funcs'
-    | '/demo/start/ssr/data-only'
-    | '/demo/start/ssr/full-ssr'
-    | '/demo/start/ssr/spa-mode'
-    | '/demo/start/ssr/'
+  fullPaths: '/' | '/signin'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/axioms'
-    | '/engine'
-    | '/search'
-    | '/timeline'
-    | '/domains/$domain'
-    | '/explore/$theoremId'
-    | '/theorem/$theoremId'
-    | '/domains'
-    | '/demo/api/names'
-    | '/demo/start/api-request'
-    | '/demo/start/server-funcs'
-    | '/demo/start/ssr/data-only'
-    | '/demo/start/ssr/full-ssr'
-    | '/demo/start/ssr/spa-mode'
-    | '/demo/start/ssr'
-  id:
-    | '__root__'
-    | '/'
-    | '/axioms'
-    | '/engine'
-    | '/search'
-    | '/timeline'
-    | '/domains/$domain'
-    | '/explore/$theoremId'
-    | '/theorem/$theoremId'
-    | '/domains/'
-    | '/demo/api/names'
-    | '/demo/start/api-request'
-    | '/demo/start/server-funcs'
-    | '/demo/start/ssr/data-only'
-    | '/demo/start/ssr/full-ssr'
-    | '/demo/start/ssr/spa-mode'
-    | '/demo/start/ssr/'
+  to: '/' | '/signin'
+  id: '__root__' | '/' | '/signin'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AxiomsRoute: typeof AxiomsRoute
-  EngineRoute: typeof EngineRoute
-  SearchRoute: typeof SearchRoute
-  TimelineRoute: typeof TimelineRoute
-  DomainsDomainRoute: typeof DomainsDomainRoute
-  ExploreTheoremIdRoute: typeof ExploreTheoremIdRoute
-  TheoremTheoremIdRoute: typeof TheoremTheoremIdRoute
-  DomainsIndexRoute: typeof DomainsIndexRoute
-  DemoApiNamesRoute: typeof DemoApiNamesRoute
-  DemoStartApiRequestRoute: typeof DemoStartApiRequestRoute
-  DemoStartServerFuncsRoute: typeof DemoStartServerFuncsRoute
-  DemoStartSsrDataOnlyRoute: typeof DemoStartSsrDataOnlyRoute
-  DemoStartSsrFullSsrRoute: typeof DemoStartSsrFullSsrRoute
-  DemoStartSsrSpaModeRoute: typeof DemoStartSsrSpaModeRoute
-  DemoStartSsrIndexRoute: typeof DemoStartSsrIndexRoute
+  SigninRoute: typeof SigninRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/timeline': {
-      id: '/timeline'
-      path: '/timeline'
-      fullPath: '/timeline'
-      preLoaderRoute: typeof TimelineRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/search': {
-      id: '/search'
-      path: '/search'
-      fullPath: '/search'
-      preLoaderRoute: typeof SearchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/engine': {
-      id: '/engine'
-      path: '/engine'
-      fullPath: '/engine'
-      preLoaderRoute: typeof EngineRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/axioms': {
-      id: '/axioms'
-      path: '/axioms'
-      fullPath: '/axioms'
-      preLoaderRoute: typeof AxiomsRouteImport
+    '/signin': {
+      id: '/signin'
+      path: '/signin'
+      fullPath: '/signin'
+      preLoaderRoute: typeof SigninRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -275,103 +65,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/domains/': {
-      id: '/domains/'
-      path: '/domains'
-      fullPath: '/domains/'
-      preLoaderRoute: typeof DomainsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/theorem/$theoremId': {
-      id: '/theorem/$theoremId'
-      path: '/theorem/$theoremId'
-      fullPath: '/theorem/$theoremId'
-      preLoaderRoute: typeof TheoremTheoremIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/explore/$theoremId': {
-      id: '/explore/$theoremId'
-      path: '/explore/$theoremId'
-      fullPath: '/explore/$theoremId'
-      preLoaderRoute: typeof ExploreTheoremIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/domains/$domain': {
-      id: '/domains/$domain'
-      path: '/domains/$domain'
-      fullPath: '/domains/$domain'
-      preLoaderRoute: typeof DomainsDomainRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/server-funcs': {
-      id: '/demo/start/server-funcs'
-      path: '/demo/start/server-funcs'
-      fullPath: '/demo/start/server-funcs'
-      preLoaderRoute: typeof DemoStartServerFuncsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/api-request': {
-      id: '/demo/start/api-request'
-      path: '/demo/start/api-request'
-      fullPath: '/demo/start/api-request'
-      preLoaderRoute: typeof DemoStartApiRequestRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/names': {
-      id: '/demo/api/names'
-      path: '/demo/api/names'
-      fullPath: '/demo/api/names'
-      preLoaderRoute: typeof DemoApiNamesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/ssr/': {
-      id: '/demo/start/ssr/'
-      path: '/demo/start/ssr'
-      fullPath: '/demo/start/ssr/'
-      preLoaderRoute: typeof DemoStartSsrIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/ssr/spa-mode': {
-      id: '/demo/start/ssr/spa-mode'
-      path: '/demo/start/ssr/spa-mode'
-      fullPath: '/demo/start/ssr/spa-mode'
-      preLoaderRoute: typeof DemoStartSsrSpaModeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/ssr/full-ssr': {
-      id: '/demo/start/ssr/full-ssr'
-      path: '/demo/start/ssr/full-ssr'
-      fullPath: '/demo/start/ssr/full-ssr'
-      preLoaderRoute: typeof DemoStartSsrFullSsrRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/ssr/data-only': {
-      id: '/demo/start/ssr/data-only'
-      path: '/demo/start/ssr/data-only'
-      fullPath: '/demo/start/ssr/data-only'
-      preLoaderRoute: typeof DemoStartSsrDataOnlyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AxiomsRoute: AxiomsRoute,
-  EngineRoute: EngineRoute,
-  SearchRoute: SearchRoute,
-  TimelineRoute: TimelineRoute,
-  DomainsDomainRoute: DomainsDomainRoute,
-  ExploreTheoremIdRoute: ExploreTheoremIdRoute,
-  TheoremTheoremIdRoute: TheoremTheoremIdRoute,
-  DomainsIndexRoute: DomainsIndexRoute,
-  DemoApiNamesRoute: DemoApiNamesRoute,
-  DemoStartApiRequestRoute: DemoStartApiRequestRoute,
-  DemoStartServerFuncsRoute: DemoStartServerFuncsRoute,
-  DemoStartSsrDataOnlyRoute: DemoStartSsrDataOnlyRoute,
-  DemoStartSsrFullSsrRoute: DemoStartSsrFullSsrRoute,
-  DemoStartSsrSpaModeRoute: DemoStartSsrSpaModeRoute,
-  DemoStartSsrIndexRoute: DemoStartSsrIndexRoute,
+  SigninRoute: SigninRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
