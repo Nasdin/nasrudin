@@ -3,6 +3,14 @@ name = "physics-api"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "physics_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "physics-api"
+path = "src/main.rs"
+
 [dependencies]
 nasrudin-core = { path = "../core" }
 nasrudin-rocks = { path = "../rocks" }

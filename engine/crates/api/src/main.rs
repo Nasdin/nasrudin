@@ -3,8 +3,7 @@
 //! Full daemon: REST endpoints, SSE discovery stream, GA evolution thread,
 //! and Lean4 verification workers.
 
-mod auth;
-mod rate_limit;
+use physics_api::{auth, rate_limit};
 
 use std::net::SocketAddr;
 use std::sync::Arc;

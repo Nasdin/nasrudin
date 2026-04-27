@@ -235,3 +235,114 @@ pub async fn me(auth_session: AuthSess) -> impl IntoResponse {
         ),
     }
 }
+
+// ---------------------------------------------------------------------------
+// AuthOrApiKey: cookie session OR `Authorization: Bearer nsk_live_…`
+// ---------------------------------------------------------------------------
+
+use axum::{
+    extract::FromRequestParts,
+    http::{header, request::Parts},
+};
+
+/// Extractor that succeeds for both authenticated cookie sessions
+/// and valid `Authorization: Bearer nsk_live_<secret>` tokens.
+///
+/// Worker keys (`kind == "worker"`) are explicitly rejected — they must use
+/// the `WorkerAuth` extractor instead.
+pub struct AuthOrApiKey {
+    pub user: AuthUser,
+}
+
+impl<S> FromRequestParts<S> for AuthOrApiKey
+where
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, axum::Json<serde_json::Value>);
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // 1. Try cookie session.
+        if let Ok(session) = AuthSession::<Backend>::from_request_parts(parts, state).await
+            && let Some(user) = session.user
+        {
+            return Ok(Self { user });
+        }
+
+        // 2. Fall back to bearer token.
+        let bearer: String = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(|s| s.to_owned())
+            .ok_or_else(unauth_response)?;
+
+        if !bearer.starts_with("nsk_live_") {
+            return Err(unauth_response());
+        }
+
+        // The cookie-session attempt above already loaded the AuthSession,
+        // which carries a clone of the DatabaseConnection in `backend.db`.
+        // Re-extract just to grab `db` for the lookup.
+        let session = AuthSession::<Backend>::from_request_parts(parts, state)
+            .await
+            .map_err(|_| unauth_response())?;
+        let db: &DatabaseConnection = &session.backend.db;
+
+        let prefix: String = bearer.chars().take(12).collect();
+        let row = nasrudin_pg::query::api_keys::find_by_prefix(db, &prefix)
+            .await
+            .map_err(|_| unauth_response())?
+            .ok_or_else(unauth_response)?;
+
+        if row.kind != "live" {
+            return Err(unauth_response());
+        }
+        if let Some(exp) = row.expires_at
+            && exp < chrono::Utc::now()
+        {
+            return Err(expired_response());
+        }
+        let secret = bearer.to_owned();
+        let hash = row.key_hash.clone();
+        let valid = tokio::task::spawn_blocking(move || {
+            password_auth::verify_password(secret, &hash).is_ok()
+        })
+        .await
+        .map_err(|_| unauth_response())?;
+        if !valid {
+            return Err(unauth_response());
+        }
+
+        // Mark used (best-effort, fire and forget)
+        let db_clone = db.clone();
+        let key_id = row.id;
+        tokio::spawn(async move {
+            let _ = nasrudin_pg::query::api_keys::mark_used(&db_clone, key_id).await;
+        });
+
+        let user_id = row.user_id.ok_or_else(unauth_response)?;
+        let user_model = nasrudin_pg::query::users::find_by_id(db, user_id)
+            .await
+            .map_err(|_| unauth_response())?
+            .ok_or_else(unauth_response)?;
+
+        Ok(Self {
+            user: AuthUser::from_model(user_model),
+        })
+    }
+}
+
+fn unauth_response() -> (StatusCode, axum::Json<serde_json::Value>) {
+    (
+        StatusCode::UNAUTHORIZED,
+        axum::Json(serde_json::json!({ "error": "not authenticated" })),
+    )
+}
+
+fn expired_response() -> (StatusCode, axum::Json<serde_json::Value>) {
+    (
+        StatusCode::UNAUTHORIZED,
+        axum::Json(serde_json::json!({ "error": "expired api key" })),
+    )
+}
