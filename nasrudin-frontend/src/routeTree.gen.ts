@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
@@ -26,6 +27,11 @@ const SigninRoute = SigninRouteImport.update({
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PricingRoute = PricingRouteImport.update({
+  id: '/pricing',
+  path: '/pricing',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LeaderboardRoute = LeaderboardRouteImport.update({
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
   '/signin': typeof SigninRoute
   '/theorem/$id': typeof TheoremIdRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
   '/signin': typeof SigninRoute
   '/theorem/$id': typeof TheoremIdRoute
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
   '/signin': typeof SigninRoute
   '/theorem/$id': typeof TheoremIdRoute
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
     | '/api-keys'
     | '/browse'
     | '/leaderboard'
+    | '/pricing'
     | '/profile'
     | '/signin'
     | '/theorem/$id'
@@ -108,6 +118,7 @@ export interface FileRouteTypes {
     | '/api-keys'
     | '/browse'
     | '/leaderboard'
+    | '/pricing'
     | '/profile'
     | '/signin'
     | '/theorem/$id'
@@ -118,6 +129,7 @@ export interface FileRouteTypes {
     | '/api-keys'
     | '/browse'
     | '/leaderboard'
+    | '/pricing'
     | '/profile'
     | '/signin'
     | '/theorem/$id'
@@ -129,6 +141,7 @@ export interface RootRouteChildren {
   ApiKeysRoute: typeof ApiKeysRoute
   BrowseRoute: typeof BrowseRoute
   LeaderboardRoute: typeof LeaderboardRoute
+  PricingRoute: typeof PricingRoute
   ProfileRoute: typeof ProfileRoute
   SigninRoute: typeof SigninRoute
   TheoremIdRoute: typeof TheoremIdRoute
@@ -148,6 +161,13 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pricing': {
+      id: '/pricing'
+      path: '/pricing'
+      fullPath: '/pricing'
+      preLoaderRoute: typeof PricingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/leaderboard': {
@@ -201,6 +221,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiKeysRoute: ApiKeysRoute,
   BrowseRoute: BrowseRoute,
   LeaderboardRoute: LeaderboardRoute,
+  PricingRoute: PricingRoute,
   ProfileRoute: ProfileRoute,
   SigninRoute: SigninRoute,
   TheoremIdRoute: TheoremIdRoute,
