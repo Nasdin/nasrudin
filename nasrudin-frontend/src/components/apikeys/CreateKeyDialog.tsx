@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useCreateApiKey } from '~/lib/queries';
-import type { NewApiKey } from '~/lib/types';
+import type { ApiKeyKind, NewApiKey } from '~/lib/types';
 
 export function CreateKeyDialog({
   onClose,
@@ -10,6 +10,7 @@ export function CreateKeyDialog({
   onCreated: (k: NewApiKey) => void;
 }) {
   const [name, setName] = useState('');
+  const [kind, setKind] = useState<ApiKeyKind>('live');
   const [error, setError] = useState<string | null>(null);
   const create = useCreateApiKey();
 
@@ -20,7 +21,7 @@ export function CreateKeyDialog({
       return;
     }
     try {
-      const key = await create.mutateAsync({ name: name.trim() });
+      const key = await create.mutateAsync({ name: name.trim(), kind });
       onCreated(key);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'failed');
@@ -60,9 +61,42 @@ export function CreateKeyDialog({
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="my-laptop"
+            placeholder={kind === 'worker' ? 'my-laptop-worker' : 'my-laptop'}
           />
-          <span className="hint">A short label so you remember what this key is for.</span>
+          <span className="hint">
+            {kind === 'worker'
+              ? 'Identifies this worker in the leaderboard and heartbeat log.'
+              : 'A short label so you remember what this key is for.'}
+          </span>
+        </div>
+        <div className="field" style={{ marginTop: 16 }}>
+          <span className="label">Kind</span>
+          <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="kind"
+                value="live"
+                checked={kind === 'live'}
+                onChange={() => setKind('live')}
+              />
+              <span>
+                <strong>Live</strong> — read API + scripts (<code>nsk_live_…</code>)
+              </span>
+            </label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="kind"
+                value="worker"
+                checked={kind === 'worker'}
+                onChange={() => setKind('worker')}
+              />
+              <span>
+                <strong>Worker</strong> — discovery binary (<code>nsk_worker_…</code>)
+              </span>
+            </label>
+          </div>
         </div>
         {error && (
           <div role="alert" style={{ color: 'var(--danger-500)', fontSize: 13 }}>
@@ -89,6 +123,7 @@ export function CreateKeyDialog({
 
 export function RevealKeyModal({ keyValue, onClose }: { keyValue: string; onClose: () => void }) {
   const [acknowledged, setAck] = useState(false);
+  const isWorker = keyValue.startsWith('nsk_worker_');
   return (
     <div
       role="dialog"
@@ -128,6 +163,20 @@ export function RevealKeyModal({ keyValue, onClose }: { keyValue: string; onClos
         >
           Copy to clipboard
         </button>
+        {isWorker && (
+          <div style={{ marginTop: 16, fontSize: 13 }}>
+            <p style={{ color: 'var(--ink-700)', marginBottom: 8 }}>
+              Run the discovery worker on your machine:
+            </p>
+            <pre
+              className="code-block"
+              style={{ fontSize: 12, padding: 12, overflow: 'auto', userSelect: 'all' }}
+            >{`curl -L https://github.com/nasdin/nasrudin/releases/latest/download/nasrudin-worker-$(uname -s | tr A-Z a-z)-$(uname -m).tar.gz | tar xz
+NASRUDIN_API_URL=https://api.nasrudin.org \\
+NASRUDIN_WORKER_KEY=${keyValue} \\
+./nasrudin-worker --gens 100 --pop 64`}</pre>
+          </div>
+        )}
         <label
           style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 24, fontSize: 13 }}
         >

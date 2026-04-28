@@ -1,0 +1,103 @@
+name: release-worker
+
+on:
+  push:
+    tags:
+      - 'worker-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. worker-v0.1.0)'
+        required: true
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundle_arch: x86_64
+            bundle_os: linux
+          - os: macos-13
+            target: x86_64-apple-darwin
+            bundle_arch: x86_64
+            bundle_os: darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+            bundle_arch: arm64
+            bundle_os: darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev clang cmake llvm
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine -> target
+          key: ${{ matrix.target }}
+
+      - name: Build worker binary
+        working-directory: engine
+        run: cargo build --release --target ${{ matrix.target }} -p nasrudin-ga --bin discover_emc2
+
+      - name: Stage tarball
+        run: |
+          set -euo pipefail
+          PKG="nasrudin-worker-${{ matrix.bundle_os }}-${{ matrix.bundle_arch }}"
+          OUT="dist/${PKG}"
+          mkdir -p "$OUT/prover"
+          cp engine/target/${{ matrix.target }}/release/discover_emc2 "$OUT/nasrudin-worker"
+          cp -R prover/PhysicsGenerator "$OUT/prover/"
+          cp prover/PhysicsGenerator.lean prover/lakefile.lean prover/lake-manifest.json prover/lean-toolchain "$OUT/prover/"
+          cp deploy/worker-bundle/README.md "$OUT/README.md"
+          cp deploy/worker-bundle/run.sh "$OUT/run.sh"
+          chmod +x "$OUT/run.sh" "$OUT/nasrudin-worker"
+          (cd dist && tar czf "${PKG}.tar.gz" "${PKG}")
+          (cd dist && shasum -a 256 "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256")
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nasrudin-worker-${{ matrix.bundle_os }}-${{ matrix.bundle_arch }}
+          path: dist/nasrudin-worker-*.tar.gz*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          VERSION="${TAG#worker-}"
+          gh release create "$TAG" \
+            --title "Nasrudin Worker $VERSION" \
+            --notes "Distributed discovery worker for nasrudin.org. Download the tarball for your platform, then \`tar xzf …\` and follow README.md." \
+            dist/*.tar.gz dist/*.sha256

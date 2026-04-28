@@ -7,8 +7,32 @@ default:
 
 # ── Development ──────────────────────────────────────────
 
-# Start all services for development
-dev: dev-frontend
+# Run the whole stack locally: postgres + migrations + API + frontend (Ctrl+C tears it down)
+up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{justfile_directory()}}
+    if [ ! -f .env ]; then
+      echo "[up] copying .env.example -> .env"
+      cp .env.example .env
+    fi
+    set -a; . .env; set +a
+    echo "[up] starting postgres..."
+    docker compose up -d postgres
+    echo "[up] waiting for postgres..."
+    for i in $(seq 1 30); do
+      if docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    echo "[up] running migrations..."
+    (cd engine && cargo run --quiet --bin migrate -- up)
+    echo "[up] launching api + frontend (Ctrl+C to stop both)"
+    trap 'kill 0 2>/dev/null || true; docker compose stop postgres >/dev/null 2>&1 || true; exit 0' INT TERM
+    (cd engine && PROVER_ROOT=../prover RUST_LOG="${RUST_LOG:-info}" cargo run --release --bin physics-api 2>&1 | sed -u 's/^/[api] /') &
+    (cd nasrudin-frontend && pnpm dev 2>&1 | sed -u 's/^/[web] /') &
+    wait
 
 # Start frontend dev server
 dev-frontend:
@@ -156,6 +180,54 @@ discover-physics gens="100" pop="64" max-lake="12":
     cd engine && PATH="$HOME/.elan/bin:$PATH" ./target/release/discover_emc2 \
         --gens {{gens}} --pop {{pop}} --max-len 14 --max-lake {{max-lake}} \
         --verify ../prover
+
+# ── Worker Binary Release ──────────────────────────────────
+
+# Build the public discovery worker tarball for the current host (dist/nasrudin-worker-<os>-<arch>.tar.gz)
+build-worker:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{justfile_directory()}}
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+    TAG="${OS}-${ARCH}"
+    PKG="nasrudin-worker-${TAG}"
+    OUT="dist/${PKG}"
+    echo "[worker] building release binary for ${TAG}..."
+    (cd engine && cargo build --release -p nasrudin-ga --bin discover_emc2)
+    rm -rf "$OUT"
+    mkdir -p "$OUT/prover"
+    cp engine/target/release/discover_emc2 "$OUT/nasrudin-worker"
+    cp -R prover/PhysicsGenerator "$OUT/prover/"
+    cp prover/PhysicsGenerator.lean prover/lakefile.lean prover/lake-manifest.json prover/lean-toolchain "$OUT/prover/"
+    cp deploy/worker-bundle/README.md "$OUT/README.md"
+    cp deploy/worker-bundle/run.sh "$OUT/run.sh"
+    chmod +x "$OUT/run.sh" "$OUT/nasrudin-worker"
+    (cd dist && tar czf "${PKG}.tar.gz" "${PKG}")
+    echo "[worker] -> dist/${PKG}.tar.gz"
+
+# Tag a worker release (e.g. `just release-worker version=v0.1.0`); CI builds + publishes the tarballs
+release-worker version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ! "{{version}}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9]+)?$ ]]; then
+      echo "error: version must look like vX.Y.Z (got '{{version}}')" >&2
+      exit 1
+    fi
+    TAG="worker-{{version}}"
+    if git rev-parse "$TAG" >/dev/null 2>&1; then
+      echo "error: tag $TAG already exists" >&2
+      exit 1
+    fi
+    if [ -n "$(git status --porcelain)" ]; then
+      echo "error: working tree is dirty; commit first" >&2
+      exit 1
+    fi
+    echo "[release] tagging $TAG"
+    git tag -a "$TAG" -m "Worker release {{version}}"
+    git push origin "$TAG"
+    echo "[release] pushed; GitHub Actions will build + publish at:"
+    echo "    https://github.com/nasdin/nasrudin/actions"
 
 # ── Continuous Operation ───────────────────────────────────
 

@@ -78,9 +78,12 @@ export interface AuthUser {
   created_at: string;
 }
 
+export type ApiKeyKind = 'live' | 'worker';
+
 export interface ApiKeySummary {
   id: string;
   name: string;
+  kind: ApiKeyKind;
   prefix: string;
   last_used_at: string | null;
   created_at: string;

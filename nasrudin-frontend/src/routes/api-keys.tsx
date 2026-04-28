@@ -43,6 +43,7 @@ function ApiKeysPage() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Kind</th>
                 <th>Prefix</th>
                 <th>Created</th>
                 <th>Last used</th>
@@ -53,6 +54,11 @@ function ApiKeysPage() {
               {keys.map((k) => (
                 <tr key={k.id}>
                   <td>{k.name}</td>
+                  <td>
+                    <code style={{ fontSize: 12, color: 'var(--ink-500)' }}>
+                      {k.kind ?? 'live'}
+                    </code>
+                  </td>
                   <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{k.prefix}…</td>
                   <td>{new Date(k.created_at).toLocaleDateString()}</td>
                   <td>{k.last_used_at ? new Date(k.last_used_at).toLocaleString() : '—'}</td>
