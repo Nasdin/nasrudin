@@ -145,27 +145,84 @@ impl ReverifyQueue {
         self.try_b_path(job, &row).await
     }
 
-    /// Stub for Task 3.3. Currently a no-op that dequeues; does **not**
-    /// flip status.
+    /// B-path fallback: verify the worker-submitted `lean_source` directly via
+    /// [`LakeBuilder::verify`] (which already enforces the fresh-axiom/sorry
+    /// preflight). On success, flip `Pending → Verified` with `path = "B"` and
+    /// log a `server_emitter_drift` warning (the math is real but the server's
+    /// emitter disagreed with the worker's). On terminal failure, mark
+    /// `Rejected{reason}` and broadcast [`DiscoveryEvent::TheoremRejected`].
     ///
-    /// Task 3.3 replaces this with the real B-path: verify the
-    /// worker-submitted Lean source via [`LakeBuilder::verify`] (which
-    /// pre-flights against fresh `axiom`/`sorry`), and either flip Verified
-    /// (path = "B") or call [`theorem_q::mark_rejected`] + broadcast
-    /// [`DiscoveryEvent::TheoremRejected`].
+    /// Transient toolchain errors (`reason == "toolchain_error"`) re-enqueue
+    /// the job with bumped `attempts` up to `MAX_ATTEMPTS = 3` total runs.
+    /// Permanent rejections (`lake_build_failed`, `verify_timeout`,
+    /// `preflight_*`) are immediately terminal — they're consistent properties
+    /// of the submitted source, not flakiness.
     async fn try_b_path(
         &self,
         job: ReverifyJob,
-        _row: &nasrudin_pg::entity::theorems::Model,
+        row: &nasrudin_pg::entity::theorems::Model,
     ) -> Result<()> {
-        tracing::warn!(
-            theorem_id = %hex::encode(job.theorem_id),
-            "reverify: A-path failed, B-path stub (Task 3.3 will implement)"
-        );
-        // Dequeue so the queue can drain during Task 3.2 testing. Task 3.3
-        // will replace this with proper B-path success/reject handling.
-        self.rocks.dequeue_reverify(&job.theorem_id).ok();
-        Ok(())
+        let theorem_id_hex = hex::encode(&row.id);
+
+        match self.lake.verify(&row.lean_source, &theorem_id_hex).await? {
+            VerifyOutcome::Verified {
+                tactic,
+                duration_ms,
+            } => {
+                // B-path succeeded: server emitter probably drifted from
+                // worker's, but the math is real. Log + accept + flip.
+                tracing::warn!(
+                    theorem_id = %theorem_id_hex,
+                    engine_git_sha = %row.engine_git_sha,
+                    "server_emitter_drift: A-path failed but B-path on worker-submitted Lean passed"
+                );
+                self.flip_verified(row, "B", &tactic, duration_ms).await?;
+                self.rocks.dequeue_reverify(&job.theorem_id).ok();
+                Ok(())
+            }
+            VerifyOutcome::Rejected {
+                reason,
+                stderr_tail,
+            } => {
+                const MAX_ATTEMPTS: u8 = 3;
+
+                // Retry transient toolchain errors up to MAX_ATTEMPTS.
+                // Permanent rejections (lake_build_failed, preflight_*,
+                // verify_timeout) are terminal.
+                let is_transient = reason == "toolchain_error";
+                if is_transient && job.attempts + 1 < MAX_ATTEMPTS {
+                    let new_job = ReverifyJob {
+                        theorem_id: job.theorem_id,
+                        attempts: job.attempts + 1,
+                        enqueued_at_micros: chrono::Utc::now().timestamp_micros(),
+                    };
+                    tracing::warn!(
+                        theorem_id = %theorem_id_hex,
+                        attempts = new_job.attempts,
+                        reason = %reason,
+                        "reverify: transient failure, re-enqueueing"
+                    );
+                    // Re-enqueue with bumped attempts (overwrite semantics:
+                    // the queue is keyed by theorem_id, so the bumped-attempts
+                    // job replaces the prior entry).
+                    self.rocks.enqueue_reverify(&new_job)?;
+                } else {
+                    // Terminal: mark Rejected.
+                    let full_reason = if stderr_tail.is_empty() {
+                        reason.clone()
+                    } else {
+                        format!("{reason}: {stderr_tail}")
+                    };
+                    theorem_q::mark_rejected(&self.pg, &row.id, &full_reason).await?;
+                    let _ = self.discovery_tx.send(DiscoveryEvent::TheoremRejected {
+                        theorem_id: theorem_id_hex,
+                        reason: full_reason,
+                    });
+                    self.rocks.dequeue_reverify(&job.theorem_id).ok();
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Atomic Postgres transaction: flip the row to `Verified` + increment
