@@ -27,6 +27,12 @@ pub struct Model {
     pub last_seen: DateTimeWithTimeZone,
     pub theorems_contributed: i64,
     pub status: WorkerStatus,
+    pub last_heartbeat_at: Option<DateTimeWithTimeZone>,
+    pub last_contribution_at: Option<DateTimeWithTimeZone>,
+    pub current_generation: i64,
+    pub theorems_produced_total: i64,
+    pub uptime_seconds: i64,
+    pub engine_git_sha: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

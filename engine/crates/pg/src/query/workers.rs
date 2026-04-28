@@ -17,6 +17,12 @@ pub async fn register(
         last_seen: Set(chrono::Utc::now().into()),
         theorems_contributed: Set(0),
         status: Set(WorkerStatus::Active),
+        last_heartbeat_at: NotSet,
+        last_contribution_at: NotSet,
+        current_generation: NotSet,
+        theorems_produced_total: NotSet,
+        uptime_seconds: NotSet,
+        engine_git_sha: NotSet,
     };
     model.insert(db).await
 }
