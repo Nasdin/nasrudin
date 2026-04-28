@@ -149,13 +149,51 @@ async fn main() -> anyhow::Result<()> {
         run_verification_workers(candidates_rx, verified_tx, verify_db, verify_discovery_tx).await;
     });
 
+    // Phase 9: construct LakeBuilder + (optionally) ReverifyQueue before
+    // AppState. The drain loop is only spawned when Postgres is configured,
+    // because the queue's flip-verified path writes through to PG.
+    let prover_root_path: std::path::PathBuf =
+        std::env::var("PROVER_ROOT").unwrap_or_else(|_| "../prover".into()).into();
+    let lake_workspace_root: std::path::PathBuf = std::env::var("LAKE_WORKSPACE_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let lake = Arc::new(physics_api::lake_builder::LakeBuilder::new(
+        prover_root_path,
+        lake_workspace_root,
+        2,
+    ));
+
+    let (reverify_event_tx, _reverify_event_rx) =
+        tokio::sync::broadcast::channel::<physics_api::reverify::DiscoveryEvent>(256);
+
+    let reverify = pg.as_ref().map(|pg_conn| {
+        Arc::new(physics_api::reverify::ReverifyQueue {
+            rocks: Arc::clone(&db),
+            pg: pg_conn.clone(),
+            lake: Arc::clone(&lake),
+            axiom_store: Arc::clone(&axiom_store),
+            discovery_tx: reverify_event_tx.clone(),
+        })
+    });
+
     let state = Arc::new(AppState {
         db,
         pg,
         axiom_store,
         discovery_tx,
         ga_status,
+        lake,
+        reverify_event_tx,
+        reverify,
     });
+
+    // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
+    if let Some(ref reverify) = state.reverify {
+        tokio::spawn(Arc::clone(reverify).drain_loop());
+        tracing::info!("Reverify drain loop spawned");
+    } else {
+        tracing::info!("Reverify drain loop disabled (no PostgreSQL)");
+    }
 
     // CORS configuration
     let cors = CorsLayer::new()

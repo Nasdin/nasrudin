@@ -277,6 +277,40 @@ impl ReverifyQueue {
     }
 }
 
+impl ReverifyQueue {
+    /// Background task: scan `reverify_queue` every 500ms, process one job
+    /// per tick. Logs and continues on per-job errors. Runs until the task
+    /// is cancelled (i.e. forever, in practice — Phase 9 has no graceful
+    /// shutdown for the drain loop).
+    ///
+    /// Tick cadence uses [`tokio::time::MissedTickBehavior::Skip`] so a slow
+    /// `lake build` (which can take 30+ seconds) doesn't queue up a backlog
+    /// of catch-up ticks the moment it returns.
+    pub async fn drain_loop(self: Arc<Self>) {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            match self.rocks.list_reverify_pending(1) {
+                Ok(jobs) if jobs.is_empty() => continue,
+                Ok(jobs) => {
+                    let job = jobs.into_iter().next().unwrap();
+                    if let Err(e) = self.process_one(job.clone()).await {
+                        tracing::error!(
+                            theorem_id = %hex::encode(job.theorem_id),
+                            err = %e,
+                            "reverify drain: process_one failed"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(err = %e, "reverify drain: queue scan failed");
+                }
+            }
+        }
+    }
+}
+
 /// Bundle of "server-regenerated Lean" facts produced by
 /// [`ReverifyQueue::try_regenerate_lean`].
 ///
