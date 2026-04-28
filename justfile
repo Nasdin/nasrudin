@@ -192,6 +192,45 @@ discover-physics gens="100" pop="64" max-lake="12":
         --gens {{gens}} --pop {{pop}} --max-len 14 --max-lake {{max-lake}} \
         --verify ../prover
 
+# Spawn N parallel discover_emc2 workers, each with a unique worker_id,
+# all submitting to the same NASRUDIN_API_URL. Each worker has its own
+# log file under logs/pool/. Ctrl+C tears them all down via trap.
+#
+#   just discover-pool 4
+#   NASRUDIN_API_URL=http://localhost:3001 NASRUDIN_WORKER_KEY=$(cat /tmp/worker-key) just discover-pool 8
+discover-pool n="4" gens="200" pop="64" max-lake="4":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{justfile_directory()}}
+    if [ -z "${NASRUDIN_WORKER_KEY:-}" ]; then
+      echo "error: NASRUDIN_WORKER_KEY is required" >&2
+      echo "  Get a worker key at /api-keys (Kind: Worker)" >&2
+      exit 1
+    fi
+    export NASRUDIN_API_URL="${NASRUDIN_API_URL:-http://localhost:3001}"
+    cd engine && cargo build -p nasrudin-ga --bin discover_emc2 --release 2>&1 | grep -E "(Compiling|Finished|error)" || true
+    cd ..
+    mkdir -p logs/pool
+    pids=()
+    trap 'echo; echo "[pool] tearing down workers..."; for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; wait 2>/dev/null; exit 0' INT TERM
+    echo "[pool] spawning {{n}} workers against $NASRUDIN_API_URL"
+    for i in $(seq 1 {{n}}); do
+      LOG="logs/pool/worker-${i}.log"
+      PATH="$HOME/.elan/bin:$PATH" \
+        NASRUDIN_WORKER_ID="pool-worker-${i}" \
+        ./engine/target/release/discover_emc2 \
+          --domain sr --target sr_rest_energy \
+          --gens {{gens}} --pop {{pop}} --max-len 12 --max-lake {{max-lake}} \
+          --verify ./prover \
+          > "$LOG" 2>&1 &
+      pid=$!
+      pids+=("$pid")
+      echo "  [pool] worker-${i} pid=${pid} log=${LOG}"
+    done
+    echo "[pool] {{n}} workers running. tail -f logs/pool/worker-*.log to follow."
+    echo "[pool] Ctrl+C to stop all workers."
+    wait
+
 # ── Worker Binary Release ──────────────────────────────────
 
 # Build the public discovery worker tarball for the current host (dist/nasrudin-worker-<os>-<arch>.tar.gz)

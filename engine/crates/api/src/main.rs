@@ -278,6 +278,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/theorems/{id}", get(handlers::theorems::by_id))
         .route("/api/theorems/{id}", delete(delete_theorem_handler))
         .route("/api/theorems", get(handlers::theorems::list))
+        // Negative-result memo: list of canonical_hash bytes for every
+        // Rejected theorem. Workers pull this to skip pre-rejected
+        // chains during fitness eval — see discover_emc2's
+        // RejectedSet on startup. Closes the "every worker re-tries
+        // the same losing chains independently" gap.
+        .route(
+            "/api/rejected_hashes",
+            get(handlers::theorems::rejected_hashes),
+        )
         .route("/api/domains", get(list_domains))
         .route("/api/axioms", get(list_axioms))
         .route("/api/seed", get(handlers::seed::seed))

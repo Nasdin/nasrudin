@@ -158,3 +158,46 @@ pub async fn lean_download(
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db_error").into_response(),
     }
 }
+
+
+/// `GET /api/rejected_hashes` — list of canonical_hash bytes for every
+/// theorem in the `Rejected` state. Workers pull this at startup (and
+/// periodically) so they can skip any chain whose final canonical
+/// matches a known-rejected hash, instead of handing it to lake-build
+/// just to fail again.
+///
+/// Response: `{ hashes: [[<8 bytes>], …], count: N }`. Hashes are
+/// serialized as JSON arrays of byte numbers (matches SeaORM's default
+/// Vec<u8> serde, same convention as Theorem.id and canonical_hash).
+pub async fn rejected_hashes(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let pg = match &state.pg {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "pg_unavailable" })),
+            )
+                .into_response();
+        }
+    };
+    // Cap at 100k. Each hash is 8 bytes, so the wire response stays
+    // under 1 MB even at the cap. If we ever blow past this, the
+    // worker's bloom-filter approach scales further.
+    match theorems::list_rejected_canonical_hashes(pg, 100_000).await {
+        Ok(hashes) => {
+            let count = hashes.len();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "hashes": hashes, "count": count })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("{e}") })),
+        )
+            .into_response(),
+    }
+}

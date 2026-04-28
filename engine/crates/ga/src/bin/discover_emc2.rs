@@ -207,6 +207,30 @@ async fn main() {
         }
     };
 
+    // Pull the cluster's rejected-canonicals memo. Any chain whose
+    // final canonical matches one of these has already been
+    // lake-rejected by *some* worker; no point burning lake cycles to
+    // re-confirm. Soft-fail on network error — single-worker dev runs
+    // still work without the API.
+    let rejected_canonicals: std::sync::Arc<std::collections::HashSet<Vec<u8>>> = {
+        let api_url = std::env::var("NASRUDIN_API_URL").ok();
+        if let Some(url) = api_url {
+            match fetch_rejected_canonicals(&url).await {
+                Ok(set) => {
+                    println!("▶ Negative-result memo: {} pre-rejected canonicals will be skipped", set.len());
+                    std::sync::Arc::new(set)
+                }
+                Err(e) => {
+                    eprintln!("  ! rejected-hashes fetch failed: {e}; running without negative memo");
+                    std::sync::Arc::new(std::collections::HashSet::new())
+                }
+            }
+        } else {
+            std::sync::Arc::new(std::collections::HashSet::new())
+        }
+    };
+    println!();
+
     let config = DiscoveryConfig {
         population_size: pop,
         generations: gens,
@@ -217,16 +241,115 @@ async fn main() {
         prover_root: prover_root.clone(),
         max_lake_verifications: if prover_root.is_some() { max_lake } else { 0 },
         target: target_spec,
+        rejected_canonicals: rejected_canonicals.clone(),
+    };
+
+    // ── Chunked execution with periodic seed-sync ─────────────────────
+    // Run the GA in `chunks` rounds of `gens / chunks` generations each.
+    // Between rounds:
+    //   1. Re-fetch /api/seed and fold any new peer-verified theorems
+    //      into the AxiomStore as additional building blocks. As other
+    //      workers in the cluster verify intermediates, this worker
+    //      picks them up live without restarting.
+    //   2. Re-fetch /api/rejected_hashes so newly-rejected canonicals
+    //      from the cluster prune our search.
+    //   3. Submit any verified discoveries from this chunk *immediately*
+    //      so peer workers see them on their next sync.
+    //
+    // chunks=1 reverts to single-shot behaviour; default is 4.
+    let chunks: usize = arg_value(&args, "--chunks")
+        .or_else(|| std::env::var("NASRUDIN_CHUNKS").ok().and_then(|s| s.parse().ok()))
+        .unwrap_or(4);
+    let gens_per_chunk = (gens / chunks).max(1);
+    let api_url_for_resync = std::env::var("NASRUDIN_API_URL").ok();
+    let domain_param_for_resync = match domain.as_str() {
+        "sr" => "SpecialRelativity",
+        "em" => "Electromagnetism",
+        _ => "",
     };
 
     println!(
-        "▶ Running discovery: pop={}, gens={}, max_chain_len={}, lake_budget={}",
-        pop, gens, max_chain_len, config.max_lake_verifications
+        "▶ Running discovery: pop={}, gens={} ({} chunks × {} gens), max_chain_len={}, lake_budget={}",
+        pop, gens, chunks, gens_per_chunk, max_chain_len, config.max_lake_verifications
     );
     println!();
 
     let mut rng = rand::rng();
-    let report = run_discovery(&store, &config, &mut rng);
+    let mut combined_verified: Vec<VerifiedDiscovery> = Vec::new();
+    let mut total_lake = 0usize;
+    let mut total_candidates = 0usize;
+    let mut total_unique = 0usize;
+    let mut current_rejected = rejected_canonicals.clone();
+
+    for chunk_i in 0..chunks {
+        if chunk_i > 0
+            && let Some(ref api_url) = api_url_for_resync
+        {
+            // Periodic seed-sync: pick up peer discoveries since last
+            // chunk. Soft-fail — search continues with current store
+            // if the API is briefly unreachable.
+            match fetch_and_extend_store(api_url, domain_param_for_resync, &mut store).await {
+                Ok((ax, th)) if ax + th > 0 => {
+                    println!(
+                        "▶ chunk {} re-sync: +{ax} new axioms, +{th} peer theorems  (store={})",
+                        chunk_i + 1,
+                        store.len()
+                    );
+                    nasrudin_derive::no_cheat_audit::audit_or_panic(
+                        &store,
+                        "worker chunk re-sync",
+                    );
+                }
+                _ => {}
+            }
+            // Periodic rejected-canonical re-fetch.
+            if let Ok(set) = fetch_rejected_canonicals(api_url).await {
+                let delta = set.len().saturating_sub(current_rejected.len());
+                if delta > 0 {
+                    println!("▶ chunk {} rejected-set: +{delta} new pre-rejected canonicals", chunk_i + 1);
+                }
+                current_rejected = std::sync::Arc::new(set);
+            }
+        }
+        let chunk_config = DiscoveryConfig {
+            generations: gens_per_chunk,
+            rejected_canonicals: current_rejected.clone(),
+            ..config.clone()
+        };
+        let report = run_discovery(&store, &chunk_config, &mut rng);
+        total_candidates += report.total_candidates;
+        total_unique += report.unique_executable;
+        total_lake += report.lake_attempts;
+        if !report.verified.is_empty() {
+            println!(
+                "▶ chunk {}/{}: {} verified, {} lake attempts",
+                chunk_i + 1,
+                chunks,
+                report.verified.len(),
+                report.lake_attempts
+            );
+            // Submit each chunk's discoveries immediately so peer
+            // workers see them on their next periodic re-sync.
+            if let (Some(cfg), Some(_)) = (api_cfg.as_ref(), prover_root.as_ref()) {
+                for d in &report.verified {
+                    if let Err(e) = submit_discovery(cfg, &domain, d).await {
+                        eprintln!("  ! chunk-submit failed: {e}");
+                    }
+                }
+            }
+        }
+        combined_verified.extend(report.verified);
+    }
+
+    // Backwards-compatible report shim — code below expects `report.*`.
+    let report = nasrudin_ga::chain_engine::DiscoveryReport {
+        generations_run: gens_per_chunk * chunks,
+        total_candidates,
+        unique_executable: total_unique,
+        lake_attempts: total_lake,
+        verified: combined_verified,
+        top_fitness_canonical: None,
+    };
 
     println!("▶ Run complete.");
     println!("    Generations:        {}", report.generations_run);
@@ -531,4 +654,48 @@ async fn fetch_and_extend_store(
     }
 
     Ok((axioms_added, theorems_added))
+}
+
+/// Fetch the cluster's rejected-canonical-hash memo from
+/// `GET /api/rejected_hashes`. Returns a HashSet of 8-byte
+/// canonical-hash bytes (`nasrudin_core::canonical_hash` output) the
+/// GA can lookup `O(1)` to skip lake-builds that other workers have
+/// already rejected.
+///
+/// Soft-fail on network or parse errors — running without the memo is
+/// strictly worse than running with it, but it's not a correctness
+/// issue, just a wasted-compute one.
+async fn fetch_rejected_canonicals(
+    api_url: &str,
+) -> anyhow::Result<std::collections::HashSet<Vec<u8>>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+    let resp = client
+        .get(format!("{api_url}/api/rejected_hashes"))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("rejected_hashes http {}", resp.status());
+    }
+    let body: serde_json::Value = resp.json().await?;
+    let arr = body
+        .get("hashes")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("expected hashes: [...] in response"))?;
+    let mut set = std::collections::HashSet::with_capacity(arr.len());
+    for entry in arr {
+        let bytes = entry
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("each hash must be an array of bytes"))?
+            .iter()
+            .map(|n| {
+                n.as_u64()
+                    .and_then(|x| u8::try_from(x).ok())
+                    .ok_or_else(|| anyhow::anyhow!("byte out of range"))
+            })
+            .collect::<Result<Vec<u8>, _>>()?;
+        set.insert(bytes);
+    }
+    Ok(set)
 }

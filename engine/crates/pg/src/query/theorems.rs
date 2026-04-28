@@ -229,6 +229,31 @@ pub async fn mark_rejected(
     Ok(())
 }
 
+/// Return the canonical-hash bytes of every theorem currently in the
+/// `Rejected` state. Workers pull this list at startup to build a
+/// negative-result Bloom filter — if a chain produces a canonical
+/// already known to be rejected, no point handing it to lake-build.
+///
+/// The list grows monotonically; workers can re-pull periodically to
+/// stay current. The page size is intentionally large (the column is
+/// 8 bytes per row, so even 1M rejected theorems is ~8 MB on the wire).
+pub async fn list_rejected_canonical_hashes(
+    db: &impl ConnectionTrait,
+    limit: u64,
+) -> Result<Vec<Vec<u8>>> {
+    use sea_orm::QuerySelect;
+    let rows: Vec<(Vec<u8>,)> = theorems::Entity::find()
+        .filter(theorems::Column::Status.eq("Rejected"))
+        .select_only()
+        .column(theorems::Column::CanonicalHash)
+        .limit(limit)
+        .into_tuple()
+        .all(db)
+        .await
+        .context("list_rejected_canonical_hashes")?;
+    Ok(rows.into_iter().map(|(h,)| h).collect())
+}
+
 /// Encode a `(verified_at, id)` cursor as 16-byte URL-safe base64 (no pad).
 fn encode_cursor(verified_at: chrono::DateTime<chrono::FixedOffset>, id: &[u8]) -> String {
     let micros: i64 = verified_at.timestamp_micros();

@@ -47,6 +47,14 @@ pub struct DiscoveryConfig {
     /// components in `composite()` is high (10x), so the search climbs
     /// toward the target instead of optimising for novelty alone.
     pub target: Option<crate::target::TargetSpec>,
+    /// Negative-result memo: 8-byte canonical hashes (xxhash64 of
+    /// `Expr::to_canonical()`, matches `nasrudin_core::canonical_hash`)
+    /// for theorems the cluster has already lake-rejected. The GA
+    /// skips lake-verification for any chain whose final canonical
+    /// hashes into this set — wasted compute is the dominant cost
+    /// and previous workers have already paid it. Empty = no skips
+    /// (legacy / single-worker behaviour).
+    pub rejected_canonicals: std::sync::Arc<HashSet<Vec<u8>>>,
 }
 
 impl Default for DiscoveryConfig {
@@ -61,6 +69,7 @@ impl Default for DiscoveryConfig {
             prover_root: None,
             max_lake_verifications: 0,
             target: None,
+            rejected_canonicals: std::sync::Arc::new(HashSet::new()),
         }
     }
 }
@@ -207,6 +216,7 @@ pub fn run_discovery(
                 if let Some(top) = pick_top_for_verify(
                     &offspring,
                     &verified_canonicals,
+                    &config.rejected_canonicals,
                     store,
                 ) {
                     report.lake_attempts += 1;
@@ -358,6 +368,7 @@ fn run_chain_for_final(chain: &Chain, store: &AxiomStore) -> Option<Expr> {
 fn pick_top_for_verify<'a>(
     offspring: &'a [ChainIndividual],
     seen: &HashSet<String>,
+    rejected: &HashSet<Vec<u8>>,
     store: &AxiomStore,
 ) -> Option<&'a ChainIndividual> {
     for ind in offspring {
@@ -366,7 +377,12 @@ fn pick_top_for_verify<'a>(
         }
         if let Some(expr) = run_chain_for_final(&ind.chain, store) {
             let canon = expr.to_canonical();
-            if !seen.contains(&canon) {
+            // Skip canonicals we've verified this run, AND canonicals
+            // any peer worker has already rejected via lake build.
+            // Both sets are local to this process; the rejected set
+            // was populated at startup from `/api/rejected_hashes`.
+            let canon_hash = nasrudin_core::canonical_hash(&canon);
+            if !seen.contains(&canon) && !rejected.contains(&canon_hash) {
                 return Some(ind);
             }
         }
@@ -397,6 +413,7 @@ mod tests {
             prover_root: None, // no lake verify in unit tests
             max_lake_verifications: 0,
             target: None,
+            rejected_canonicals: std::sync::Arc::new(HashSet::new()),
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -420,6 +437,7 @@ mod tests {
             prover_root: None,
             max_lake_verifications: 0,
             target: None,
+            rejected_canonicals: std::sync::Arc::new(HashSet::new()),
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
