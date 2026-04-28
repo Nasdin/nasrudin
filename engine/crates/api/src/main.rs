@@ -82,6 +82,16 @@ async fn main() -> anyhow::Result<()> {
     let db = Arc::new(TheoremDb::new(&db_path)?);
     tracing::info!("RocksDB opened at {db_path}");
 
+    // Phase 9 disaster-recovery: if Postgres is connected and RocksDB is empty,
+    // repopulate the embedded store from the relational mirror. Runs exactly
+    // once before the Axum router starts. Hydration failures are logged and
+    // boot continues — the operator can wipe /data/rocks and retry.
+    if let Some(ref pg_conn) = pg {
+        if let Err(e) = physics_api::hydration::hydrate_rocks_from_pg_if_empty(&db, pg_conn).await {
+            tracing::error!("RocksDB hydration from Postgres failed: {e}; continuing startup");
+        }
+    }
+
     // Load PhysLean axioms from catalog
     let mut axiom_store = AxiomStore::new();
     let prover_root = std::env::var("PROVER_ROOT").unwrap_or_else(|_| "../prover".into());

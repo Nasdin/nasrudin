@@ -18,6 +18,7 @@ nasrudin-pg = { path = "../pg" }
 nasrudin-ga = { path = "../ga" }
 nasrudin-derive = { path = "../derive" }
 nasrudin-lean-bridge = { path = "../lean-bridge" }
+sea-orm = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true }
 axum-login = { workspace = true }
@@ -41,3 +42,6 @@ hex = { workspace = true }
 dotenvy = { workspace = true }
 data-encoding = { workspace = true }
 rand = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
