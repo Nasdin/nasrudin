@@ -70,3 +70,56 @@ pub fn platform_worker() -> IpGovConfig {
         .finish()
         .expect("valid platform_worker governor config")
 }
+
+// ---------------------------------------------------------------------------
+// WorkerRateLimiter — keyed by worker_id (string), used by /api/ingest.
+// ---------------------------------------------------------------------------
+
+use governor::{
+    Quota, RateLimiter,
+    clock::{DefaultClock, QuantaInstant},
+    state::keyed::DefaultKeyedStateStore,
+};
+use std::num::NonZeroU32;
+use std::sync::Arc;
+
+/// Per-worker token-bucket rate limiter keyed by `worker_id` (string).
+///
+/// Default 60 requests/minute. Used by `/api/ingest` (Phase 9 Task 4.2) to
+/// throttle individual workers independently of the per-IP `tower_governor`
+/// layer that fronts the public router.
+pub struct WorkerRateLimiter {
+    inner: Arc<RateLimiter<String, DefaultKeyedStateStore<String>, DefaultClock>>,
+}
+
+impl WorkerRateLimiter {
+    /// Build a new limiter that allows `per_minute` requests/min per worker.
+    /// Values < 1 are clamped to 1 (governor requires a non-zero quota).
+    pub fn new(per_minute: u32) -> Self {
+        let quota = Quota::per_minute(NonZeroU32::new(per_minute.max(1)).unwrap());
+        Self {
+            inner: Arc::new(RateLimiter::keyed(quota)),
+        }
+    }
+
+    /// Try to consume `n` tokens for `worker_id`. Returns `Ok(())` if all
+    /// `n` tokens were available, `Err(NotUntil)` describing when the next
+    /// token will be available if the bucket was exhausted partway through.
+    /// The handler maps `Err` to HTTP 429.
+    ///
+    /// `governor` doesn't expose a "consume N atomically" API — we call
+    /// `check_key` once per token. For batch ingest with N theorems this
+    /// means N independent token checks. Behaviour is correct (1 batch of N
+    /// = N tokens) and the `QuantaClock` keeps it cheap.
+    pub fn check_and_consume(
+        &self,
+        worker_id: &str,
+        n: u32,
+    ) -> Result<(), governor::NotUntil<QuantaInstant>> {
+        let key = worker_id.to_string();
+        for _ in 0..n.max(1) {
+            self.inner.check_key(&key)?;
+        }
+        Ok(())
+    }
+}

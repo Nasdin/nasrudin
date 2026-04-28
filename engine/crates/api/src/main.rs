@@ -176,6 +176,9 @@ async fn main() -> anyhow::Result<()> {
         })
     });
 
+    // Phase 9 Task 4.1: per-worker token-bucket limiter (60 req/min default).
+    let worker_rate_limiter = Arc::new(physics_api::rate_limit::WorkerRateLimiter::new(60));
+
     let state = Arc::new(AppState {
         db,
         pg,
@@ -185,6 +188,7 @@ async fn main() -> anyhow::Result<()> {
         lake,
         reverify_event_tx,
         reverify,
+        worker_rate_limiter,
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.

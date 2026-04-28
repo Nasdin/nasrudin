@@ -28,4 +28,8 @@ pub struct AppState {
     /// Reverify queue + drain. `None` when PostgreSQL is not configured —
     /// the drain loop only runs when PG is wired up.
     pub reverify: Option<Arc<crate::reverify::ReverifyQueue>>,
+    /// Per-worker token-bucket limiter (keyed by `worker_id`). Consumed by
+    /// the `/api/ingest` handler (Phase 9 Task 4.2) at one token per
+    /// submitted theorem; default 60/min per worker.
+    pub worker_rate_limiter: Arc<crate::rate_limit::WorkerRateLimiter>,
 }
