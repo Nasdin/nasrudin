@@ -132,18 +132,57 @@ pub async fn heartbeat(
 }
 
 /// `GET /api/workers` — public list of all known workers, ordered by
-/// `theorems_contributed DESC`. Returns `[]` (HTTP 200) when Postgres is
-/// unavailable so the frontend leaderboard renders gracefully.
+/// `theorems_contributed DESC`. Each row is enriched with `owner` info
+/// (display name and email-local handle) when the worker's api-key is
+/// linked to a user account; otherwise `owner` is `null` (anonymous worker
+/// registered via `POST /api/workers/register`).
+///
+/// Returns `[]` (HTTP 200) when Postgres is unavailable so the frontend
+/// leaderboard renders gracefully.
 pub async fn list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let Some(db) = state.pg.clone() else {
         return (StatusCode::OK, Json(serde_json::json!([]))).into_response();
     };
-    match nasrudin_pg::query::workers::list_all(&db).await {
-        Ok(rows) => (StatusCode::OK, Json(serde_json::to_value(rows).unwrap())).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("{e}") })),
-        )
-            .into_response(),
-    }
+    let rows = match nasrudin_pg::query::workers::list_all(&db).await {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("{e}") })),
+            )
+                .into_response();
+        }
+    };
+    let owners = nasrudin_pg::query::me_workers::owner_map(&db)
+        .await
+        .unwrap_or_default();
+
+    let enriched: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|w| {
+            let owner = owners.get(&w.id).map(|o| {
+                serde_json::json!({
+                    "user_id": o.user_id,
+                    "display_name": o.display_name,
+                    "handle": o.email_local,
+                })
+            });
+            serde_json::json!({
+                "id": w.id,
+                "name": w.name,
+                "host": w.host,
+                "last_seen": w.last_seen,
+                "theorems_contributed": w.theorems_contributed,
+                "status": w.status,
+                "last_heartbeat_at": w.last_heartbeat_at,
+                "last_contribution_at": w.last_contribution_at,
+                "current_generation": w.current_generation,
+                "theorems_produced_total": w.theorems_produced_total,
+                "uptime_seconds": w.uptime_seconds,
+                "engine_git_sha": w.engine_git_sha,
+                "owner": owner,
+            })
+        })
+        .collect();
+    (StatusCode::OK, Json(serde_json::json!(enriched))).into_response()
 }

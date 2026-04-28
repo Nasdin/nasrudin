@@ -3,11 +3,13 @@ import { apiFetch, isApiError } from './api';
 import type {
   ApiKeySummary,
   AuthUser,
+  MeProfile,
   MeStats,
   NewApiKey,
   SavedSearch,
   Theorem,
   TheoremListResponse,
+  UserProfileFields,
   Worker,
 } from './types';
 
@@ -132,6 +134,42 @@ export function useMeStats() {
   return useQuery({
     queryKey: ['me', 'stats'],
     queryFn: () => apiFetch<MeStats>('/api/me/stats'),
+  });
+}
+
+// --- profile editing ---
+
+export const meProfileQueryKey = ['me', 'profile'] as const;
+
+export function useMeProfile() {
+  return useQuery({
+    queryKey: meProfileQueryKey,
+    queryFn: () => apiFetch<MeProfile>('/api/me/profile'),
+  });
+}
+
+export function useUpdateMeProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { display_name?: string | null; profile?: UserProfileFields }) =>
+      apiFetch<MeProfile>('/api/me/profile', {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: meProfileQueryKey });
+      qc.invalidateQueries({ queryKey: meQueryKey });
+    },
+  });
+}
+
+// --- workers I own (joined via api_keys.kind = 'worker', user_id = me) ---
+
+export function useMyWorkers() {
+  return useQuery({
+    queryKey: ['me', 'workers'],
+    queryFn: () => apiFetch<{ workers: Worker[] }>('/api/me/workers'),
+    refetchInterval: 30_000,
   });
 }
 
