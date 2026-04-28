@@ -9,9 +9,12 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WorkersRouteImport } from './routes/workers'
 import { Route as SigninRouteImport } from './routes/signin'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PricingRouteImport } from './routes/pricing'
+import { Route as LibraryRouteImport } from './routes/library'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
@@ -19,9 +22,19 @@ import { Route as ApiDocsRouteImport } from './routes/api-docs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TheoremIdRouteImport } from './routes/theorem.$id'
 
+const WorkersRoute = WorkersRouteImport.update({
+  id: '/workers',
+  path: '/workers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SigninRoute = SigninRouteImport.update({
   id: '/signin',
   path: '/signin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfileRoute = ProfileRouteImport.update({
@@ -32,6 +45,11 @@ const ProfileRoute = ProfileRouteImport.update({
 const PricingRoute = PricingRouteImport.update({
   id: '/pricing',
   path: '/pricing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibraryRoute = LibraryRouteImport.update({
+  id: '/library',
+  path: '/library',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LeaderboardRoute = LeaderboardRouteImport.update({
@@ -71,9 +89,12 @@ export interface FileRoutesByFullPath {
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
+  '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
+  '/workers': typeof WorkersRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRoutesByTo {
@@ -82,9 +103,12 @@ export interface FileRoutesByTo {
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
+  '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
+  '/workers': typeof WorkersRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRoutesById {
@@ -94,9 +118,12 @@ export interface FileRoutesById {
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
+  '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
+  '/workers': typeof WorkersRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRouteTypes {
@@ -107,9 +134,12 @@ export interface FileRouteTypes {
     | '/api-keys'
     | '/browse'
     | '/leaderboard'
+    | '/library'
     | '/pricing'
     | '/profile'
+    | '/settings'
     | '/signin'
+    | '/workers'
     | '/theorem/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -118,9 +148,12 @@ export interface FileRouteTypes {
     | '/api-keys'
     | '/browse'
     | '/leaderboard'
+    | '/library'
     | '/pricing'
     | '/profile'
+    | '/settings'
     | '/signin'
+    | '/workers'
     | '/theorem/$id'
   id:
     | '__root__'
@@ -129,9 +162,12 @@ export interface FileRouteTypes {
     | '/api-keys'
     | '/browse'
     | '/leaderboard'
+    | '/library'
     | '/pricing'
     | '/profile'
+    | '/settings'
     | '/signin'
+    | '/workers'
     | '/theorem/$id'
   fileRoutesById: FileRoutesById
 }
@@ -141,19 +177,36 @@ export interface RootRouteChildren {
   ApiKeysRoute: typeof ApiKeysRoute
   BrowseRoute: typeof BrowseRoute
   LeaderboardRoute: typeof LeaderboardRoute
+  LibraryRoute: typeof LibraryRoute
   PricingRoute: typeof PricingRoute
   ProfileRoute: typeof ProfileRoute
+  SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
+  WorkersRoute: typeof WorkersRoute
   TheoremIdRoute: typeof TheoremIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/workers': {
+      id: '/workers'
+      path: '/workers'
+      fullPath: '/workers'
+      preLoaderRoute: typeof WorkersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signin': {
       id: '/signin'
       path: '/signin'
       fullPath: '/signin'
       preLoaderRoute: typeof SigninRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/profile': {
@@ -168,6 +221,13 @@ declare module '@tanstack/react-router' {
       path: '/pricing'
       fullPath: '/pricing'
       preLoaderRoute: typeof PricingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/library': {
+      id: '/library'
+      path: '/library'
+      fullPath: '/library'
+      preLoaderRoute: typeof LibraryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/leaderboard': {
@@ -221,9 +281,12 @@ const rootRouteChildren: RootRouteChildren = {
   ApiKeysRoute: ApiKeysRoute,
   BrowseRoute: BrowseRoute,
   LeaderboardRoute: LeaderboardRoute,
+  LibraryRoute: LibraryRoute,
   PricingRoute: PricingRoute,
   ProfileRoute: ProfileRoute,
+  SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,
+  WorkersRoute: WorkersRoute,
   TheoremIdRoute: TheoremIdRoute,
 }
 export const routeTree = rootRouteImport

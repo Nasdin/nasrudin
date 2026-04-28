@@ -14,7 +14,7 @@ const LINES: CliLine[] = [
   { p: '', t: 'Installing nasrudin v0.4.2 · linux-x86_64', out: true, dim: true },
   {
     p: '',
-    t: '✓ Rust 1.79 · ✓ Lean 4.10.0 · ✓ Mathlib snapshot 2026-04',
+    t: '✓ Rust 1.95 · ✓ Lean 4.27.0 · ✓ Mathlib snapshot 2026-04',
     out: true,
     ok: true,
   },

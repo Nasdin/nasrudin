@@ -102,6 +102,13 @@ export interface SavedSearch {
   created_at: string;
 }
 
+export interface WorkerOwner {
+  user_id: string;
+  display_name: string | null;
+  /** Local part of the email — a short public handle. */
+  handle: string;
+}
+
 export interface Worker {
   id: string;
   name: string | null;
@@ -109,9 +116,34 @@ export interface Worker {
   last_seen: string;
   theorems_contributed: number;
   status: 'Active' | 'Inactive' | 'Disconnected' | 'active' | 'inactive' | 'disconnected';
+  last_heartbeat_at?: string | null;
+  last_contribution_at?: string | null;
+  current_generation?: number;
+  theorems_produced_total?: number;
+  uptime_seconds?: number;
+  engine_git_sha?: string | null;
+  /** Present only on the public list when the worker's api-key is linked to a user. */
+  owner?: WorkerOwner | null;
 }
 
 export interface MeStats {
   saved_searches: number;
   api_keys: number;
+  theorems_total?: number;
+  theorems_recent?: Theorem[];
+}
+
+export interface UserProfileFields {
+  bio?: string;
+  handle?: string;
+  institution?: string;
+  field?: string;
+  location?: string;
+  website?: string;
+}
+
+export interface MeProfile {
+  display_name: string | null;
+  email: string;
+  profile: UserProfileFields;
 }

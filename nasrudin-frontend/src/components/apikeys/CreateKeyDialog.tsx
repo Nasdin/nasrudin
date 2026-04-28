@@ -54,19 +54,19 @@ export function CreateKeyDialog({
           Create an API key
         </h3>
         <div className="field">
-          <label htmlFor="key-name">Name</label>
+          <label htmlFor="key-name">{kind === 'worker' ? 'Device label' : 'Key label'}</label>
           <input
             id="key-name"
             // biome-ignore lint/a11y/noAutofocus: dialog opens on user click, focus is expected
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={kind === 'worker' ? 'my-laptop-worker' : 'my-laptop'}
+            placeholder={kind === 'worker' ? 'home-pc-living-room' : 'my-research-script'}
           />
           <span className="hint">
             {kind === 'worker'
-              ? 'Identifies this worker in the leaderboard and heartbeat log.'
-              : 'A short label so you remember what this key is for.'}
+              ? 'Names the device this worker runs on. Public — appears next to every theorem the device verifies (e.g. "Anya Klint · home-pc-living-room").'
+              : 'A short label so you remember what this key is for. Visible only to you.'}
           </span>
         </div>
         <div className="field" style={{ marginTop: 16 }}>

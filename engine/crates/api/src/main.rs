@@ -332,6 +332,12 @@ async fn main() -> anyhow::Result<()> {
                 axum::routing::patch(handlers::preferences::patch),
             )
             .route("/api/me/stats", get(handlers::me::stats))
+            .route("/api/me/profile", get(handlers::me::get_profile))
+            .route(
+                "/api/me/profile",
+                axum::routing::patch(handlers::me::update_profile),
+            )
+            .route("/api/me/workers", get(handlers::me::workers))
             .layer(GovernorLayer::new(rate_limit::platform_user()));
 
         // Platform-worker: worker registration + heartbeat + ingest. Bearer nsk_worker_.

@@ -4,7 +4,7 @@ const STEPS = [
   'Fetching .lean file ...',
   'Resolving Mathlib imports ...',
   'Running lake build ...',
-  'Verifying with Lean 4.10.0 ...',
+  'Verifying with Lean 4.27.0 ...',
   'QED — proof checks. ✓',
 ];
 

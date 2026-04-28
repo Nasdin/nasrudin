@@ -3,6 +3,8 @@ import { useMe } from '~/lib/queries';
 
 const NAV = [
   { to: '/browse', label: 'Browse corpus', key: 'browse' },
+  { to: '/library', label: 'My library', key: 'library' },
+  { to: '/workers', label: 'Workers', key: 'workers' },
   { to: '/leaderboard', label: 'Contributors', key: 'leader' },
   { to: '/api-docs', label: 'API & data', key: 'api' },
   { to: '/api-keys', label: 'API keys', key: 'api-keys' },
