@@ -1703,9 +1703,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "chrono",
  "data-encoding",
  "dotenvy",
+ "nasrudin-core",
  "password-auth",
  "rand 0.9.2",
  "sea-orm",

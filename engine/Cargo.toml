@@ -39,6 +39,7 @@ xxhash-rust = { version = "0.8", features = ["xxh64"] }
 hex = "0.4"
 data-encoding = "2"
 bloomfilter = "1"
+base64 = "0.22"
 
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
