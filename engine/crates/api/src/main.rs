@@ -215,14 +215,30 @@ async fn main() -> anyhow::Result<()> {
     // Each group gets its own GovernorLayer (GCRA, per-IP keying).
 
     // API-standard: core read API (60 req/min, burst 20)
+    //
+    // Theorem read endpoints are served by `handlers::theorems::*` against the
+    // PostgreSQL mirror (Phase 9 Task 5.1). The legacy RocksDB-backed
+    // `recent_theorems` / `search_theorems` / `get_theorem` are intentionally
+    // unwired — they remain in this file as fallbacks for the lineage/proof
+    // routes which still consume RocksDB-only graph data.
+    //
+    // Route ordering note: `/api/theorems/{hash}/lean` and
+    // `/api/theorems/{id}/lineage` etc. are sibling-specific paths under the
+    // generic `/api/theorems/{id}` — axum's matchit picks them by specificity
+    // regardless of declaration order, but we still register the more
+    // specific routes first for readability.
     let api = Router::new()
         .route("/api/ga/status", get(ga_status_handler))
-        .route("/api/theorems/recent", get(recent_theorems))
-        .route("/api/theorems/{id}", get(get_theorem))
-        .route("/api/theorems/{id}", delete(delete_theorem_handler))
+        .route(
+            "/api/theorems/{hash}/lean",
+            get(handlers::theorems::lean_download),
+        )
+        .route("/api/theorems/recent", get(handlers::theorems::recent))
         .route("/api/theorems/{id}/lineage", get(get_lineage))
         .route("/api/theorems/{id}/proof", get(get_proof))
-        .route("/api/theorems", get(search_theorems))
+        .route("/api/theorems/{id}", get(handlers::theorems::by_id))
+        .route("/api/theorems/{id}", delete(delete_theorem_handler))
+        .route("/api/theorems", get(handlers::theorems::list))
         .route("/api/domains", get(list_domains))
         .route("/api/axioms", get(list_axioms))
         .layer(GovernorLayer::new(rate_limit::api_standard()));
@@ -482,39 +498,6 @@ async fn ga_status_handler(State(state): State<Arc<AppState>>) -> Json<serde_jso
     Json(serde_json::to_value(&*snapshot).unwrap_or_default())
 }
 
-/// Get a theorem by hex ID.
-async fn get_theorem(
-    State(state): State<Arc<AppState>>,
-    Path(id_hex): Path<String>,
-) -> Json<serde_json::Value> {
-    let id_bytes = match parse_theorem_id(&id_hex) {
-        Some(id) => id,
-        None => {
-            return Json(serde_json::json!({
-                "error": "Invalid theorem ID: expected 16-char hex string"
-            }));
-        }
-    };
-
-    match state.db.get_theorem(&id_bytes) {
-        Ok(Some(thm)) => Json(serde_json::to_value(thm).unwrap_or_default()),
-        Ok(None) => Json(serde_json::json!({ "error": "Theorem not found" })),
-        Err(e) => Json(serde_json::json!({ "error": format!("{e}") })),
-    }
-}
-
-/// Query parameters for theorem search.
-#[derive(Debug, Deserialize)]
-struct SearchParams {
-    domain: Option<String>,
-    depth: Option<u32>,
-    generation: Option<u64>,
-    latex: Option<String>,
-    axiom: Option<String>,
-    verified: Option<bool>,
-    limit: Option<usize>,
-}
-
 /// Parse a domain string (snake_case or PascalCase) into a `Domain`.
 fn parse_domain(s: &str) -> Option<Domain> {
     match s.to_lowercase().replace('-', "_").as_str() {
@@ -542,100 +525,6 @@ fn parse_theorem_id(hex_str: &str) -> Option<TheoremId> {
         Some(arr)
     } else {
         None
-    }
-}
-
-/// Search theorems with optional filters using indexed queries.
-async fn search_theorems(
-    State(state): State<Arc<AppState>>,
-    Query(params): Query<SearchParams>,
-) -> Json<serde_json::Value> {
-    let limit = params.limit.unwrap_or(50).min(200);
-
-    // Helper: resolve a list of TheoremIds into Theorems
-    let resolve_ids = |ids: Vec<TheoremId>| -> Vec<Theorem> {
-        ids.iter()
-            .filter_map(|id| state.db.get_theorem(id).ok().flatten())
-            .collect()
-    };
-
-    // Use indexed queries with limit pushed down to the storage layer
-    let result: anyhow::Result<Vec<Theorem>> = (|| {
-        if let Some(ref domain_str) = params.domain {
-            return match parse_domain(domain_str) {
-                Some(domain) => {
-                    let ids = state.db.list_by_domain_limit(&domain, limit)?;
-                    Ok(resolve_ids(ids))
-                }
-                None => Ok(vec![]),
-            };
-        }
-        if let Some(depth) = params.depth {
-            let ids = state.db.list_by_depth_limit(depth, limit)?;
-            return Ok(resolve_ids(ids));
-        }
-        if let Some(generation) = params.generation {
-            let ids = state.db.list_by_generation_limit(generation, limit)?;
-            return Ok(resolve_ids(ids));
-        }
-        if let Some(ref prefix) = params.latex {
-            let ids = state.db.search_latex_limit(prefix, limit)?;
-            return Ok(resolve_ids(ids));
-        }
-        if let Some(ref axiom_hex) = params.axiom {
-            return match parse_theorem_id(axiom_hex) {
-                Some(axiom_id) => {
-                    let ids = state.db.list_by_axiom_limit(&axiom_id, limit)?;
-                    Ok(resolve_ids(ids))
-                }
-                None => Ok(vec![]),
-            };
-        }
-        // Fallback: recent theorems (avoids full table scan at scale)
-        state.db.list_recent(limit)
-    })();
-
-    match result {
-        Ok(mut theorems) => {
-            // Apply verified filter as a post-filter (works across all index paths)
-            if let Some(verified) = params.verified {
-                theorems.retain(|thm| {
-                    let is_verified = matches!(thm.verified, VerificationStatus::Verified { .. });
-                    is_verified == verified
-                });
-            }
-
-            let total = theorems.len();
-            Json(serde_json::json!({
-                "theorems": theorems,
-                "total": total,
-            }))
-        }
-        Err(e) => Json(serde_json::json!({
-            "error": format!("Search failed: {e}"),
-            "theorems": [],
-            "total": 0,
-        })),
-    }
-}
-
-/// Get recently created theorems.
-async fn recent_theorems(
-    State(state): State<Arc<AppState>>,
-    Query(params): Query<SearchParams>,
-) -> Json<serde_json::Value> {
-    let limit = params.limit.unwrap_or(20).min(200);
-    match state.db.list_recent(limit) {
-        Ok(theorems) => {
-            let total = theorems.len();
-            Json(serde_json::json!({
-                "theorems": theorems,
-                "total": total,
-            }))
-        }
-        Err(e) => Json(serde_json::json!({
-            "error": format!("Failed to get recent theorems: {e}"),
-        })),
     }
 }
 
