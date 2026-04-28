@@ -367,8 +367,10 @@ where
             .and_then(|s| s.strip_prefix("Bearer "))
             .map(|s| s.to_owned())
             .ok_or_else(unauth_response)?;
+        // Non-worker bearer prefixes are *forbidden* (the caller authenticated
+        // successfully but presented a key of the wrong kind). 403, not 401.
         if !bearer.starts_with("nsk_worker_") {
-            return Err(unauth_response());
+            return Err(forbidden_non_worker());
         }
 
         let session = AuthSession::<Backend>::from_request_parts(parts, state)
@@ -382,7 +384,7 @@ where
             .map_err(|_| unauth_response())?
             .ok_or_else(unauth_response)?;
         if row.kind != "worker" {
-            return Err(unauth_response());
+            return Err(forbidden_non_worker());
         }
 
         let secret = bearer.to_owned();
@@ -401,4 +403,11 @@ where
             worker_handle: row.name,
         }))
     }
+}
+
+fn forbidden_non_worker() -> (StatusCode, axum::Json<serde_json::Value>) {
+    (
+        StatusCode::FORBIDDEN,
+        axum::Json(serde_json::json!({ "error": "non_worker_key" })),
+    )
 }

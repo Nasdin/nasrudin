@@ -4,11 +4,12 @@
 //!
 //! # Request flow
 //!
-//! 1. **Bearer auth (stub).** This task uses a thin local check: the
-//!    `Authorization: Bearer …` header must be present and the token must
-//!    start with the `nsk_worker_` prefix. Task 4.3 will replace this with the
-//!    real `WorkerAuth` extractor that validates against PostgreSQL — until
-//!    then we trust that the bearer's owner_id matches `batch.worker_id`.
+//! 1. **Bearer auth.** The `WorkerAuth` extractor (Task 4.3) parses the
+//!    `Authorization: Bearer nsk_worker_…` header, looks up the api-key in
+//!    PostgreSQL, verifies the Argon2 hash, and rejects any non-worker key
+//!    kinds. After extraction we additionally enforce that
+//!    `auth.worker_handle == batch.worker_id` — a worker cannot submit on
+//!    behalf of another worker.
 //! 2. **Per-worker rate limit.** Consumes `theorems.len()` tokens from the
 //!    keyed `WorkerRateLimiter` (default 60/min). Failure → 429 for the entire
 //!    batch.
@@ -42,7 +43,7 @@ use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{lake_builder::preflight_axiom_or_sorry, state::AppState};
+use crate::{auth::WorkerAuth, lake_builder::preflight_axiom_or_sorry, state::AppState};
 use nasrudin_pg::query::theorems;
 use nasrudin_rocks::ReverifyJob;
 
@@ -117,32 +118,20 @@ pub struct IngestResponse {
 /// See module-level docs for the full request flow + race-window discussion.
 pub async fn ingest(
     State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
+    auth: WorkerAuth,
     Json(batch): Json<IngestBatch>,
 ) -> axum::response::Response {
-    // === Bearer auth (Task 4.3 will replace this stub with WorkerAuth) ===
-    let bearer = match headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-    {
-        Some(h) if h.starts_with("Bearer ") => h["Bearer ".len()..].to_string(),
-        _ => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "missing_bearer" })),
-            )
-                .into_response();
-        }
-    };
-    if !bearer.starts_with("nsk_worker_") {
+    // === Bearer auth (WorkerAuth extractor — Task 4.3) ===
+    // The extractor already enforced: header present, `nsk_worker_` prefix,
+    // row exists in `api_keys`, kind == "worker", Argon2 hash verified.
+    // Additionally enforce that the worker can only ingest as itself.
+    if auth.0.worker_handle != batch.worker_id {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "non_worker_key" })),
+            Json(serde_json::json!({ "error": "worker_id_mismatch" })),
         )
             .into_response();
     }
-    // For Task 4.2 we trust that the bearer's owner_id == batch.worker_id;
-    // the proper check lives in WorkerAuth (Task 4.3).
 
     // === Per-worker rate limit ===
     let n = batch.theorems.len() as u32;
