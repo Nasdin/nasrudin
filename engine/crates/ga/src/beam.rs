@@ -145,8 +145,29 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
                 let ladder = ladder_score(&expr, target);
                 next.push(BeamState { chain: next_chain, expr, ladder, shape });
             }
-            // 3. TakePositiveRoot when applicable: only meaningful when
-            //    `current_expr` is `Eq(Pow(_,2), Pow(_,2))`.
+            // 3. RearrangeEquation toward each ladder rung. The
+            //    DerivationContext accumulates all introduced axioms as
+            //    facts, so RearrangeEquation's nlinarith claim is real:
+            //    "current rearranges to <rung> using the accumulated
+            //    facts." This is the step the beam was missing — it's
+            //    what turns axiom-collection into actual composition.
+            //    We try every rung (including the final target) so the
+            //    beam can climb the ladder.
+            for (i, rung) in target.ladder.iter().enumerate() {
+                let mut next_chain = state.chain.clone();
+                next_chain.push(RuleStep::RearrangeEquation {
+                    description: format!("rearrange toward {} rung {}", target.name, i),
+                    target: rung.clone(),
+                });
+                if let Some(expr) = run_chain(&next_chain, store) {
+                    let shape = shape_similarity(&expr, &target.final_target);
+                    let ladder = ladder_score(&expr, target);
+                    next.push(BeamState { chain: next_chain, expr, ladder, shape });
+                }
+            }
+            // 4. TakePositiveRoot when applicable: only meaningful when
+            //    `current_expr` is `Eq(Pow(_,2), Pow(_,2))` — the shape
+            //    of the penultimate ladder rung `E² = (mc²)²`.
             if matches!(
                 &state.expr,
                 Expr::BinOp(BinOp::Eq, l, r)
@@ -189,8 +210,27 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
         }
         frontier = next;
 
-        // Early stop on perfect match.
-        if frontier.first().map(|s| s.shape).unwrap_or(0.0) >= 0.999 {
+        // Early stop only when shape ≈ 1.0 AND the chain has enough
+        // IntroduceAxiom steps that the trailing RearrangeEquation has
+        // a real chance of being lake-discharged. A 2-step chain
+        // `[IntroduceAxiom, RearrangeEquation(target)]` always shows
+        // shape=1.0 because RearrangeEquation just sets `current` to
+        // its claimed target — but Lean has only one fact in scope, so
+        // nlinarith almost certainly can't prove it. Wait until at
+        // least 4 introduces are stacked (the minimum for the canonical
+        // E=mc² chain) before declaring victory.
+        let best_shape = frontier.first().map(|s| s.shape).unwrap_or(0.0);
+        let intro_count = frontier
+            .first()
+            .map(|s| {
+                s.chain
+                    .0
+                    .iter()
+                    .filter(|step| matches!(step, RuleStep::IntroduceAxiom { .. }))
+                    .count()
+            })
+            .unwrap_or(0);
+        if best_shape >= 0.999 && intro_count >= 4 {
             break;
         }
     }

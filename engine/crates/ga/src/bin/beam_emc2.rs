@@ -131,6 +131,30 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Lake builds are slow (~30s/candidate). Cap to the top-K by
+    // (shape DESC, chain-length ASC) so we lake-build the most likely
+    // and shortest first. Override with --max-verify N.
+    let max_verify: usize = get_arg("--max-verify")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8);
+    let mut sorted: Vec<_> = report.candidates.clone();
+    sorted.sort_by(|a, b| {
+        b.shape
+            .partial_cmp(&a.shape)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.chain.0.len().cmp(&b.chain.0.len()))
+    });
+    // Dedup by canonical so we don't lake-build the same statement
+    // arrived at via different chain prefixes.
+    let mut seen = std::collections::HashSet::new();
+    sorted.retain(|s| seen.insert(s.expr.to_canonical()));
+    let pick: Vec<_> = sorted.into_iter().take(max_verify).collect();
+    println!(
+        "▶ Verifying top {} of {} unique candidates (use --max-verify N to change)",
+        pick.len(),
+        report.candidates.len()
+    );
+
     // Verify and submit each candidate that cleared the threshold.
     let prover_root = match &prover_root {
         Some(p) => p,
@@ -147,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .unwrap_or_else(|| "beam-emc2".into());
 
-    for (i, cand) in report.candidates.iter().enumerate() {
+    for (i, cand) in pick.iter().enumerate() {
         let mod_name = format!("Beam_{}", i);
         let theorem_name = format!("beam_{}", i);
         println!("▶ Verifying candidate {} (shape={:.3}):", i, cand.shape);
