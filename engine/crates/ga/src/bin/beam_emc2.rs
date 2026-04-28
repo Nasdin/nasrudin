@@ -62,6 +62,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the AxiomStore: upstream postulates + (optionally) seed-sync.
     let mut store = AxiomStore::new();
+    // Newtonian postulates first; SR/EM upstream layered on top. The
+    // server's AxiomStore loads the same set so chain replay matches.
+    store.load_classical_mechanics_postulates();
     match domain.as_str() {
         "sr" => store.load_special_relativity_upstream(),
         "em" => store.load_electromagnetism_upstream(),

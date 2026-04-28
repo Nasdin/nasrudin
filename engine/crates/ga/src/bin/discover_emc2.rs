@@ -91,6 +91,11 @@ async fn main() {
     println!();
 
     let mut store = AxiomStore::new();
+    // Always load the classical-mechanics postulate set: every domain's
+    // ladder benefits from kinematic primitives (momentum, work, KE).
+    // The chain firewall on the API side has the same postulates loaded
+    // so server-side replay accepts them.
+    store.load_classical_mechanics_postulates();
     let forbidden_axiom = match domain.as_str() {
         "sr" => {
             store.load_special_relativity_upstream();

@@ -127,6 +127,17 @@ build-extract:
 extract-physlean: build-extract
     cd physlean-extract && lake exe extract
 
+# Extract a curated Mathlib subset to physlean-extract/output/math_corpus.json.
+# The whitelist targets real-arithmetic identities the GA can rewrite over
+# (algebra, exponent/power rules over ℝ). PhysLean must already be built
+# (`just build-extract` once). The output JSON's `expr_ast` field is the
+# load-bearing one — nasrudin_derive::AxiomStore only registers a real
+# Expr for entries with `expr_ast != null`.
+extract-mathlib: build-extract
+    cd physlean-extract && lake exe extract \
+        --whitelist=Mathlib.Algebra.Ring.Basic,Mathlib.Algebra.GroupPower.Basic,Mathlib.Algebra.Order.Ring,Mathlib.Data.Real.Basic,Mathlib.Analysis.SpecialFunctions.Pow.Real,Real. \
+        --output=output/math_corpus.json
+
 # Generate .lean axiom files from PhysLean catalog
 generate-axioms:
     cd engine && cargo run --release --bin generate_lean -- \

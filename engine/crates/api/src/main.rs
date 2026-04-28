@@ -101,6 +101,23 @@ async fn main() -> anyhow::Result<()> {
     }
     axiom_store.load_special_relativity_upstream();
     axiom_store.load_electromagnetism_upstream();
+    // Classical mechanics — postulates only (Newton's laws, momentum
+    // definition, kinetic energy, work). Required for the ladder a
+    // worker traverses on the way from Lorentz invariance to E=mc².
+    // Until PhysLean ships these upstream they live in
+    // `nasrudin_derive::postulates_classical`.
+    axiom_store.load_classical_mechanics_postulates();
+
+    // Math corpus from Mathlib (real-arithmetic identities). Optional —
+    // missing file is a soft warning, not a boot failure, so dev
+    // environments without `just extract-mathlib` keep working.
+    let math_corpus_path =
+        std::path::Path::new(&prover_root).join("../physlean-extract/output/math_corpus.json");
+    match axiom_store.load_math_corpus(&math_corpus_path) {
+        Ok(0) => {} // already logged
+        Ok(n) => tracing::info!("Loaded {n} math-corpus identities from {}", math_corpus_path.display()),
+        Err(e) => tracing::warn!("Math corpus load failed ({e}): continuing without"),
+    }
     tracing::info!("AxiomStore size after upstream layering: {}", axiom_store.len());
 
     // No-cheat audit: hard-fail boot if any registered axiom matches a

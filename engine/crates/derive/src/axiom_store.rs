@@ -130,6 +130,27 @@ impl AxiomStore {
         Ok(count)
     }
 
+    /// Convenience: load a Mathlib math-corpus JSON file (produced by
+    /// `lake exe extract --whitelist=Mathlib...`). Same wire shape as
+    /// the PhysLean catalog; only entries with a populated `expr_ast`
+    /// get a real `Expr` registered, the rest fall back to the
+    /// placeholder `Var(name)` form.
+    ///
+    /// Returns `Ok(0)` (and logs a warning) if the file doesn't exist,
+    /// so a missing math corpus doesn't block boot — the AxiomStore
+    /// just runs with whatever upstream postulates are available.
+    pub fn load_math_corpus(&mut self, corpus_path: &std::path::Path) -> anyhow::Result<usize> {
+        if !corpus_path.exists() {
+            tracing::warn!(
+                "Math corpus not found at {} (run `just extract-mathlib` to build it); \
+                 continuing with upstream-only AxiomStore",
+                corpus_path.display()
+            );
+            return Ok(0);
+        }
+        self.load_from_catalog(corpus_path)
+    }
+
     /// Load special relativity axioms (legacy — prefer `load_from_catalog`).
     ///
     /// Registers:

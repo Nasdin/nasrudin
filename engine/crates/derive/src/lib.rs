@@ -28,6 +28,7 @@ pub mod error;
 pub mod lean_emitter;
 pub mod lean_verify;
 pub mod no_cheat_audit;
+pub mod postulates_classical;
 pub mod rewrite;
 pub mod rules;
 pub mod strategies;
