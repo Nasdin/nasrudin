@@ -1,0 +1,219 @@
+use sea_orm_migration::prelude::*;
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(Theorems::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Theorems::Id)
+                            .binary_len(8)
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(Theorems::CanonicalHash)
+                            .binary_len(8)
+                            .not_null()
+                            .unique_key(),
+                    )
+                    .col(
+                        ColumnDef::new(Theorems::CanonicalStatement)
+                            .text()
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(Theorems::Latex).text().null())
+                    .col(ColumnDef::new(Theorems::LeanSource).text().not_null())
+                    .col(ColumnDef::new(Theorems::Domain).text().not_null())
+                    .col(
+                        ColumnDef::new(Theorems::AxiomsUsed)
+                            .array(ColumnType::Text)
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Theorems::ChainJson)
+                            .json_binary()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Theorems::Parents)
+                            .array(ColumnType::Binary(8))
+                            .null(),
+                    )
+                    .col(ColumnDef::new(Theorems::OriginKind).text().not_null())
+                    .col(ColumnDef::new(Theorems::OriginPayload).json_binary().null())
+                    .col(ColumnDef::new(Theorems::Depth).integer().null())
+                    .col(ColumnDef::new(Theorems::Complexity).integer().null())
+                    .col(ColumnDef::new(Theorems::Generation).big_integer().null())
+                    .col(ColumnDef::new(Theorems::FitnessNovelty).float().null())
+                    .col(ColumnDef::new(Theorems::FitnessCompactness).float().null())
+                    .col(
+                        ColumnDef::new(Theorems::FitnessDimensionalCorrectness)
+                            .float()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(Theorems::FitnessDomainCoverage)
+                            .float()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(Theorems::FitnessAxiomEfficiency)
+                            .float()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(Theorems::FitnessNasrudinRelevance)
+                            .float()
+                            .null(),
+                    )
+                    .col(ColumnDef::new(Theorems::FitnessDepthScore).float().null())
+                    .col(
+                        ColumnDef::new(Theorems::Dimension)
+                            .array(ColumnType::Integer)
+                            .null(),
+                    )
+                    .col(ColumnDef::new(Theorems::EngineGitSha).text().not_null())
+                    .col(ColumnDef::new(Theorems::LeanVersion).text().not_null())
+                    .col(ColumnDef::new(Theorems::VerificationTactic).text().null())
+                    .col(
+                        ColumnDef::new(Theorems::VerificationDurationMs)
+                            .integer()
+                            .null(),
+                    )
+                    .col(ColumnDef::new(Theorems::VerificationPath).text().null())
+                    .col(
+                        ColumnDef::new(Theorems::Status)
+                            .text()
+                            .not_null()
+                            .default("Pending"),
+                    )
+                    .col(ColumnDef::new(Theorems::RejectedReason).text().null())
+                    .col(ColumnDef::new(Theorems::ContributorId).text().not_null())
+                    .col(
+                        ColumnDef::new(Theorems::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(
+                        ColumnDef::new(Theorems::VerifiedAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_theorems_domain")
+                    .table(Theorems::Table)
+                    .col(Theorems::Domain)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_theorems_depth")
+                    .table(Theorems::Table)
+                    .col(Theorems::Depth)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_theorems_generation")
+                    .table(Theorems::Table)
+                    .col(Theorems::Generation)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_theorems_status")
+                    .table(Theorems::Table)
+                    .col(Theorems::Status)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_theorems_contributor")
+                    .table(Theorems::Table)
+                    .col(Theorems::ContributorId)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_theorems_verified_at")
+                    .table(Theorems::Table)
+                    .col(Theorems::VerifiedAt)
+                    .to_owned(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(Table::drop().table(Theorems::Table).to_owned())
+            .await
+    }
+}
+
+#[derive(DeriveIden)]
+enum Theorems {
+    Table,
+    Id,
+    CanonicalHash,
+    CanonicalStatement,
+    Latex,
+    LeanSource,
+    Domain,
+    AxiomsUsed,
+    ChainJson,
+    Parents,
+    OriginKind,
+    OriginPayload,
+    Depth,
+    Complexity,
+    Generation,
+    FitnessNovelty,
+    FitnessCompactness,
+    FitnessDimensionalCorrectness,
+    FitnessDomainCoverage,
+    FitnessAxiomEfficiency,
+    FitnessNasrudinRelevance,
+    FitnessDepthScore,
+    Dimension,
+    EngineGitSha,
+    LeanVersion,
+    VerificationTactic,
+    VerificationDurationMs,
+    VerificationPath,
+    Status,
+    RejectedReason,
+    ContributorId,
+    CreatedAt,
+    VerifiedAt,
+}

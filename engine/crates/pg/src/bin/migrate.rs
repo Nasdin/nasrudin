@@ -1,5 +1,10 @@
 //! Standalone migration runner. Loads `.env`, connects to Postgres,
-//! and applies all pending migrations.
+//! and applies pending migrations (or rolls back the last one).
+//!
+//! Usage:
+//!   migrate            # apply all pending migrations (default: up)
+//!   migrate up         # apply all pending migrations
+//!   migrate down       # roll back the most recently applied migration
 
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -17,8 +22,21 @@ async fn main() -> anyhow::Result<()> {
     let url =
         std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is not set"))?;
 
+    let cmd = std::env::args().nth(1).unwrap_or_else(|| "up".into());
     let db = nasrudin_pg::connect_simple(&url).await?;
-    nasrudin_pg::run_migrations(&db).await?;
-    println!("migrations complete");
+
+    match cmd.as_str() {
+        "up" => {
+            nasrudin_pg::run_migrations(&db).await?;
+            println!("migrations complete");
+        }
+        "down" => {
+            nasrudin_pg::rollback_last(&db).await?;
+            println!("rollback complete");
+        }
+        other => {
+            anyhow::bail!("unknown command '{other}', expected 'up' or 'down'");
+        }
+    }
     Ok(())
 }
