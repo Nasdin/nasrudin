@@ -9,6 +9,11 @@ use crate::{auth::AuthSess, keygen};
 pub struct CreateBody {
     pub name: String,
     pub expires_in_days: Option<i64>,
+    /// `"live"` (default) for read/server-to-server keys, `"worker"` for
+    /// distributed-discovery binaries that POST to `/api/ingest`. A `worker`
+    /// key also registers a row in the `workers` table keyed on `name`.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 /// `POST /api/api-keys` — cookie auth only.
@@ -20,14 +25,26 @@ pub async fn create(auth: AuthSess, Json(body): Json<CreateBody>) -> impl IntoRe
         );
     };
 
-    if body.name.trim().is_empty() {
+    let name = body.name.trim();
+    if name.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "name is required" })),
         );
     }
 
-    let generated = match keygen::generate("live") {
+    let kind = match body.kind.as_deref().unwrap_or("live") {
+        "live" => "live",
+        "worker" => "worker",
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("unknown kind '{other}'") })),
+            );
+        }
+    };
+
+    let generated = match keygen::generate(kind) {
         Ok(k) => k,
         Err(e) => {
             return (
@@ -37,6 +54,17 @@ pub async fn create(auth: AuthSess, Json(body): Json<CreateBody>) -> impl IntoRe
         }
     };
 
+    if kind == "worker"
+        && let Err(e) =
+            nasrudin_pg::query::workers::register(&auth.backend.db, name, Some(name), None).await
+        && !format!("{e}").contains("duplicate key")
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("worker_register: {e}") })),
+        );
+    }
+
     let expires_at = body
         .expires_in_days
         .map(|d| chrono::Utc::now() + chrono::Duration::days(d));
@@ -44,8 +72,8 @@ pub async fn create(auth: AuthSess, Json(body): Json<CreateBody>) -> impl IntoRe
     let row = match nasrudin_pg::query::api_keys::create(
         &auth.backend.db,
         Some(user.id),
-        "live",
-        body.name.trim(),
+        kind,
+        name,
         &generated.prefix,
         &generated.hash,
         expires_at,
@@ -66,6 +94,7 @@ pub async fn create(auth: AuthSess, Json(body): Json<CreateBody>) -> impl IntoRe
         Json(serde_json::json!({
             "id": row.id,
             "name": row.name,
+            "kind": row.kind,
             "prefix": row.prefix,
             "full_key": generated.full,
             "created_at": row.created_at,
@@ -90,6 +119,7 @@ pub async fn list(auth: AuthSess) -> impl IntoResponse {
                     serde_json::json!({
                         "id": r.id,
                         "name": r.name,
+                        "kind": r.kind,
                         "prefix": r.prefix,
                         "last_used_at": r.last_used_at,
                         "created_at": r.created_at,

@@ -86,18 +86,22 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Load PhysLean axioms from catalog
+    // Load PhysLean axioms from catalog, then layer the upstream SR + EM
+    // Expr-tree axioms on top so the server's AxiomStore mirrors what
+    // workers see. Workers can submit chains that reference upstream
+    // axioms by name; reverify::check_chain replays them server-side and
+    // rejects unknown names — so the server must know the same names.
     let mut axiom_store = AxiomStore::new();
     let prover_root = std::env::var("PROVER_ROOT").unwrap_or_else(|_| "../prover".into());
     let catalog_path =
         std::path::Path::new(&prover_root).join("../physlean-extract/output/catalog.json");
     match axiom_store.load_from_catalog(&catalog_path) {
         Ok(count) => tracing::info!("Loaded {count} axioms from {}", catalog_path.display()),
-        Err(e) => tracing::warn!(
-            "Failed to load catalog ({}): GA will seed with random only",
-            e
-        ),
+        Err(e) => tracing::warn!("Failed to load catalog ({e}): continuing with upstream only"),
     }
+    axiom_store.load_special_relativity_upstream();
+    axiom_store.load_electromagnetism_upstream();
+    tracing::info!("AxiomStore size after upstream layering: {}", axiom_store.len());
     let axiom_store = Arc::new(axiom_store);
 
     // Channels
@@ -108,40 +112,56 @@ async fn main() -> anyhow::Result<()> {
     // Shutdown signal
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    // GA status snapshot (updated by GA thread)
+    // In-process GA. Phase 9 distributed mode: workers run discover_emc2
+    // externally and POST to /api/ingest, so the API daemon is a pure
+    // membrane by default. Set NASRUDIN_API_RUN_INPROC_GA=1 to also run a
+    // GA thread inside the API process (legacy single-node mode; contends
+    // with external workers for the prover lake build cache).
+    let inproc_ga = std::env::var("NASRUDIN_API_RUN_INPROC_GA")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
     let ga_status = Arc::new(std::sync::Mutex::new(GaStatusSnapshot {
-        running: true,
+        running: inproc_ga,
         ..Default::default()
     }));
 
-    // Spawn GA thread (CPU-bound, std::thread)
-    let ga_config = GaConfig::default();
-    let ga_db = Arc::clone(&db);
-    let ga_axiom_store = (*axiom_store).clone();
-    let ga_discovery_tx = discovery_tx.clone();
-    let ga_shutdown = Arc::clone(&shutdown);
-    let ga_status_ref = Arc::clone(&ga_status);
+    if inproc_ga {
+        tracing::info!("In-process GA enabled (NASRUDIN_API_RUN_INPROC_GA=1)");
+        let ga_config = GaConfig::default();
+        let ga_db = Arc::clone(&db);
+        let ga_axiom_store = (*axiom_store).clone();
+        let ga_discovery_tx = discovery_tx.clone();
+        let ga_shutdown = Arc::clone(&shutdown);
+        let ga_status_ref = Arc::clone(&ga_status);
+        std::thread::Builder::new()
+            .name("ga-engine".into())
+            .spawn(move || {
+                let engine = GaEngine::new(ga_config, ga_db, ga_axiom_store);
+                engine.run_with_status(
+                    candidates_tx,
+                    verified_rx,
+                    ga_discovery_tx,
+                    ga_shutdown,
+                    ga_status_ref,
+                );
+            })?;
 
-    std::thread::Builder::new()
-        .name("ga-engine".into())
-        .spawn(move || {
-            let engine = GaEngine::new(ga_config, ga_db, ga_axiom_store);
-
-            engine.run_with_status(
-                candidates_tx,
-                verified_rx,
-                ga_discovery_tx,
-                ga_shutdown,
-                ga_status_ref,
-            );
-        })?;
-
-    // Spawn verification workers (process candidates via Lean4)
-    let verify_db = Arc::clone(&db);
-    let verify_discovery_tx = discovery_tx.clone();
-    tokio::spawn(async move {
-        run_verification_workers(candidates_rx, verified_tx, verify_db, verify_discovery_tx).await;
-    });
+        let verify_db = Arc::clone(&db);
+        let verify_discovery_tx = discovery_tx.clone();
+        tokio::spawn(async move {
+            run_verification_workers(candidates_rx, verified_tx, verify_db, verify_discovery_tx)
+                .await;
+        });
+    } else {
+        tracing::info!(
+            "In-process GA disabled — API is a pure ingest membrane. Workers should POST to /api/ingest."
+        );
+        // Drop the unused channel ends so cargo doesn't warn.
+        drop(candidates_tx);
+        drop(candidates_rx);
+        drop(verified_tx);
+        drop(verified_rx);
+    }
 
     // Phase 9: construct LakeBuilder + (optionally) ReverifyQueue before
     // AppState. The drain loop is only spawned when Postgres is configured,

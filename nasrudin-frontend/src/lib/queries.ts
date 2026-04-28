@@ -92,7 +92,7 @@ export function useApiKeys() {
 export function useCreateApiKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; expires_in_days?: number }) =>
+    mutationFn: (body: { name: string; kind?: 'live' | 'worker'; expires_in_days?: number }) =>
       apiFetch<NewApiKey>('/api/api-keys', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
   });

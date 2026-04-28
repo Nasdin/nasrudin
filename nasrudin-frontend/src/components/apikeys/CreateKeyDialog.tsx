@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useCreateApiKey } from '~/lib/queries';
-import type { NewApiKey } from '~/lib/types';
+import type { ApiKeyKind, NewApiKey } from '~/lib/types';
 
 export function CreateKeyDialog({
   onClose,
@@ -10,6 +10,7 @@ export function CreateKeyDialog({
   onCreated: (k: NewApiKey) => void;
 }) {
   const [name, setName] = useState('');
+  const [kind, setKind] = useState<ApiKeyKind>('live');
   const [error, setError] = useState<string | null>(null);
   const create = useCreateApiKey();
 
@@ -20,7 +21,7 @@ export function CreateKeyDialog({
       return;
     }
     try {
-      const key = await create.mutateAsync({ name: name.trim() });
+      const key = await create.mutateAsync({ name: name.trim(), kind });
       onCreated(key);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'failed');
@@ -60,9 +61,80 @@ export function CreateKeyDialog({
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="my-laptop"
+            placeholder={kind === 'worker' ? 'my-laptop-worker' : 'my-laptop'}
           />
-          <span className="hint">A short label so you remember what this key is for.</span>
+          <span className="hint">
+            {kind === 'worker'
+              ? 'Identifies this worker in the leaderboard and heartbeat log.'
+              : 'A short label so you remember what this key is for.'}
+          </span>
+        </div>
+        <div className="field" style={{ marginTop: 16 }}>
+          <span
+            style={{
+              fontSize: 12,
+              letterSpacing: 'var(--tracking-allcaps)',
+              textTransform: 'uppercase',
+              color: 'var(--ink-500)',
+              fontWeight: 600,
+            }}
+          >
+            Kind
+          </span>
+          <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+            <label
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'auto 1fr',
+                gap: 10,
+                alignItems: 'baseline',
+                cursor: 'pointer',
+                padding: '10px 12px',
+                border: `1px solid ${kind === 'live' ? 'var(--terracotta-500)' : 'var(--paper-200)'}`,
+                borderRadius: 'var(--radius-md)',
+                background: kind === 'live' ? 'var(--terracotta-50)' : 'transparent',
+                transition: 'all var(--dur-fast) var(--ease-out)',
+              }}
+            >
+              <input
+                type="radio"
+                name="kind"
+                value="live"
+                checked={kind === 'live'}
+                onChange={() => setKind('live')}
+              />
+              <span style={{ fontSize: 13, color: 'var(--ink-700)' }}>
+                <strong style={{ color: 'var(--ink-900)' }}>Live</strong> — read API + scripts (
+                <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>nsk_live_…</code>)
+              </span>
+            </label>
+            <label
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'auto 1fr',
+                gap: 10,
+                alignItems: 'baseline',
+                cursor: 'pointer',
+                padding: '10px 12px',
+                border: `1px solid ${kind === 'worker' ? 'var(--terracotta-500)' : 'var(--paper-200)'}`,
+                borderRadius: 'var(--radius-md)',
+                background: kind === 'worker' ? 'var(--terracotta-50)' : 'transparent',
+                transition: 'all var(--dur-fast) var(--ease-out)',
+              }}
+            >
+              <input
+                type="radio"
+                name="kind"
+                value="worker"
+                checked={kind === 'worker'}
+                onChange={() => setKind('worker')}
+              />
+              <span style={{ fontSize: 13, color: 'var(--ink-700)' }}>
+                <strong style={{ color: 'var(--ink-900)' }}>Worker</strong> — discovery binary (
+                <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>nsk_worker_…</code>)
+              </span>
+            </label>
+          </div>
         </div>
         {error && (
           <div role="alert" style={{ color: 'var(--danger-500)', fontSize: 13 }}>
@@ -89,6 +161,7 @@ export function CreateKeyDialog({
 
 export function RevealKeyModal({ keyValue, onClose }: { keyValue: string; onClose: () => void }) {
   const [acknowledged, setAck] = useState(false);
+  const isWorker = keyValue.startsWith('nsk_worker_');
   return (
     <div
       role="dialog"
@@ -128,6 +201,20 @@ export function RevealKeyModal({ keyValue, onClose }: { keyValue: string; onClos
         >
           Copy to clipboard
         </button>
+        {isWorker && (
+          <div style={{ marginTop: 16, fontSize: 13 }}>
+            <p style={{ color: 'var(--ink-700)', marginBottom: 8 }}>
+              Run the discovery worker on your machine:
+            </p>
+            <pre
+              className="code-block"
+              style={{ fontSize: 12, padding: 12, overflow: 'auto', userSelect: 'all' }}
+            >{`curl -L https://github.com/nasdin/nasrudin/releases/latest/download/nasrudin-worker-$(uname -s | tr A-Z a-z)-$(uname -m).tar.gz | tar xz
+NASRUDIN_API_URL=https://api.nasrudin.org \\
+NASRUDIN_WORKER_KEY=${keyValue} \\
+./nasrudin-worker --gens 100 --pop 64`}</pre>
+          </div>
+        )}
         <label
           style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 24, fontSize: 13 }}
         >

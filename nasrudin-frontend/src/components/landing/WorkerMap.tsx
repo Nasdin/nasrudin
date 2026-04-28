@@ -192,9 +192,7 @@ export function WorkerMap() {
       </div>
       <div className="network-stats">
         <div className="network-stat-card">
-          <div className="network-big-num">
-            {(workers.data?.length ?? 0).toLocaleString()}
-          </div>
+          <div className="network-big-num">{(workers.data?.length ?? 0).toLocaleString()}</div>
           <div className="network-label">Workers · live</div>
         </div>
       </div>

@@ -35,7 +35,11 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use nasrudin_derive::AxiomStore;
+use nasrudin_derive::{
+    AxiomStore, Chain, DerivationContext, RuleStep,
+    lean_emitter::{LeanEmitConfig, emit_lean_file},
+    strategies::DerivationStrategy,
+};
 use nasrudin_pg::query::{theorems as theorem_q, workers as worker_q};
 use nasrudin_rocks::{ReverifyJob, TheoremDb};
 use sea_orm::{DatabaseConnection, TransactionTrait};
@@ -96,13 +100,25 @@ pub enum DiscoveryEvent {
 }
 
 impl ReverifyQueue {
-    /// Process one queued job. Tries A-path (server-regenerated Lean from
-    /// the chain) first; falls through to [`Self::try_b_path`] on any A-path
-    /// failure.
+    /// Process one queued job. The verification cascade is:
     ///
-    /// On A-path success, atomically flips `Pending → Verified`, increments
-    /// the contributor's counter, broadcasts [`DiscoveryEvent::TheoremVerified`],
-    /// and dequeues the job from RocksDB.
+    /// 1. **Chain validation (firewall).** Replay the worker-submitted chain
+    ///    against the server's trusted [`AxiomStore`]. If the chain references
+    ///    an unknown axiom, fails to apply a step, or produces a final
+    ///    expression that doesn't match the row's canonical statement, the
+    ///    submission is rejected immediately — this catches workers who
+    ///    fabricate steps or claim a result they didn't actually derive. The
+    ///    submission never reaches a lake-build stage.
+    /// 2. **A-path (server-regenerated Lean).** If the chain replays cleanly,
+    ///    the server emits its own Lean source from the resulting context and
+    ///    lake-builds *that*, not the worker's. A worker can no longer pass
+    ///    by submitting unrelated Lean source; the math has to actually
+    ///    follow from the chain they sent.
+    /// 3. **B-path (worker-submitted Lean fallback).** Reached only when the
+    ///    chain is empty (e.g. backfilled / imported theorems with no chain)
+    ///    *or* the server's emitter produced a chain whose Lean fails to
+    ///    build (`server_emitter_drift` — math is real but our emitter has
+    ///    a bug). In that case we lake-build the worker's submitted source.
     pub async fn process_one(&self, job: ReverifyJob) -> Result<()> {
         // 1. Load row from Postgres.
         let row = match theorem_q::get_by_id(&self.pg, &job.theorem_id).await? {
@@ -119,30 +135,103 @@ impl ReverifyQueue {
 
         let theorem_id_hex = hex::encode(row.id.as_slice());
 
-        // 2. Try server-side Lean regeneration from the chain. If the
-        //    server-emitted Lean matches the recorded canonical statement,
-        //    feed it to LakeBuilder for the trusted A-path verification.
-        if let Some(regen) = self.try_regenerate_lean(&row).await
-            && regen.canonical_statement == row.canonical_statement
-        {
-            match self.lake.verify(&regen.lean_source, &theorem_id_hex).await? {
-                VerifyOutcome::Verified {
-                    tactic,
-                    duration_ms,
-                } => {
-                    self.flip_verified(&row, "A", &tactic, duration_ms).await?;
-                    self.rocks.dequeue_reverify(&job.theorem_id).ok();
-                    return Ok(());
+        // 2. Replay the chain server-side over our trusted AxiomStore.
+        match self.check_chain(&row) {
+            ChainCheck::Regenerated(regen) => {
+                match self.lake.verify(&regen.lean_source, &theorem_id_hex).await? {
+                    VerifyOutcome::Verified {
+                        tactic,
+                        duration_ms,
+                    } => {
+                        self.flip_verified(&row, "A", &tactic, duration_ms).await?;
+                        self.rocks.dequeue_reverify(&job.theorem_id).ok();
+                        return Ok(());
+                    }
+                    VerifyOutcome::Rejected { reason, .. } => {
+                        // Chain validates but server-emitted Lean fails to
+                        // build — emitter has a bug for this shape. The math
+                        // is real, fall through to B-path on the worker's
+                        // submitted Lean.
+                        tracing::warn!(
+                            theorem_id = %theorem_id_hex,
+                            reason = %reason,
+                            "server_emitter_drift: chain valid but server-regen Lean failed lake build"
+                        );
+                    }
                 }
-                VerifyOutcome::Rejected { .. } => {
-                    // A-path lake-built but failed; fall through to B-path.
-                }
+            }
+            ChainCheck::Invalid(reason) => {
+                // Hostile / buggy worker: chain doesn't replay. Reject without
+                // trying B-path — we don't lake-build untrusted Lean from a
+                // worker whose chain can't be verified.
+                let full_reason = format!("chain_invalid: {reason}");
+                tracing::warn!(
+                    theorem_id = %theorem_id_hex,
+                    contributor = %row.contributor_id,
+                    reason = %reason,
+                    "rejecting hostile / malformed chain submission"
+                );
+                theorem_q::mark_rejected(&self.pg, &row.id, &full_reason).await?;
+                let _ = self.discovery_tx.send(DiscoveryEvent::TheoremRejected {
+                    theorem_id: theorem_id_hex,
+                    reason: full_reason,
+                });
+                self.rocks.dequeue_reverify(&job.theorem_id).ok();
+                return Ok(());
+            }
+            ChainCheck::Empty => {
+                // No chain provided (e.g. imported/backfilled rows). We
+                // can't verify the chain — fall through to B-path so the
+                // worker's submitted Lean has to lake-build standalone.
             }
         }
 
-        // 3. Fall through to B-path (Task 3.3 will implement; current stub
-        //    just dequeues so the queue doesn't loop forever during 3.2 tests).
+        // 3. B-path: lake-build the worker-submitted source.
         self.try_b_path(job, &row).await
+    }
+
+    /// Replay the row's `chain_json` over the server's [`AxiomStore`] and
+    /// regenerate Lean from the resulting [`DerivationContext`]. See
+    /// [`ChainCheck`] for the three outcomes.
+    fn check_chain(&self, row: &nasrudin_pg::entity::theorems::Model) -> ChainCheck {
+        // Empty / missing chain → defer to B-path. Imported theorems with
+        // origin: Imported and chain=[] are legitimate.
+        let steps_value = match &row.chain_json {
+            v if v.is_null() => return ChainCheck::Empty,
+            serde_json::Value::Array(arr) if arr.is_empty() => return ChainCheck::Empty,
+            v => v,
+        };
+
+        let steps: Vec<RuleStep> = match serde_json::from_value(steps_value.clone()) {
+            Ok(s) => s,
+            Err(e) => return ChainCheck::Invalid(format!("chain_json deserialize: {e}")),
+        };
+
+        let chain = Chain(steps);
+        let mut ctx = DerivationContext::new();
+        let final_expr = match chain.execute(&self.axiom_store, &mut ctx) {
+            Ok(e) => e,
+            Err(e) => return ChainCheck::Invalid(format!("replay: {e}")),
+        };
+
+        // Compare to the row's claimed canonical statement.
+        let server_canonical = final_expr.to_canonical();
+        if server_canonical != row.canonical_statement {
+            return ChainCheck::Invalid(format!(
+                "canonical_mismatch: chain produced `{server_canonical}`, row claims `{}`",
+                row.canonical_statement
+            ));
+        }
+
+        let cfg = LeanEmitConfig {
+            namespace: "PhysicsGenerator.Derived".into(),
+            theorem_name: format!("auto_{}", hex::encode(&row.id)),
+            use_mathlib: true,
+        };
+        let lean_source = emit_lean_file(&ctx, &cfg);
+
+        let _ = server_canonical;
+        ChainCheck::Regenerated(RegeneratedLean { lean_source })
     }
 
     /// B-path fallback: verify the worker-submitted `lean_source` directly via
@@ -253,28 +342,23 @@ impl ReverifyQueue {
         Ok(())
     }
 
-    /// Try to regenerate Lean from the row's `chain_json` via the server's
-    /// trusted [`AxiomStore`] + emitter. Returns `None` when the chain is
-    /// empty, malformed, or references unknown axioms/rules — that signals
-    /// "fall through to B-path."
-    ///
-    /// **Phase 9 stub**: this currently always returns `None`. The real
-    /// implementation needs the chain JSON ↔ `Vec<RuleStep>` ↔ Lean emitter
-    /// glue, which has its own interface contract worth a dedicated pass in
-    /// Task 3.3/3.4.
-    async fn try_regenerate_lean(
-        &self,
-        _row: &nasrudin_pg::entity::theorems::Model,
-    ) -> Option<RegeneratedLean> {
-        // Forces every job to B-path while the chain → Lean emitter glue is
-        // still being designed. Safe to ship in 3.2 because:
-        //   - No live drain loop is wired yet (Task 3.4).
-        //   - Tests use a stub LakeBuilder (Task 3.4).
-        //   - Real A-path regen requires careful chain JSON ↔ RuleStep ↔
-        //     Lean emitter glue, scoped to a follow-up task.
-        let _ = &self.axiom_store;
-        None
-    }
+}
+
+/// Outcome of replaying a worker-submitted chain over the server's
+/// trusted [`AxiomStore`].
+enum ChainCheck {
+    /// Chain replayed cleanly and the final expression matches the row's
+    /// canonical statement; the server emitted its own Lean source from
+    /// the resulting derivation context.
+    Regenerated(RegeneratedLean),
+    /// No chain provided (`null` or empty array). Imported / backfilled
+    /// theorems are legitimate in this state — defer to B-path.
+    Empty,
+    /// Chain failed to deserialize, failed to replay, or produced a final
+    /// expression that doesn't match the row's claimed canonical statement.
+    /// The submission is rejected without ever lake-building the worker's
+    /// untrusted Lean source.
+    Invalid(String),
 }
 
 impl ReverifyQueue {
@@ -311,15 +395,11 @@ impl ReverifyQueue {
     }
 }
 
-/// Bundle of "server-regenerated Lean" facts produced by
-/// [`ReverifyQueue::try_regenerate_lean`].
-///
-/// `canonical_statement` is the prefix-form derived equation; the queue
-/// requires it to bit-match the row's stored `canonical_statement` before
-/// it will trust the A-path verification. `lean_source` is the
-/// `theorem … := by …` body suitable for handing to
-/// [`LakeBuilder::verify`].
+/// Server-regenerated Lean source for the A-path lake-build. Produced by
+/// [`ReverifyQueue::check_chain`] only after the chain has been replayed
+/// against the server's [`AxiomStore`] and verified to produce the row's
+/// canonical statement, so the lean source here is server-emitted from a
+/// validated derivation — not the worker's submission.
 struct RegeneratedLean {
-    canonical_statement: String,
     lean_source: String,
 }
