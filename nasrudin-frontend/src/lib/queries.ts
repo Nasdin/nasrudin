@@ -134,3 +134,7 @@ export function useMeStats() {
     queryFn: () => apiFetch<MeStats>('/api/me/stats'),
   });
 }
+
+// --- live event streams (SSE) ---
+
+export { useDiscoveryFeed, useStatsStream } from './sse';

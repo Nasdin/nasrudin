@@ -7,12 +7,15 @@ import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { apiFetch } from '~/lib/api';
 import { useDomains } from '~/lib/queries';
+import { useDiscoveryFeed } from '~/lib/sse';
 import type { Domain, Theorem } from '~/lib/types';
 
 export const Route = createFileRoute('/browse')({ component: BrowsePage });
 
 function BrowsePage() {
   const [domain, setDomain] = useState<Domain | null>(null);
+  // Live invalidation: any new pending/verified/rejected theorem refreshes the list.
+  useDiscoveryFeed();
   const counts = useDomains();
   const list = useQuery({
     queryKey: ['theorems', 'list', domain],
