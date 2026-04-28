@@ -4,6 +4,7 @@ pub mod dimension;
 pub mod expr;
 pub mod id;
 pub mod parse;
+pub mod skeleton;
 pub mod theorem;
 
 pub use axiom_set::collect_axiom_ids;
@@ -11,6 +12,7 @@ pub use canonical_ac::{canonical_ac_hash, canonical_ac_string, to_canonical_ac};
 pub use dimension::Dimension;
 pub use expr::{BinOp, Expr, PhysConst, Symbol, UnOp};
 pub use id::compute_theorem_id;
+pub use skeleton::{normalise_to_skeleton, skeleton_hash, SkeletonHash};
 pub use theorem::{
     AlgebraicOp, Domain, FitnessScore, ProofTree, Theorem, TheoremId, TheoremOrigin,
     VerificationStatus,
