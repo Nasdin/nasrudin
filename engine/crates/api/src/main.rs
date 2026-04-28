@@ -16,7 +16,7 @@ use axum::{
     routing::get,
 };
 use axum_login::AuthManagerLayerBuilder;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tower_governor::GovernorLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -472,12 +472,20 @@ async fn run_verification_workers(
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// Health check endpoint.
-async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    })
+/// Health check endpoint. Phase 9: includes db/rocks status, reverify queue depth,
+/// and total theorem count for monitoring + the smoke-test contract.
+async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let db = if state.pg.is_some() { "ok" } else { "down" };
+    let queue_depth = state.db.reverify_queue_depth().unwrap_or(usize::MAX);
+    let stats = state.db.get_stats().unwrap_or_default();
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "db": db,
+        "rocks": "ok",
+        "queue_depth": queue_depth,
+        "theorems_total": stats.total_theorems,
+    }))
 }
 
 /// Engine statistics.
@@ -650,8 +658,3 @@ async fn list_axioms(
 // Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize)]
-struct HealthResponse {
-    status: String,
-    version: String,
-}
