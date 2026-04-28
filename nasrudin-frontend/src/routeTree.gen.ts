@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkersRouteImport } from './routes/workers'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SearchRouteImport } from './routes/search'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as LibraryRouteImport } from './routes/library'
@@ -35,6 +36,11 @@ const SigninRoute = SigninRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfileRoute = ProfileRouteImport.update({
@@ -92,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
+  '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/workers': typeof WorkersRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByTo {
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
+  '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/workers': typeof WorkersRoute
@@ -121,6 +129,7 @@ export interface FileRoutesById {
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
+  '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/workers': typeof WorkersRoute
@@ -137,6 +146,7 @@ export interface FileRouteTypes {
     | '/library'
     | '/pricing'
     | '/profile'
+    | '/search'
     | '/settings'
     | '/signin'
     | '/workers'
@@ -151,6 +161,7 @@ export interface FileRouteTypes {
     | '/library'
     | '/pricing'
     | '/profile'
+    | '/search'
     | '/settings'
     | '/signin'
     | '/workers'
@@ -165,6 +176,7 @@ export interface FileRouteTypes {
     | '/library'
     | '/pricing'
     | '/profile'
+    | '/search'
     | '/settings'
     | '/signin'
     | '/workers'
@@ -180,6 +192,7 @@ export interface RootRouteChildren {
   LibraryRoute: typeof LibraryRoute
   PricingRoute: typeof PricingRoute
   ProfileRoute: typeof ProfileRoute
+  SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
   WorkersRoute: typeof WorkersRoute
@@ -207,6 +220,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/search': {
+      id: '/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/profile': {
@@ -284,6 +304,7 @@ const rootRouteChildren: RootRouteChildren = {
   LibraryRoute: LibraryRoute,
   PricingRoute: PricingRoute,
   ProfileRoute: ProfileRoute,
+  SearchRoute: SearchRoute,
   SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,
   WorkersRoute: WorkersRoute,
@@ -292,3 +313,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}

@@ -7,6 +7,8 @@ import type {
   MeStats,
   NewApiKey,
   SavedSearch,
+  SearchRequest,
+  SearchResponse,
   Theorem,
   TheoremListResponse,
   UserProfileFields,
@@ -170,6 +172,25 @@ export function useMyWorkers() {
     queryKey: ['me', 'workers'],
     queryFn: () => apiFetch<{ workers: Worker[] }>('/api/me/workers'),
     refetchInterval: 30_000,
+  });
+}
+
+// --- /api/search ---
+
+/**
+ * Conjecture-to-proof search. POST request with the parsed input + filters;
+ * server runs three tiers (AC-exact → unification → near-miss ranking) and
+ * returns whichever has hits, plus the parse error if any. Modeled as a
+ * mutation rather than a query because the body is large/structured and we
+ * want explicit submit semantics rather than auto-refetch.
+ */
+export function useSearch() {
+  return useMutation({
+    mutationFn: (req: SearchRequest) =>
+      apiFetch<SearchResponse>('/api/search', {
+        method: 'POST',
+        body: JSON.stringify(req),
+      }),
   });
 }
 

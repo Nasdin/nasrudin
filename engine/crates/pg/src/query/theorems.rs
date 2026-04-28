@@ -34,6 +34,10 @@ use crate::entity::theorems;
 pub struct NewTheorem {
     pub id: Vec<u8>,
     pub canonical_hash: Vec<u8>,
+    /// AC-canonical hash of the statement. Optional for legacy ingest paths
+    /// during the rollout window; new ingest writes this to enable
+    /// commutativity-aware exact-match search.
+    pub canonical_ac_hash: Option<Vec<u8>>,
     pub canonical_statement: String,
     pub latex: Option<String>,
     pub lean_source: String,
@@ -64,6 +68,7 @@ impl Default for NewTheorem {
         Self {
             id: Vec::new(),
             canonical_hash: Vec::new(),
+            canonical_ac_hash: None,
             canonical_statement: String::new(),
             latex: None,
             lean_source: String::new(),
@@ -120,6 +125,7 @@ pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<
     let active = theorems::ActiveModel {
         id: Set(n.id),
         canonical_hash: Set(n.canonical_hash),
+        canonical_ac_hash: Set(n.canonical_ac_hash),
         canonical_statement: Set(n.canonical_statement),
         latex: Set(n.latex),
         lean_source: Set(n.lean_source),

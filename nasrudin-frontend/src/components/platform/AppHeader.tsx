@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { useMe } from '~/lib/queries';
 
 const NAV = [
+  { to: '/search', label: 'Search', key: 'search' },
   { to: '/browse', label: 'Browse corpus', key: 'browse' },
   { to: '/library', label: 'My library', key: 'library' },
   { to: '/workers', label: 'Workers', key: 'workers' },

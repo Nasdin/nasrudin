@@ -194,6 +194,15 @@ pub async fn ingest(
         let id_hex = hex::encode(&theorem_id);
         let hash_hex = hex::encode(&canonical_hash);
 
+        // Best-effort AC-canonical hash for the search exact-match tier. If
+        // the canonical_statement fails to round-trip through parse_sexpr (a
+        // legacy or malformed form), record None and let the backfill bin
+        // retry once the parser supports it.
+        let canonical_ac_hash =
+            nasrudin_core::parse::parse_sexpr(&t.canonical_statement)
+                .ok()
+                .map(|e| nasrudin_core::canonical_ac_hash(&e).to_vec());
+
         // ── Dedup against Postgres ────────────────────────────────────────
         match theorems::get_by_canonical_hash(pg, &canonical_hash).await {
             Ok(Some(existing)) => {
@@ -234,6 +243,7 @@ pub async fn ingest(
         let new_row = theorems::NewTheorem {
             id: theorem_id.clone(),
             canonical_hash: canonical_hash.clone(),
+            canonical_ac_hash: canonical_ac_hash.clone(),
             canonical_statement: t.canonical_statement.clone(),
             latex: t.latex.clone(),
             lean_source: t.lean_source.clone(),

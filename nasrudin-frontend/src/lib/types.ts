@@ -147,3 +147,56 @@ export interface MeProfile {
   email: string;
   profile: UserProfileFields;
 }
+
+// --- /api/search ---
+
+export type SearchInputFormat = 'latex' | 'math' | 'sexpr' | 'form';
+
+export interface SearchFilters {
+  domain: string | null;
+  /** 7-vector dimension (length, mass, time, current, temp, amount, lum). */
+  dimension: number[] | null;
+  axioms_required: string[];
+  max_depth: number | null;
+}
+
+export interface SearchRequest {
+  input: string;
+  input_format: SearchInputFormat;
+  filters: SearchFilters;
+  limit?: number;
+}
+
+export type SearchTier = 'exact' | 'unify' | 'near_miss' | 'empty';
+
+export type SearchMatchKind =
+  | { kind: 'exact' }
+  | { kind: 'unify'; bindings: Record<string, string> }
+  | {
+      kind: 'near_miss';
+      score: number;
+      token_distance: number;
+      dim_hamming: number;
+      axiom_jaccard: number;
+    };
+
+export interface SearchMatchItem {
+  id: string;
+  canonical_statement: string;
+  statement_latex: string | null;
+  domain: string;
+  dimension: number[] | null;
+  depth: number | null;
+  axioms_used: string[];
+  match: SearchMatchKind;
+  lean_url: string;
+  proof_url: string;
+}
+
+export interface SearchResponse {
+  tier: SearchTier;
+  matches: SearchMatchItem[];
+  took_ms: number;
+  parse_error: string | null;
+  applied_filters: SearchFilters;
+}

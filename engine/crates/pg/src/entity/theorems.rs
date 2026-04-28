@@ -14,6 +14,12 @@ pub struct Model {
     pub id: Vec<u8>,
     #[sea_orm(unique, column_type = "Binary(8)")]
     pub canonical_hash: Vec<u8>,
+    /// AC-canonical hash: collapses commutativity / associativity / Eq
+    /// symmetry so two formulas that differ only in operand order resolve to
+    /// the same identity. Powers the `/api/search` exact-match tier. Nullable
+    /// during backfill; populated by ingest going forward.
+    #[sea_orm(column_type = "Binary(8)", nullable)]
+    pub canonical_ac_hash: Option<Vec<u8>>,
     pub canonical_statement: String,
     pub latex: Option<String>,
     pub lean_source: String,
