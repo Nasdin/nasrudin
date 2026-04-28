@@ -316,6 +316,46 @@ pub async fn list_verified(
     })
 }
 
+/// Count `Verified` theorems attributed to a single contributor.
+///
+/// Used by the per-user `/api/me/stats` endpoint (Phase 9 Task 6.2). Returns
+/// the raw `COUNT(*)` over `(status = 'Verified', contributor_id = $1)` —
+/// no cap, since per-user totals are bounded by realistic contribution rates
+/// rather than the global theorem volume.
+pub async fn count_by_contributor(
+    db: &impl ConnectionTrait,
+    contributor_id: &str,
+) -> Result<u64> {
+    use sea_orm::PaginatorTrait;
+    let count = theorems::Entity::find()
+        .filter(theorems::Column::Status.eq("Verified"))
+        .filter(theorems::Column::ContributorId.eq(contributor_id))
+        .count(db)
+        .await
+        .context("count_by_contributor")?;
+    Ok(count)
+}
+
+/// List the most-recent `Verified` theorems for a contributor, newest-first.
+///
+/// `limit` is forwarded straight to SQL `LIMIT`. Ordering is by `verified_at
+/// DESC, id DESC` to break ties deterministically.
+pub async fn list_by_contributor(
+    db: &impl ConnectionTrait,
+    contributor_id: &str,
+    limit: u64,
+) -> Result<Vec<theorems::Model>> {
+    theorems::Entity::find()
+        .filter(theorems::Column::Status.eq("Verified"))
+        .filter(theorems::Column::ContributorId.eq(contributor_id))
+        .order_by_desc(theorems::Column::VerifiedAt)
+        .order_by_desc(theorems::Column::Id)
+        .limit(limit)
+        .all(db)
+        .await
+        .context("list_by_contributor")
+}
+
 /// COUNT(*)-equivalent of verified rows (optionally filtered by domain),
 /// capped at `TOTAL_CAP + 1`. Implemented as a SELECT-IDs probe with
 /// `LIMIT TOTAL_CAP + 1`: cheap because the index covers `(status)` and we

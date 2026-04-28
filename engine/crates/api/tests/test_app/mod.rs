@@ -22,16 +22,19 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use axum_login::AuthManagerLayerBuilder;
 use sea_orm::{ConnectionTrait, DatabaseConnection};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tower::util::ServiceExt;
+use tower_sessions::{MemoryStore, SessionManagerLayer};
 
 use nasrudin_derive::AxiomStore;
 use nasrudin_ga::{DiscoveryEvent as GaDiscoveryEvent, GaStatusSnapshot};
 use nasrudin_pg::{connect_simple, query::theorems as theorem_q, run_migrations};
 use nasrudin_rocks::TheoremDb;
 
+use physics_api::auth as api_auth;
 use physics_api::handlers;
 use physics_api::lake_builder::LakeBuilder;
 use physics_api::rate_limit::WorkerRateLimiter;
@@ -127,6 +130,14 @@ pub async fn build() -> Option<TestApp> {
         worker_rate_limiter: Arc::new(WorkerRateLimiter::new(60)),
     });
 
+    // Auth layer: needed by the `/api/me/*` routes which use the
+    // `AuthOrApiKey` + `AuthSess` extractors. Routes that don't touch auth
+    // happily ignore it.
+    let session_store = MemoryStore::default();
+    let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
+    let auth_backend = api_auth::Backend::new(pg.clone());
+    let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
+
     let router = Router::new()
         .route(
             "/api/theorems/{hash}/lean",
@@ -164,6 +175,11 @@ pub async fn build() -> Option<TestApp> {
             "/api/workers/heartbeat",
             axum::routing::post(handlers::workers::heartbeat),
         )
+        .route(
+            "/api/me/stats",
+            axum::routing::get(handlers::me::stats),
+        )
+        .layer(auth_layer)
         .with_state(state);
 
     Some(TestApp {
