@@ -19,6 +19,7 @@ const CF_BY_AXIOM: &str = "by_axiom";
 const CF_BY_GENERATION: &str = "by_generation";
 const CF_LATEX_INDEX: &str = "latex_index";
 const CF_STATS: &str = "stats";
+const CF_REVERIFY_QUEUE: &str = "reverify_queue";
 
 const ALL_CFS: &[&str] = &[
     CF_THEOREMS,
@@ -30,6 +31,7 @@ const ALL_CFS: &[&str] = &[
     CF_BY_GENERATION,
     CF_LATEX_INDEX,
     CF_STATS,
+    CF_REVERIFY_QUEUE,
 ];
 
 /// Database statistics.
@@ -43,6 +45,18 @@ pub struct DbStats {
     pub max_depth: u32,
     pub max_generation: u64,
     pub domain_counts: HashMap<String, u64>,
+}
+
+/// A pending reverification job persisted in the `reverify_queue` CF.
+///
+/// The async drain loop reads these jobs after a server restart and runs the
+/// A→B verification cascade, then calls [`TheoremDb::dequeue_reverify`] on
+/// success or updates `attempts` on retry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReverifyJob {
+    pub theorem_id: TheoremId,
+    pub attempts: u8,
+    pub enqueued_at_micros: i64,
 }
 
 /// Lineage record for a theorem — who are its parents, children, and axiom roots.
@@ -68,7 +82,8 @@ impl TheoremDb {
 
         // Point-lookup CFs benefit from Bloom filters to avoid unnecessary
         // disk reads for non-existent keys.
-        const POINT_LOOKUP_CFS: &[&str] = &[CF_THEOREMS, CF_PROOFS, CF_LINEAGE];
+        const POINT_LOOKUP_CFS: &[&str] =
+            &[CF_THEOREMS, CF_PROOFS, CF_LINEAGE, CF_REVERIFY_QUEUE];
 
         let cf_descriptors: Vec<ColumnFamilyDescriptor> = ALL_CFS
             .iter()
@@ -654,6 +669,61 @@ impl TheoremDb {
         }
         self.put_lineage(&lineage)?;
         Ok(())
+    }
+
+    // ── Reverify Queue ────────────────────────────────────────────────
+
+    /// Insert (or overwrite) a pending reverification job keyed by `theorem_id`.
+    pub fn enqueue_reverify(&self, job: &ReverifyJob) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_REVERIFY_QUEUE)
+            .context("Missing reverify_queue CF")?;
+        let value = serde_json::to_vec(job).context("Failed to serialize ReverifyJob")?;
+        self.db
+            .put_cf(&cf, job.theorem_id, &value)
+            .context("Failed to enqueue reverify job")?;
+        Ok(())
+    }
+
+    /// Remove a reverification job for the given `theorem_id`.
+    pub fn dequeue_reverify(&self, theorem_id: &TheoremId) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_REVERIFY_QUEUE)
+            .context("Missing reverify_queue CF")?;
+        self.db
+            .delete_cf(&cf, theorem_id)
+            .context("Failed to dequeue reverify job")?;
+        Ok(())
+    }
+
+    /// List up to `limit` pending reverification jobs (in iterator order).
+    /// Pass `limit = 0` for unlimited (matches the convention used by
+    /// `list_by_domain_limit`, `list_by_depth_limit`, etc.).
+    pub fn list_reverify_pending(&self, limit: usize) -> Result<Vec<ReverifyJob>> {
+        let cf = self
+            .db
+            .cf_handle(CF_REVERIFY_QUEUE)
+            .context("Missing reverify_queue CF")?;
+        let mut out = Vec::new();
+        for item in self.db.iterator_cf(&cf, IteratorMode::Start) {
+            let (_, v) = item.context("Failed to iterate reverify_queue")?;
+            out.push(serde_json::from_slice(&v).context("Failed to deserialize ReverifyJob")?);
+            if limit > 0 && out.len() >= limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Total number of jobs currently in the reverify queue.
+    pub fn reverify_queue_depth(&self) -> Result<usize> {
+        let cf = self
+            .db
+            .cf_handle(CF_REVERIFY_QUEUE)
+            .context("Missing reverify_queue CF")?;
+        Ok(self.db.iterator_cf(&cf, IteratorMode::Start).count())
     }
 
     // ── Dump (for debugging) ──────────────────────────────────────────
