@@ -5,5 +5,6 @@ pub mod auth;
 pub mod handlers;
 pub mod hydration;
 pub mod keygen;
+pub mod lake_builder;
 pub mod rate_limit;
 pub mod state;
