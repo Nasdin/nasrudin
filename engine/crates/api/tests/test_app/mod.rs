@@ -64,6 +64,9 @@ fn test_db_url() -> String {
 pub struct TestApp {
     pub router: Router,
     pub pg: DatabaseConnection,
+    /// Reverify-side broadcast handle, exposed so SSE tests can publish
+    /// `theorem_*` events and verify they round-trip through the stream.
+    pub reverify_event_tx: tokio::sync::broadcast::Sender<ReverifyDiscoveryEvent>,
     /// Holding the guard for the test's lifetime serialises against other
     /// tests that share the database.
     _guard: tokio::sync::MutexGuard<'static, ()>,
@@ -96,6 +99,7 @@ pub async fn build() -> Option<TestApp> {
 
     let (ga_discovery_tx, _) = tokio::sync::broadcast::channel::<GaDiscoveryEvent>(16);
     let (reverify_event_tx, _) = tokio::sync::broadcast::channel::<ReverifyDiscoveryEvent>(16);
+    let reverify_event_tx_for_test = reverify_event_tx.clone();
 
     let lake = Arc::new(LakeBuilder::new(
         std::env::temp_dir(),
@@ -133,11 +137,20 @@ pub async fn build() -> Option<TestApp> {
             "/api/theorems",
             axum::routing::get(handlers::theorems::list),
         )
+        .route(
+            "/api/events/discoveries",
+            axum::routing::get(handlers::events::discoveries),
+        )
+        .route(
+            "/api/events/stats",
+            axum::routing::get(handlers::events::stats),
+        )
         .with_state(state);
 
     Some(TestApp {
         router,
         pg,
+        reverify_event_tx: reverify_event_tx_for_test,
         _guard: guard,
         _rocks_dir: rocks_dir,
     })

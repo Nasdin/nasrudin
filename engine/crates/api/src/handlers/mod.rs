@@ -1,4 +1,5 @@
 pub mod api_keys;
+pub mod events;
 pub mod ingest;
 pub mod me;
 pub mod preferences;

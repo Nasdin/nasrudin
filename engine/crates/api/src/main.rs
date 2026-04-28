@@ -13,16 +13,10 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::{HeaderValue, Method},
-    response::{
-        Sse,
-        sse::{Event, KeepAlive},
-    },
     routing::get,
 };
 use axum_login::AuthManagerLayerBuilder;
 use serde::{Deserialize, Serialize};
-use tokio_stream::StreamExt as _;
-use tokio_stream::wrappers::BroadcastStream;
 use tower_governor::GovernorLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -251,8 +245,11 @@ async fn main() -> anyhow::Result<()> {
 
     // SSE: no rate limit (long-lived connection)
     let sse = Router::new()
-        .route("/api/events/discoveries", get(discovery_stream))
-        .route("/api/events/stats", get(stats_stream));
+        .route(
+            "/api/events/discoveries",
+            get(handlers::events::discoveries),
+        )
+        .route("/api/events/stats", get(handlers::events::stats));
 
     // Public workers list — readable without auth (returns [] if PG unavailable).
     let workers_public = Router::new()
@@ -646,41 +643,6 @@ async fn list_axioms(
         "axioms": axioms,
         "total": total,
     }))
-}
-
-/// Server-Sent Events stream for live discovery notifications.
-async fn discovery_stream(
-    State(state): State<Arc<AppState>>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.discovery_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(event) => {
-            let data = serde_json::to_string(&event).unwrap_or_default();
-            Some(Ok(Event::default().event("discovery").data(data)))
-        }
-        Err(_) => None,
-    });
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
-/// Server-Sent Events stream for live GA engine metrics.
-///
-/// Emits a `stats` event every 5 seconds with the current GA status snapshot.
-async fn stats_stream(
-    State(state): State<Arc<AppState>>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let interval = tokio::time::interval(std::time::Duration::from_secs(5));
-    let stream = tokio_stream::wrappers::IntervalStream::new(interval).map(move |_| {
-        let snapshot = state
-            .ga_status
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let data = serde_json::to_string(&snapshot).unwrap_or_default();
-        Ok(Event::default().event("stats").data(data))
-    });
-    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 // ---------------------------------------------------------------------------
