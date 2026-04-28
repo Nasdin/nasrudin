@@ -7,6 +7,7 @@ import type {
   NewApiKey,
   SavedSearch,
   Theorem,
+  TheoremListResponse,
   Worker,
 } from './types';
 
@@ -60,8 +61,7 @@ export function useLogout() {
 export function useRecentTheorems(limit = 20) {
   return useQuery({
     queryKey: ['theorems', 'recent', limit],
-    queryFn: () =>
-      apiFetch<{ theorems: Theorem[]; total: number }>(`/api/theorems/recent?limit=${limit}`),
+    queryFn: () => apiFetch<TheoremListResponse>(`/api/theorems/recent?limit=${limit}`),
   });
 }
 

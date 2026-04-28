@@ -11,24 +11,65 @@ export type Domain =
   | 'Optics'
   | 'FluidDynamics';
 
+/**
+ * Theorem row as returned by the Phase 9 read endpoints
+ * (`GET /api/theorems`, `…/recent`, `…/{id}`).
+ *
+ * Field set + names mirror SeaORM's `theorems::Model`
+ * (`engine/crates/pg/src/entity/theorems.rs`). `BYTEA` columns serialize as
+ * JSON arrays of byte numbers (`Vec<u8>` → `[1,2,3,4,5,6,7,8]`), NOT hex
+ * strings — use `bytesToHex` from `./hex` when displaying or routing on
+ * `id` / `canonical_hash` / `parents`.
+ */
 export interface Theorem {
-  id: string;
-  domain: Domain;
-  statement: { Lean: string } | { Latex: string } | { Plain: string };
-  proof?: ProofTree;
-  verified: VerificationStatus;
-  generation: number;
-  depth: number;
-  parents: string[];
+  /** 8-byte primary key, BYTEA serialized as array of byte numbers. */
+  id: number[];
+  /** 8-byte canonical hash (unique), BYTEA serialized as array of byte numbers. */
+  canonical_hash: number[];
+  canonical_statement: string;
+  latex: string | null;
+  lean_source: string;
+  /** `Domain` enum stringified. The DB column is plain TEXT so any string is structurally valid. */
+  domain: string;
+  axioms_used: string[];
+  /** `serde_json::Value` — kept opaque; the chain shape is engine-internal. */
+  chain_json: unknown;
+  /** Each parent is an 8-byte BYTEA, also serialized as a byte-array. */
+  parents: number[][] | null;
+  origin_kind: string;
+  origin_payload: unknown | null;
+  depth: number | null;
+  complexity: number | null;
+  generation: number | null;
+  fitness_novelty: number | null;
+  fitness_compactness: number | null;
+  fitness_dimensional_correctness: number | null;
+  fitness_domain_coverage: number | null;
+  fitness_axiom_efficiency: number | null;
+  fitness_nasrudin_relevance: number | null;
+  fitness_depth_score: number | null;
+  dimension: number[] | null;
+  engine_git_sha: string;
+  lean_version: string;
+  verification_tactic: string | null;
+  verification_duration_ms: number | null;
+  verification_path: 'A' | 'B' | string | null;
+  status: 'Pending' | 'Verified' | 'Rejected' | string;
+  rejected_reason: string | null;
+  contributor_id: string;
+  /** ISO 8601 timestamp with offset (`DateTimeWithTimeZone`). */
   created_at: string;
+  /** ISO 8601 timestamp with offset, or `null` while pending. */
+  verified_at: string | null;
 }
 
-export type ProofTree = unknown;
-
-export type VerificationStatus =
-  | { Verified: { proof_term: string; tactic_used: string } }
-  | { Rejected: { reason: string } }
-  | 'Pending';
+/** Response shape of `GET /api/theorems` and `GET /api/theorems/recent`. */
+export interface TheoremListResponse {
+  theorems: Theorem[];
+  next_cursor: string | null;
+  total: number;
+  total_capped: boolean;
+}
 
 export interface AuthUser {
   id: string;

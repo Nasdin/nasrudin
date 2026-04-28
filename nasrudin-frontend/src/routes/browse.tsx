@@ -6,9 +6,10 @@ import { ResultCard } from '~/components/browse/ResultCard';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { apiFetch } from '~/lib/api';
+import { bytesToHex } from '~/lib/hex';
 import { useDomains } from '~/lib/queries';
 import { useDiscoveryFeed } from '~/lib/sse';
-import type { Domain, Theorem } from '~/lib/types';
+import type { Domain, TheoremListResponse } from '~/lib/types';
 
 export const Route = createFileRoute('/browse')({ component: BrowsePage });
 
@@ -20,7 +21,7 @@ function BrowsePage() {
   const list = useQuery({
     queryKey: ['theorems', 'list', domain],
     queryFn: () =>
-      apiFetch<{ theorems: Theorem[]; total: number }>(
+      apiFetch<TheoremListResponse>(
         domain ? `/api/theorems?domain=${domain}&limit=50` : `/api/theorems/recent?limit=50`,
       ),
   });
@@ -56,7 +57,7 @@ function BrowsePage() {
               </div>
               {list.isPending && <p style={{ color: 'var(--ink-500)' }}>loading…</p>}
               {list.data?.theorems.map((t) => (
-                <ResultCard key={t.id} thm={t} />
+                <ResultCard key={bytesToHex(t.id)} thm={t} />
               ))}
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import { useRecentTheorems } from '~/lib/queries';
 
@@ -50,10 +51,12 @@ export function HeroLiveTheorem() {
           return null;
         }
       })();
-      if (t && typeof t === 'object' && 'theorem' in t) {
-        const ti = t as { theorem: { id: string } };
+      // SSE `theorem_*` events carry a hex-encoded `theorem_id`, not a full
+      // theorem object — see `nasrudin_api::reverify::DiscoveryEvent`.
+      if (t && typeof t === 'object' && 'theorem_id' in t) {
+        const ti = t as { theorem_id: string };
         setTickerLines((prev) =>
-          [`VERIFIED  thm:${ti.theorem.id.slice(0, 6)}…`, ...prev].slice(0, 12),
+          [`VERIFIED  thm:${ti.theorem_id.slice(0, 6)}…`, ...prev].slice(0, 12),
         );
       }
     };
@@ -70,8 +73,8 @@ export function HeroLiveTheorem() {
   }, [tickerLines.length]);
 
   const t = recent.data?.theorems[idx];
-  const stmt = t ? statementToLatex(t.statement) : FALLBACK_HERO.statement_latex;
-  const id = t?.id ?? FALLBACK_HERO.id;
+  const stmt = t ? (t.latex ?? t.canonical_statement) : FALLBACK_HERO.statement_latex;
+  const id = t ? bytesToHex(t.id) : FALLBACK_HERO.id;
   const domain = t?.domain ?? FALLBACK_HERO.domain;
   const generation = t?.generation ?? FALLBACK_HERO.generation;
 
@@ -104,15 +107,4 @@ export function HeroLiveTheorem() {
       </div>
     </div>
   );
-}
-
-function statementToLatex(
-  s: { Lean?: string; Latex?: string; Plain?: string } | string | unknown,
-): string {
-  if (typeof s === 'string') return s;
-  if (s && typeof s === 'object') {
-    const obj = s as { Lean?: string; Latex?: string; Plain?: string };
-    return obj.Latex ?? obj.Lean ?? obj.Plain ?? '';
-  }
-  return '';
 }

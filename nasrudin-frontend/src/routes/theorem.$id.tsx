@@ -4,6 +4,7 @@ import { AppHeader } from '~/components/platform/AppHeader';
 import { LineageList } from '~/components/theorem/LineageList';
 import { ProofBlock } from '~/components/theorem/ProofBlock';
 import { ReverifyButton } from '~/components/theorem/ReverifyButton';
+import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import { useTheorem } from '~/lib/queries';
 import type { Theorem } from '~/lib/types';
@@ -33,29 +34,24 @@ function TheoremPage() {
 }
 
 function TheoremView({ thm }: { thm: Theorem }) {
-  const stmt =
-    'Latex' in thm.statement
-      ? thm.statement.Latex
-      : 'Lean' in thm.statement
-        ? thm.statement.Lean
-        : 'Plain' in thm.statement
-          ? thm.statement.Plain
-          : '';
-  const proofTerm =
-    typeof thm.verified === 'object' && 'Verified' in thm.verified
-      ? thm.verified.Verified.proof_term
-      : '-- not yet verified';
+  const idHex = bytesToHex(thm.id);
+  // Prefer LaTeX for the statement display; fall back to the canonical
+  // prefix-form string so we always render something.
+  const stmt = thm.latex ?? thm.canonical_statement;
+  // Phase 9 stores the verified Lean source directly on the row.
+  const proofTerm = thm.lean_source || '-- not yet verified';
+  const parentHexes = (thm.parents ?? []).map(bytesToHex);
   return (
     <div className="thm-page">
       <div className="thm-main">
         <div className="thm-eyebrow">
           <span className="verified-badge">
-            <span className="verified-dot" /> Verified · Lean 4 · re-checked by server
+            <span className="verified-dot" /> {thm.status} · Lean 4 · re-checked by server
           </span>
-          <span>· thm:{thm.id.slice(0, 8)}</span>
-          <span>· gen {thm.generation}</span>
+          <span>· thm:{idHex.slice(0, 8)}</span>
+          <span>· gen {thm.generation ?? 0}</span>
         </div>
-        <h1 className="thm-name">{thm.id}</h1>
+        <h1 className="thm-name">{idHex}</h1>
         <div className="thm-statement-block">
           <div className="thm-statement-big">
             <MathExpr source={stmt} block />
@@ -64,7 +60,7 @@ function TheoremView({ thm }: { thm: Theorem }) {
         <div className="thm-section">
           <h3>Lean 4 proof</h3>
           <div className="thm-proof-bar">
-            <span>{thm.id}.lean</span>
+            <span>{idHex}.lean</span>
             <button
               type="button"
               className="copy"
@@ -80,17 +76,17 @@ function TheoremView({ thm }: { thm: Theorem }) {
         </div>
         <div className="thm-section">
           <h3>Proof lineage</h3>
-          <LineageList parents={thm.parents} />
+          <LineageList parents={parentHexes} />
         </div>
       </div>
       <aside className="thm-side">
         <h4>Provenance</h4>
         <ul className="meta-list">
           <li>
-            Generation <strong>{thm.generation}</strong>
+            Generation <strong>{thm.generation ?? 0}</strong>
           </li>
           <li>
-            Depth <strong>{thm.depth}</strong>
+            Depth <strong>{thm.depth ?? 0}</strong>
           </li>
           <li>
             Domain <strong>{thm.domain}</strong>
