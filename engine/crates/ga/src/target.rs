@@ -174,6 +174,43 @@ pub fn ladder_score(candidate: &Expr, spec: &TargetSpec) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
+/// Score a chain's *prefix* by how well its accumulated facts cover
+/// the symbols in the target shape, in `[0, 1]`.
+///
+/// The motivating failure mode: a chain
+/// `[IntroduceAxiom("kinetic_energy_def"), RearrangeEquation(target=E=mc²)]`
+/// has `shape_similarity(final, target) = 1.0` (RearrangeEquation just
+/// claims its target as the new `current`), but the only fact in scope
+/// is `KE = ½mv²` — Lean's nlinarith has no chance of discharging
+/// `E = m·c²` from that. We need a fitness component that grades the
+/// *path*, not just the leaf.
+///
+/// Coverage = |target_symbols ∩ ⋃ intro-axiom symbols| / |target_symbols|.
+/// Higher = more target symbols are bound by the accumulated hypotheses.
+pub fn chain_coverage(
+    chain: &[nasrudin_derive::RuleStep],
+    store: &nasrudin_derive::AxiomStore,
+    target: &TargetSpec,
+) -> f64 {
+    let target_syms = collect_symbols(&target.final_target);
+    if target_syms.is_empty() {
+        return 1.0;
+    }
+    let mut prefix_syms = HashSet::new();
+    for step in chain {
+        let name = match step {
+            nasrudin_derive::RuleStep::IntroduceAxiom { axiom_name } => axiom_name,
+            nasrudin_derive::RuleStep::IntroduceTheorem { theorem_name } => theorem_name,
+            _ => continue,
+        };
+        if let Some(ax) = store.get(name) {
+            collect_symbols_into(&ax.statement, &mut prefix_syms);
+        }
+    }
+    let hit = target_syms.iter().filter(|s| prefix_syms.contains(*s)).count();
+    hit as f64 / target_syms.len() as f64
+}
+
 // ---- internals -------------------------------------------------------------
 
 fn symbol_overlap(candidate: &Expr, target: &Expr) -> f64 {

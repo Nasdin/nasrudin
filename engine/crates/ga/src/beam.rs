@@ -67,20 +67,27 @@ impl Default for BeamConfig {
 }
 
 /// One item on the beam: a chain executed against the AxiomStore that
-/// produced `expr`, plus its ladder score.
+/// produced `expr`, plus the three target-direction scores.
 #[derive(Debug, Clone)]
 pub struct BeamState {
     pub chain: Chain,
     pub expr: Expr,
     pub ladder: f64,
     pub shape: f64,
+    /// Fraction of target symbols covered by the union of introduced-
+    /// axiom statements in the chain prefix. Discriminates two chains
+    /// with the same final `Expr` but different proof contexts —
+    /// without this, a 2-step `[Intro, Rearrange(target)]` outscores a
+    /// 6-step canonical chain because both end with the rearranged
+    /// target on `current`. See `target::chain_coverage` for details.
+    pub coverage: f64,
 }
 
 impl BeamState {
     fn score(&self) -> f64 {
-        // Composite: ladder (partial credit) dominates, shape (final
-        // target) breaks ties when two states are on the same rung.
-        self.ladder + 0.1 * self.shape
+        // Composite: ladder (partial credit) + coverage (path quality)
+        // dominate; shape breaks ties on identical-final-Expr chains.
+        self.ladder + 0.5 * self.coverage + 0.1 * self.shape
     }
 }
 
@@ -107,7 +114,8 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
             let expr = run_chain(&chain, store)?;
             let shape = shape_similarity(&expr, &target.final_target);
             let ladder = ladder_score(&expr, target);
-            Some(BeamState { chain, expr, ladder, shape })
+            let coverage = crate::target::chain_coverage(&chain.0, store, target);
+            Some(BeamState { chain, expr, ladder, shape, coverage })
         })
         .collect();
 
@@ -125,8 +133,25 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
         for state in &frontier {
             // Enumerate next-step expansions.
             //
-            // 1. Every IntroduceAxiom in the store.
+            // 1. Every IntroduceAxiom in the store *except* axioms
+            //    already in the chain prefix — repeating an introduce
+            //    adds no new fact to the DerivationContext, just bloats
+            //    the chain length. The dedup downstream picks chains
+            //    by intro-count, so duplicates would otherwise win
+            //    spuriously.
+            let already_introduced: std::collections::HashSet<&String> = state
+                .chain
+                .0
+                .iter()
+                .filter_map(|s| match s {
+                    RuleStep::IntroduceAxiom { axiom_name } => Some(axiom_name),
+                    _ => None,
+                })
+                .collect();
             for ax in store.iter() {
+                if already_introduced.contains(&ax.name) {
+                    continue;
+                }
                 let mut next_chain = state.chain.clone();
                 next_chain.push(RuleStep::IntroduceAxiom {
                     axiom_name: ax.name.clone(),
@@ -134,7 +159,8 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
                 if let Some(expr) = run_chain(&next_chain, store) {
                     let shape = shape_similarity(&expr, &target.final_target);
                     let ladder = ladder_score(&expr, target);
-                    next.push(BeamState { chain: next_chain, expr, ladder, shape });
+                    let coverage = crate::target::chain_coverage(&next_chain.0, store, target);
+                    next.push(BeamState { chain: next_chain, expr, ladder, shape, coverage });
                 }
             }
             // 2. AlgebraicSimplify (parameter-free).
@@ -143,7 +169,8 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
             if let Some(expr) = run_chain(&next_chain, store) {
                 let shape = shape_similarity(&expr, &target.final_target);
                 let ladder = ladder_score(&expr, target);
-                next.push(BeamState { chain: next_chain, expr, ladder, shape });
+                let coverage = crate::target::chain_coverage(&next_chain.0, store, target);
+                next.push(BeamState { chain: next_chain, expr, ladder, shape, coverage });
             }
             // 3. RearrangeEquation toward each ladder rung. The
             //    DerivationContext accumulates all introduced axioms as
@@ -162,7 +189,8 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
                 if let Some(expr) = run_chain(&next_chain, store) {
                     let shape = shape_similarity(&expr, &target.final_target);
                     let ladder = ladder_score(&expr, target);
-                    next.push(BeamState { chain: next_chain, expr, ladder, shape });
+                    let coverage = crate::target::chain_coverage(&next_chain.0, store, target);
+                    next.push(BeamState { chain: next_chain, expr, ladder, shape, coverage });
                 }
             }
             // 4. TakePositiveRoot when applicable: only meaningful when
@@ -179,7 +207,8 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
                 if let Some(expr) = run_chain(&next_chain, store) {
                     let shape = shape_similarity(&expr, &target.final_target);
                     let ladder = ladder_score(&expr, target);
-                    next.push(BeamState { chain: next_chain, expr, ladder, shape });
+                    let coverage = crate::target::chain_coverage(&next_chain.0, store, target);
+                    next.push(BeamState { chain: next_chain, expr, ladder, shape, coverage });
                 }
             }
         }

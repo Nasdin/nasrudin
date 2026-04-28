@@ -115,10 +115,11 @@ async fn main() -> anyhow::Result<()> {
     println!("▶ Top frontier (best 5 by score):");
     for (i, s) in report.frontier_final.iter().take(5).enumerate() {
         println!(
-            "  {}. ladder={:.3}  shape={:.3}  steps={}",
+            "  {}. ladder={:.3}  shape={:.3}  coverage={:.3}  steps={}",
             i + 1,
             s.ladder,
             s.shape,
+            s.coverage,
             s.chain.0.len()
         );
         println!("     final: {}", s.expr.to_canonical());
@@ -131,23 +132,51 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Lake builds are slow (~30s/candidate). Cap to the top-K by
-    // (shape DESC, chain-length ASC) so we lake-build the most likely
-    // and shortest first. Override with --max-verify N.
+    // Lake builds are slow (~30s/candidate). Pick the top-K by
+    // (shape DESC, IntroduceAxiom-count DESC) — RearrangeEquation
+    // discharges via nlinarith over the accumulated facts, so the more
+    // IntroduceAxioms in the chain prefix, the more hypotheses Lean has
+    // in scope. Then dedup by `(canonical, intro_count)` keeping the
+    // version with the most hypotheses for each canonical. Override
+    // with --max-verify N.
     let max_verify: usize = get_arg("--max-verify")
         .and_then(|s| s.parse().ok())
         .unwrap_or(8);
-    let mut sorted: Vec<_> = report.candidates.clone();
+    // Count *distinct* IntroduceAxiom names in the chain. Repeated
+    // introductions of the same axiom add no new fact, so they don't
+    // help nlinarith — and bias the dedup picker toward chains with
+    // more *unique* hypotheses.
+    let intro_count = |s: &nasrudin_ga::beam::BeamState| -> usize {
+        use nasrudin_derive::RuleStep;
+        let mut names = std::collections::HashSet::new();
+        for step in &s.chain.0 {
+            if let RuleStep::IntroduceAxiom { axiom_name } = step {
+                names.insert(axiom_name.clone());
+            }
+        }
+        names.len()
+    };
+    let mut by_canonical: std::collections::HashMap<String, nasrudin_ga::beam::BeamState> =
+        std::collections::HashMap::new();
+    for cand in &report.candidates {
+        let canon = cand.expr.to_canonical();
+        match by_canonical.get(&canon) {
+            None => {
+                by_canonical.insert(canon, cand.clone());
+            }
+            Some(existing) if intro_count(cand) > intro_count(existing) => {
+                by_canonical.insert(canon, cand.clone());
+            }
+            _ => {}
+        }
+    }
+    let mut sorted: Vec<_> = by_canonical.into_values().collect();
     sorted.sort_by(|a, b| {
         b.shape
             .partial_cmp(&a.shape)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.chain.0.len().cmp(&b.chain.0.len()))
+            .then(intro_count(b).cmp(&intro_count(a)))
     });
-    // Dedup by canonical so we don't lake-build the same statement
-    // arrived at via different chain prefixes.
-    let mut seen = std::collections::HashSet::new();
-    sorted.retain(|s| seen.insert(s.expr.to_canonical()));
     let pick: Vec<_> = sorted.into_iter().take(max_verify).collect();
     println!(
         "▶ Verifying top {} of {} unique candidates (use --max-verify N to change)",
