@@ -300,7 +300,10 @@ async fn main() -> anyhow::Result<()> {
             .route("/api/me/stats", get(handlers::me::stats))
             .layer(GovernorLayer::new(rate_limit::platform_user()));
 
-        // Platform-worker: worker registration + heartbeat. Bearer nsk_worker_.
+        // Platform-worker: worker registration + heartbeat + ingest. Bearer nsk_worker_.
+        // /api/ingest does its own per-worker rate limiting via WorkerRateLimiter
+        // (Phase 9 Task 4.2); the IP-based GovernorLayer here is harmless extra
+        // backstop for spammy IPs.
         let platform_worker = Router::new()
             .route(
                 "/api/workers/register",
@@ -309,6 +312,10 @@ async fn main() -> anyhow::Result<()> {
             .route(
                 "/api/workers/heartbeat",
                 axum::routing::post(handlers::workers::heartbeat),
+            )
+            .route(
+                "/api/ingest",
+                axum::routing::post(handlers::ingest::ingest),
             )
             .layer(GovernorLayer::new(rate_limit::platform_worker()));
 
