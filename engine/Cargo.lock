@@ -2024,6 +2024,7 @@ dependencies = [
  "password-auth",
  "rand 0.9.2",
  "regex",
+ "reqwest",
  "sea-orm",
  "serde",
  "serde_json",
