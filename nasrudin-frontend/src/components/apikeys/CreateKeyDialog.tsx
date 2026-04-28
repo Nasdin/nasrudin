@@ -70,9 +70,32 @@ export function CreateKeyDialog({
           </span>
         </div>
         <div className="field" style={{ marginTop: 16 }}>
-          <span className="label">Kind</span>
-          <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+          <span
+            style={{
+              fontSize: 12,
+              letterSpacing: 'var(--tracking-allcaps)',
+              textTransform: 'uppercase',
+              color: 'var(--ink-500)',
+              fontWeight: 600,
+            }}
+          >
+            Kind
+          </span>
+          <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+            <label
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'auto 1fr',
+                gap: 10,
+                alignItems: 'baseline',
+                cursor: 'pointer',
+                padding: '10px 12px',
+                border: `1px solid ${kind === 'live' ? 'var(--terracotta-500)' : 'var(--paper-200)'}`,
+                borderRadius: 'var(--radius-md)',
+                background: kind === 'live' ? 'var(--terracotta-50)' : 'transparent',
+                transition: 'all var(--dur-fast) var(--ease-out)',
+              }}
+            >
               <input
                 type="radio"
                 name="kind"
@@ -80,11 +103,25 @@ export function CreateKeyDialog({
                 checked={kind === 'live'}
                 onChange={() => setKind('live')}
               />
-              <span>
-                <strong>Live</strong> — read API + scripts (<code>nsk_live_…</code>)
+              <span style={{ fontSize: 13, color: 'var(--ink-700)' }}>
+                <strong style={{ color: 'var(--ink-900)' }}>Live</strong> — read API + scripts (
+                <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>nsk_live_…</code>)
               </span>
             </label>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+            <label
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'auto 1fr',
+                gap: 10,
+                alignItems: 'baseline',
+                cursor: 'pointer',
+                padding: '10px 12px',
+                border: `1px solid ${kind === 'worker' ? 'var(--terracotta-500)' : 'var(--paper-200)'}`,
+                borderRadius: 'var(--radius-md)',
+                background: kind === 'worker' ? 'var(--terracotta-50)' : 'transparent',
+                transition: 'all var(--dur-fast) var(--ease-out)',
+              }}
+            >
               <input
                 type="radio"
                 name="kind"
@@ -92,8 +129,9 @@ export function CreateKeyDialog({
                 checked={kind === 'worker'}
                 onChange={() => setKind('worker')}
               />
-              <span>
-                <strong>Worker</strong> — discovery binary (<code>nsk_worker_…</code>)
+              <span style={{ fontSize: 13, color: 'var(--ink-700)' }}>
+                <strong style={{ color: 'var(--ink-900)' }}>Worker</strong> — discovery binary (
+                <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>nsk_worker_…</code>)
               </span>
             </label>
           </div>

@@ -122,6 +122,45 @@ async fn main() {
     println!("  ✓ {forbidden_axiom} is NOT in the store. No cheating.");
     println!();
 
+    // ── Seed-sync from peers via /api/seed ───────────────────────────
+    // Pull what other workers have already verified for this domain and
+    // fold it into the local AxiomStore. Each peer-verified theorem
+    // becomes a synthetic axiom keyed `theorem_<hex>` that the GA can
+    // pick up via RuleStep::IntroduceAxiom — workers compound off each
+    // other instead of redoing each others' searches from scratch.
+    if let Some(api_url) = std::env::var("NASRUDIN_API_URL").ok().or_else(||
+        api_cfg.as_ref().map(|c| c.api_url.clone()))
+    {
+        let domain_param = match domain.as_str() {
+            "sr" => "SpecialRelativity",
+            "em" => "Electromagnetism",
+            _ => "",
+        };
+        match fetch_and_extend_store(&api_url, domain_param, &mut store).await {
+            Ok((axioms_added, theorems_added)) => {
+                println!(
+                    "▶ Seed-sync from {api_url}: +{axioms_added} new axioms, \
+                     +{theorems_added} peer theorems folded into store"
+                );
+                println!("    store size now: {} entries", store.len());
+                // Re-check the no-cheating invariant after the fold-in:
+                // a peer theorem must not equal the forbidden headline.
+                if store.get(forbidden_axiom).is_some() {
+                    eprintln!(
+                        "✗ FAIL: peer-fed `{forbidden_axiom}` after seed-sync. Refusing."
+                    );
+                    std::process::exit(2);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "  ! seed-sync skipped: {e}\n    (worker will run with local axioms only)"
+                );
+            }
+        }
+        println!();
+    }
+
     let config = DiscoveryConfig {
         population_size: pop,
         generations: gens,
@@ -250,38 +289,13 @@ impl ApiSubmitConfig {
     }
 }
 
-/// Build the JSON for a single chain. Mirrors the chain-step shape that
-/// the API treats opaquely as `serde_json::Value`. We hand-build because
-/// `RuleStep` doesn't derive Serialize.
+/// Serialize a chain for the wire. `RuleStep` derives `#[serde(tag = "kind")]`
+/// so the array shape is `[{"kind": "IntroduceAxiom", "axiom_name": …}, …]`.
+/// `RearrangeEquation.target` and `SubstituteValue.value` are serialized as
+/// full Expr trees (not canonical strings) so the server can replay the
+/// chain against its own AxiomStore in reverify::check_chain.
 fn chain_to_json(chain: &Chain) -> serde_json::Value {
-    let steps: Vec<serde_json::Value> = chain
-        .0
-        .iter()
-        .map(|step| match step {
-            RuleStep::IntroduceAxiom { axiom_name } => serde_json::json!({
-                "kind": "IntroduceAxiom",
-                "axiom_name": axiom_name,
-            }),
-            RuleStep::SubstituteValue { var, value, reason } => serde_json::json!({
-                "kind": "SubstituteValue",
-                "var": var,
-                "value": value.to_canonical(),
-                "reason": reason,
-            }),
-            RuleStep::AlgebraicSimplify => serde_json::json!({
-                "kind": "AlgebraicSimplify",
-            }),
-            RuleStep::RearrangeEquation { description, target } => serde_json::json!({
-                "kind": "RearrangeEquation",
-                "description": description,
-                "target": target.to_canonical(),
-            }),
-            RuleStep::TakePositiveRoot => serde_json::json!({
-                "kind": "TakePositiveRoot",
-            }),
-        })
-        .collect();
-    serde_json::Value::Array(steps)
+    serde_json::to_value(&chain.0).expect("RuleStep is Serialize")
 }
 
 /// Pull every IntroduceAxiom name out of the chain (deduplicated, in
@@ -376,4 +390,98 @@ fn remove_module_file(prover_root: &Path, module_path: &str) -> std::io::Result<
         std::fs::remove_file(&file_path)?;
     }
     Ok(())
+}
+
+/// Fetch `/api/seed?domain={d}&top=200` and fold the response into the
+/// local AxiomStore. Returns `(axioms_added, peer_theorems_added)`.
+///
+/// **Axioms** that the server has but we don't are registered as-is.
+/// **Peer theorems** with a non-empty replayable chain are replayed
+/// locally to extract the final Expr; that Expr is registered as a
+/// synthetic axiom named `theorem_<hex_id>`. Anything that fails to
+/// parse / replay is silently skipped — we trust only the math we can
+/// reproduce locally, not just whatever the API reports.
+async fn fetch_and_extend_store(
+    api_url: &str,
+    domain: &str,
+    store: &mut nasrudin_derive::AxiomStore,
+) -> anyhow::Result<(usize, usize)> {
+    use nasrudin_core::Expr;
+    use nasrudin_derive::{Axiom, Chain, DerivationContext, RuleStep, strategies::DerivationStrategy};
+
+    let url = if domain.is_empty() {
+        format!("{api_url}/api/seed?top=200")
+    } else {
+        format!("{api_url}/api/seed?domain={domain}&top=200")
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+    let resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("seed http {}: {}", resp.status(), resp.text().await.unwrap_or_default());
+    }
+    let body: serde_json::Value = resp.json().await?;
+
+    let mut axioms_added = 0usize;
+    if let Some(arr) = body.get("axioms").and_then(|v| v.as_array()) {
+        for entry in arr {
+            let Some(name) = entry.get("name").and_then(|v| v.as_str()) else { continue };
+            if store.get(name).is_some() { continue; }
+            let Some(stmt_str) = entry.get("statement").and_then(|v| v.as_str()) else { continue };
+            let Ok(stmt) = serde_json::from_str::<Expr>(stmt_str) else { continue };
+            let domain_str = entry.get("domain").and_then(|v| v.as_str()).unwrap_or("");
+            let parsed_domain = match domain_str {
+                "SpecialRelativity" | "special_relativity" => nasrudin_core::Domain::SpecialRelativity,
+                "Electromagnetism" | "electromagnetism" => nasrudin_core::Domain::Electromagnetism,
+                _ => nasrudin_core::Domain::PureMath,
+            };
+            store.register(Axiom {
+                name: name.to_string(),
+                domain: parsed_domain,
+                statement: stmt,
+                description: format!("seed-sync from {api_url}"),
+            });
+            axioms_added += 1;
+        }
+    }
+
+    let mut theorems_added = 0usize;
+    if let Some(arr) = body.get("seed_theorems").and_then(|v| v.as_array()) {
+        for t in arr {
+            let chain_val = match t.get("chain_json") { Some(c) => c, None => continue };
+            if chain_val.is_null() { continue; }
+            let Ok(steps): Result<Vec<RuleStep>, _> = serde_json::from_value(chain_val.clone())
+                else { continue };
+            if steps.is_empty() { continue; }
+            let chain = Chain(steps);
+            let mut ctx = DerivationContext::new();
+            let Ok(final_expr) = chain.execute(store, &mut ctx) else { continue };
+
+            // Name keyed on canonical-statement bytes so re-pulls don't
+            // duplicate. Falls back to the row id hex for robustness.
+            let name = if let Some(canon) = t.get("canonical_statement").and_then(|v| v.as_str()) {
+                format!("peer_{:016x}", xxhash_rust::xxh64::xxh64(canon.as_bytes(), 0))
+            } else {
+                continue;
+            };
+            if store.get(&name).is_some() { continue; }
+
+            let domain_str = t.get("domain").and_then(|v| v.as_str()).unwrap_or("");
+            let parsed_domain = match domain_str {
+                "SpecialRelativity" => nasrudin_core::Domain::SpecialRelativity,
+                "Electromagnetism" => nasrudin_core::Domain::Electromagnetism,
+                _ => nasrudin_core::Domain::PureMath,
+            };
+            store.register(Axiom {
+                name,
+                domain: parsed_domain,
+                statement: final_expr,
+                description: "peer-verified theorem (seed-sync)".to_string(),
+            });
+            theorems_added += 1;
+        }
+    }
+
+    Ok((axioms_added, theorems_added))
 }

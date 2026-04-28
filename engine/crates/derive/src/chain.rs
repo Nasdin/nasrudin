@@ -19,13 +19,18 @@ use crate::rules::{
 };
 use crate::strategies::DerivationStrategy;
 use nasrudin_core::Expr;
+use serde::{Deserialize, Serialize};
 
 /// A single step in an evolvable derivation.
 ///
 /// Each variant corresponds to one of the 5 `DerivationRule`s, with the
 /// rule's parameters baked in. The GA mutates these (insert, delete,
 /// swap, parameter perturb) to explore the rewrite graph.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Serialized as `{"kind": "<Variant>", ...fields}` so the wire shape is
+/// stable across worker / API boundaries (`#[serde(tag = "kind")]`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
 pub enum RuleStep {
     /// Load a named axiom from the store as the new working expression.
     IntroduceAxiom { axiom_name: String },
