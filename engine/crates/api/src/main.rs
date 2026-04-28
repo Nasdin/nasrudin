@@ -402,10 +402,15 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 
-    // Bind and serve with graceful shutdown
-    let addr = "0.0.0.0:3001";
+    // Bind and serve with graceful shutdown.
+    // PORT env override lets parallel dev/test servers coexist on one host.
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(3001);
+    let addr = format!("0.0.0.0:{port}");
     tracing::info!("Listening on {addr}");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
 
     let shutdown_flag = Arc::clone(&shutdown);
     axum::serve(
