@@ -55,8 +55,8 @@ const FALLBACK_PINS: Pin[] = [
 export function WorkerMap() {
   const workers = useWorkers();
   const livePins: Pin[] =
-    workers.data?.workers
-      .map<Pin | null>((w) => {
+    workers.data
+      ?.map<Pin | null>((w) => {
         const key = w.host?.toLowerCase().replace(/[^a-z]/g, '') ?? '';
         const coords = CITY_COORDS[key];
         if (!coords) return null;
@@ -193,7 +193,7 @@ export function WorkerMap() {
       <div className="network-stats">
         <div className="network-stat-card">
           <div className="network-big-num">
-            {(workers.data?.workers.length ?? 0).toLocaleString()}
+            {(workers.data?.length ?? 0).toLocaleString()}
           </div>
           <div className="network-label">Workers · live</div>
         </div>

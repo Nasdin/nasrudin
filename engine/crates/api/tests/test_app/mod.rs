@@ -94,6 +94,13 @@ pub async fn build() -> Option<TestApp> {
     pg.execute_unprepared(RESET_SQL).await.ok()?;
     run_migrations(&pg).await.ok()?;
 
+    // Seed a known worker row so the public list endpoint has something to
+    // return and so tests asserting "id_mismatch" on heartbeat have a real
+    // counter-party in PG.
+    nasrudin_pg::query::workers::register(&pg, "test-worker", Some("test-worker"), Some("localhost"))
+        .await
+        .ok()?;
+
     let rocks_dir = tempfile::tempdir().ok()?;
     let rocks = Arc::new(TheoremDb::new(rocks_dir.path().to_str()?).ok()?);
 
@@ -149,6 +156,14 @@ pub async fn build() -> Option<TestApp> {
             "/api/seed",
             axum::routing::get(handlers::seed::seed),
         )
+        .route(
+            "/api/workers",
+            axum::routing::get(handlers::workers::list),
+        )
+        .route(
+            "/api/workers/heartbeat",
+            axum::routing::post(handlers::workers::heartbeat),
+        )
         .with_state(state);
 
     Some(TestApp {
@@ -167,6 +182,33 @@ pub async fn get(app: &TestApp, path: &str) -> Resp {
         .method("GET")
         .uri(path)
         .body(Body::empty())
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let body_bytes = to_bytes(resp.into_body(), 1024 * 1024).await.unwrap().to_vec();
+    Resp {
+        status,
+        body: body_bytes,
+    }
+}
+
+/// Issue a `POST` request with a JSON body through the in-memory router.
+/// `bearer` is an optional `Authorization: Bearer …` token.
+pub async fn post(
+    app: &TestApp,
+    path: &str,
+    body: &serde_json::Value,
+    bearer: Option<&str>,
+) -> Resp {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(axum::http::header::CONTENT_TYPE, "application/json");
+    if let Some(tok) = bearer {
+        builder = builder.header(axum::http::header::AUTHORIZATION, format!("Bearer {tok}"));
+    }
+    let req = builder
+        .body(Body::from(serde_json::to_vec(body).unwrap()))
         .unwrap();
     let resp = app.router.clone().oneshot(req).await.unwrap();
     let status = resp.status();

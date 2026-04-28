@@ -79,51 +79,71 @@ pub async fn register(
     )
 }
 
+/// `POST /api/workers/heartbeat` body shape (Phase 9 Task 6.1).
 #[derive(Deserialize)]
 pub struct HeartbeatBody {
-    pub theorems_contributed: i64,
+    pub worker_id: String,
+    pub current_generation: i64,
+    pub theorems_produced_total: i64,
+    pub uptime_seconds: i64,
+    pub engine_git_sha: String,
 }
 
+/// `POST /api/workers/heartbeat` — `WorkerAuth` (Bearer `nsk_worker_…`).
+///
+/// Body's `worker_id` must match the credential's worker handle, otherwise
+/// `403`. Updates `last_heartbeat_at`, generation stats, uptime, and git SHA.
 pub async fn heartbeat(
     State(state): State<Arc<AppState>>,
     auth: WorkerAuth,
     Json(body): Json<HeartbeatBody>,
 ) -> impl IntoResponse {
+    if auth.0.worker_handle != body.worker_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "id_mismatch" })),
+        )
+            .into_response();
+    }
     let Some(db) = state.pg.clone() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "postgres not configured" })),
-        );
+            Json(serde_json::json!({ "error": "pg_unavailable" })),
+        )
+            .into_response();
     };
-    match nasrudin_pg::query::workers::heartbeat(
+    match nasrudin_pg::query::workers::update_heartbeat(
         &db,
-        &auth.0.worker_handle,
-        body.theorems_contributed,
+        &body.worker_id,
+        body.current_generation,
+        body.theorems_produced_total,
+        body.uptime_seconds,
+        &body.engine_git_sha,
     )
     .await
     {
-        Ok(Some(row)) => (StatusCode::OK, Json(serde_json::to_value(row).unwrap())),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "worker not found" })),
-        ),
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": format!("{e}") })),
-        ),
+        )
+            .into_response(),
     }
 }
 
-/// `GET /api/workers` — public list of all known workers.
+/// `GET /api/workers` — public list of all known workers, ordered by
+/// `theorems_contributed DESC`. Returns `[]` (HTTP 200) when Postgres is
+/// unavailable so the frontend leaderboard renders gracefully.
 pub async fn list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let Some(db) = state.pg.clone() else {
-        return (StatusCode::OK, Json(serde_json::json!({ "workers": [] })));
+        return (StatusCode::OK, Json(serde_json::json!([]))).into_response();
     };
-    match nasrudin_pg::query::workers::list(&db, None).await {
-        Ok(rows) => (StatusCode::OK, Json(serde_json::json!({ "workers": rows }))),
+    match nasrudin_pg::query::workers::list_all(&db).await {
+        Ok(rows) => (StatusCode::OK, Json(serde_json::to_value(rows).unwrap())).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": format!("{e}") })),
-        ),
+        )
+            .into_response(),
     }
 }

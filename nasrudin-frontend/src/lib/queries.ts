@@ -121,7 +121,7 @@ export function useSavedSearches() {
 export function useWorkers() {
   return useQuery({
     queryKey: ['workers'],
-    queryFn: () => apiFetch<{ workers: Worker[] }>('/api/workers'),
+    queryFn: () => apiFetch<Worker[]>('/api/workers'),
     refetchInterval: 30_000,
   });
 }

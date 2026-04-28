@@ -7,7 +7,7 @@ export const Route = createFileRoute('/leaderboard')({ component: LeaderboardPag
 
 function LeaderboardPage() {
   const { data } = useWorkers();
-  const ranked = (data?.workers ?? [])
+  const ranked = (data ?? [])
     .slice()
     .sort((a, b) => b.theorems_contributed - a.theorems_contributed);
   const [first, second, third] = ranked;
