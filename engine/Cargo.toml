@@ -35,6 +35,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Hashing & encoding
+blake3 = "1.5"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 hex = "0.4"
 data-encoding = "2"
