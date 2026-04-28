@@ -227,11 +227,33 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
         sort_and_truncate(&mut next, cfg.beam_width);
 
         let new_best = next.first().map(|s| s.score()).unwrap_or(0.0);
+        // Distinct introduce count of the current best chain. We
+        // suppress stagnation termination until the chain has at least
+        // 4 distinct introductions — the minimum hypothesis count for
+        // the canonical E=mc² derivation. Stopping earlier discards
+        // search effort just when it's about to bear fruit, because
+        // shape=1.0 is reachable at iteration 1 via a 1-axiom chain
+        // ending in `RearrangeEquation(target=final)` (which Lean
+        // can't actually discharge).
+        let distinct_intros = next
+            .first()
+            .map(|s| {
+                let mut names = std::collections::HashSet::new();
+                for step in &s.chain.0 {
+                    if let RuleStep::IntroduceAxiom { axiom_name } = step {
+                        names.insert(axiom_name.clone());
+                    }
+                }
+                names.len()
+            })
+            .unwrap_or(0);
         if new_best <= last_best + 1e-6 {
-            stagnant_for += 1;
-            if stagnant_for >= cfg.stagnation_window {
-                frontier = next;
-                break;
+            if distinct_intros >= 4 {
+                stagnant_for += 1;
+                if stagnant_for >= cfg.stagnation_window {
+                    frontier = next;
+                    break;
+                }
             }
         } else {
             stagnant_for = 0;

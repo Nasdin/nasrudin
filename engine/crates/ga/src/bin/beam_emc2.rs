@@ -170,12 +170,33 @@ async fn main() -> anyhow::Result<()> {
             _ => {}
         }
     }
+    // Score for the picker: prefer chains that end with the canonical
+    // pattern `RearrangeEquation(...) → TakePositiveRoot`. That's the
+    // shape Lean's `Real.sqrt_sq` discharges directly; a bare
+    // `RearrangeEquation` to the final target asks nlinarith to invent
+    // the square root, which it almost never does for non-trivial
+    // polynomials. Boost +0.5 to the score so a 5-step chain ending
+    // in `Rearrange(rung_2) + TakePositiveRoot` outranks a 4-step
+    // chain ending in `Rearrange(final)` even at equal shape.
+    let canonical_pattern_bonus = |s: &nasrudin_ga::beam::BeamState| -> f64 {
+        use nasrudin_derive::RuleStep;
+        let n = s.chain.0.len();
+        if n < 2 {
+            return 0.0;
+        }
+        match (&s.chain.0[n - 2], &s.chain.0[n - 1]) {
+            (RuleStep::RearrangeEquation { .. }, RuleStep::TakePositiveRoot) => 0.5,
+            _ => 0.0,
+        }
+    };
+    let pick_score = |s: &nasrudin_ga::beam::BeamState| -> f64 {
+        s.shape + canonical_pattern_bonus(s) + 0.05 * (intro_count(s) as f64)
+    };
     let mut sorted: Vec<_> = by_canonical.into_values().collect();
     sorted.sort_by(|a, b| {
-        b.shape
-            .partial_cmp(&a.shape)
+        pick_score(b)
+            .partial_cmp(&pick_score(a))
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then(intro_count(b).cmp(&intro_count(a)))
     });
     let pick: Vec<_> = sorted.into_iter().take(max_verify).collect();
     println!(
