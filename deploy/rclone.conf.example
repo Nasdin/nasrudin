@@ -1,0 +1,11 @@
+# Copy to deploy/rclone.conf and fill in your DigitalOcean Spaces credentials.
+# Generate keys at https://cloud.digitalocean.com/account/api/spaces
+
+[spaces]
+type = s3
+provider = DigitalOcean
+env_auth = false
+access_key_id = REPLACE_ME
+secret_access_key = REPLACE_ME
+endpoint = nyc3.digitaloceanspaces.com
+acl = private
