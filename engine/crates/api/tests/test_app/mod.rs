@@ -145,6 +145,10 @@ pub async fn build() -> Option<TestApp> {
             "/api/events/stats",
             axum::routing::get(handlers::events::stats),
         )
+        .route(
+            "/api/seed",
+            axum::routing::get(handlers::seed::seed),
+        )
         .with_state(state);
 
     Some(TestApp {

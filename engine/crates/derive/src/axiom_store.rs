@@ -45,6 +45,13 @@ impl AxiomStore {
         self.axioms.values().filter(|a| &a.domain == domain).collect()
     }
 
+    /// Iterate over all registered axioms in unspecified order.
+    ///
+    /// Used by `/api/seed` to expose the full catalog to remote workers.
+    pub fn iter(&self) -> impl Iterator<Item = &Axiom> {
+        self.axioms.values()
+    }
+
     /// Get all axiom names.
     pub fn names(&self) -> Vec<&str> {
         self.axioms.keys().map(|s| s.as_str()).collect()

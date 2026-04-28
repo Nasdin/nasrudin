@@ -235,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/theorems", get(handlers::theorems::list))
         .route("/api/domains", get(list_domains))
         .route("/api/axioms", get(list_axioms))
+        .route("/api/seed", get(handlers::seed::seed))
         .layer(GovernorLayer::new(rate_limit::api_standard()));
 
     // Health-relaxed: monitoring & liveness (120 req/min, burst 30)
