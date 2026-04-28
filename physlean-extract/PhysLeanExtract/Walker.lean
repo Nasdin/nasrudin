@@ -56,9 +56,9 @@ structure ExtractedType where
   docString : Option String
   deriving Inhabited, Repr
 
-/-- Known top-level namespaces used by PhysLean's physics content.
-    PhysLean opens these via `namespace`/`open` so definitions appear
-    under these prefixes rather than under `PhysLean.*`. -/
+/-- Default namespace whitelist for PhysLean content. PhysLean opens
+    these via `namespace`/`open` so definitions appear under these
+    prefixes rather than under `PhysLean.*`. -/
 private def physLeanTopNamespaces : List String :=
   [ "PhysLean."
   , "Lorentz."
@@ -74,10 +74,34 @@ private def physLeanTopNamespaces : List String :=
   , "CliffordAlgebra."
   ]
 
+/-- Mathlib namespaces worth extracting for the GA's algebraic
+    rewrite vocabulary. Curated to real-arithmetic identities with
+    statements that survive the `exprToAst` translator. -/
+def mathlibTopNamespaces : List String :=
+  [ "Mathlib.Algebra.Ring.Basic"
+  , "Mathlib.Algebra.GroupPower.Basic"
+  , "Mathlib.Algebra.Order.Ring"
+  , "Mathlib.Data.Real.Basic"
+  , "Mathlib.Analysis.SpecialFunctions.Pow.Real"
+  , "Real."
+  ]
+
 /-- Check if a name belongs to PhysLean (not Lean/Mathlib internals). -/
 def isPhysLeanName (n : Name) : Bool :=
   let str := n.toString
   physLeanTopNamespaces.any fun pfx => str.startsWith pfx
+
+/-- Check if a name belongs to a configurable whitelist of namespaces.
+    `--whitelist=foo,bar` adds `foo.` and `bar.` to the active set on
+    top of the PhysLean defaults; passing the empty list (the default)
+    means "PhysLean defaults only". -/
+def matchesWhitelist (whitelist : List String) (n : Name) : Bool :=
+  if whitelist.isEmpty then
+    isPhysLeanName n
+  else
+    let str := n.toString
+    whitelist.any fun pfx => str.startsWith pfx ||
+      (if pfx.endsWith "." then false else str.startsWith (pfx ++ "."))
 
 /-- Check if a name is internal/auxiliary. -/
 def isInternalName (n : Name) : Bool :=
@@ -133,14 +157,16 @@ def ppTypeExpr (e : Expr) : MetaM String := do
     let fmt ← ppExpr e
     return toString fmt
 
-/-- Walk the environment and extract all PhysLean theorems.
-    Runs in MetaM so the environment is available for pretty-printing. -/
-def walkTheorems : MetaM (Array ExtractedTheorem) := do
+/-- Walk the environment and extract all theorems matching the
+    namespace whitelist. Empty `whitelist` falls back to
+    `isPhysLeanName` (legacy behaviour). Runs in MetaM so the
+    environment is available for pretty-printing. -/
+def walkTheoremsWithWhitelist (whitelist : List String := []) : MetaM (Array ExtractedTheorem) := do
   let env ← getEnv
   let mut results := #[]
   for (name, ci) in env.constants.map₁.toList do
-    -- Skip non-PhysLean constants
-    unless isPhysLeanName name do continue
+    -- Skip names outside the active namespace whitelist
+    unless matchesWhitelist whitelist name do continue
     -- Skip internal names
     if isInternalName name then continue
     -- Skip semiformal results
@@ -187,6 +213,11 @@ def walkTheorems : MetaM (Array ExtractedTheorem) := do
     | _ => pure ()
 
   return results
+
+/-- Backwards-compat shim: `walkTheorems` is the same as
+    `walkTheoremsWithWhitelist []`. New callers should use the
+    whitelist form. -/
+def walkTheorems : MetaM (Array ExtractedTheorem) := walkTheoremsWithWhitelist []
 
 /-- Walk the environment and extract PhysLean types (structures/inductives).
     Runs in MetaM so the environment is available for pretty-printing and

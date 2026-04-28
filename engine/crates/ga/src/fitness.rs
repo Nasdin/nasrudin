@@ -14,6 +14,23 @@ use nasrudin_derive::{check_equation_dimensions, sr_variable_dimensions};
 
 /// Evaluate all 7 fitness objectives for a theorem candidate.
 pub fn evaluate(theorem: &Theorem) -> FitnessScore {
+    evaluate_with_target(theorem, None)
+}
+
+/// Like [`evaluate`] but also score the candidate against an optional
+/// `TargetSpec`. The target signals (`target_shape`, `ladder_progress`)
+/// stay zero when no target is given — same behaviour as before.
+pub fn evaluate_with_target(
+    theorem: &Theorem,
+    target: Option<&crate::target::TargetSpec>,
+) -> FitnessScore {
+    let (target_shape, ladder_progress) = match target {
+        Some(spec) => (
+            crate::target::shape_similarity(&theorem.statement, &spec.final_target),
+            crate::target::ladder_score(&theorem.statement, spec),
+        ),
+        None => (0.0, 0.0),
+    };
     FitnessScore {
         novelty: novelty_score(theorem),
         complexity: complexity_score(&theorem.statement),
@@ -22,6 +39,8 @@ pub fn evaluate(theorem: &Theorem) -> FitnessScore {
         symmetry: symmetry_score(&theorem.statement),
         connectivity: connectivity_score(theorem),
         nasrudin_relevance: nasrudin_relevance_score(theorem),
+        target_shape,
+        ladder_progress,
     }
 }
 

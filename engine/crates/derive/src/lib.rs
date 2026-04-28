@@ -27,6 +27,7 @@ pub mod dimension_checker;
 pub mod error;
 pub mod lean_emitter;
 pub mod lean_verify;
+pub mod no_cheat_audit;
 pub mod rewrite;
 pub mod rules;
 pub mod strategies;

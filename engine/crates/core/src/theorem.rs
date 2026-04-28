@@ -89,6 +89,22 @@ pub struct FitnessScore {
     pub symmetry: f64,
     pub connectivity: f64,
     pub nasrudin_relevance: f64,
+    /// Tree-edit similarity to a configured target Expr shape, in [0,1].
+    /// 0 when no target is set; ~1 when the candidate's Expr matches the
+    /// target structure (same root op, same symbol set, same topology).
+    /// Used by the GA to bias the search toward a specific theorem we
+    /// want to rediscover (e.g. E=mc²) without ever putting that
+    /// theorem in the AxiomStore. See nasrudin_ga::target.
+    #[serde(default)]
+    pub target_shape: f64,
+    /// Maximum partial match against any rung of a configured sub-goal
+    /// ladder, in [0,1]. 0 when no ladder is configured. Lets the GA
+    /// score chains that reach an intermediate result on the way to
+    /// the headline target — e.g. a chain reaching `E² = (mc²)²` on
+    /// the path to `E = mc²` gets credit for that rung even though it
+    /// hasn't taken the final root.
+    #[serde(default)]
+    pub ladder_progress: f64,
 }
 
 impl Default for FitnessScore {
@@ -101,6 +117,8 @@ impl Default for FitnessScore {
             symmetry: 0.0,
             connectivity: 0.0,
             nasrudin_relevance: 0.0,
+            target_shape: 0.0,
+            ladder_progress: 0.0,
         }
     }
 }

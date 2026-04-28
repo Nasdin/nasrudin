@@ -15,7 +15,7 @@
 //! verified candidate.
 
 use crate::chain_ga::{
-    ChainIndividual, ChainVerifyOutcome, evaluate_chain_fitness, mutate_chain, splice_chains,
+    ChainIndividual, ChainVerifyOutcome, mutate_chain, splice_chains,
     verify_chain,
 };
 use nasrudin_core::Expr;
@@ -41,6 +41,12 @@ pub struct DiscoveryConfig {
     /// Hard cap on lake-verifications per discovery run. Lake build is
     /// slow; you almost always want this small (e.g. 3-5).
     pub max_lake_verifications: usize,
+    /// Symbolic target the search should bias toward. When `Some`, every
+    /// chain's `target_shape` and `ladder_progress` fitness components
+    /// get computed against this spec; the composite weight on those
+    /// components in `composite()` is high (10x), so the search climbs
+    /// toward the target instead of optimising for novelty alone.
+    pub target: Option<crate::target::TargetSpec>,
 }
 
 impl Default for DiscoveryConfig {
@@ -54,6 +60,7 @@ impl Default for DiscoveryConfig {
             max_chain_len: 12,
             prover_root: None,
             max_lake_verifications: 0,
+            target: None,
         }
     }
 }
@@ -104,7 +111,7 @@ pub fn run_discovery(
     let mut population: Vec<ChainIndividual> = (0..config.population_size)
         .map(|_| {
             let chain = random_chain_seed(store, rng, &mut report);
-            let fit = evaluate_chain_fitness(&chain, store);
+            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(&chain, store, config.target.as_ref());
             ChainIndividual::new(chain, fit)
         })
         .collect();
@@ -137,7 +144,7 @@ pub fn run_discovery(
                 if child.is_empty() || child.len() > config.max_chain_len {
                     continue;
                 }
-                let fit = evaluate_chain_fitness(&child, store);
+                let fit = crate::chain_ga::evaluate_chain_fitness_with_target(&child, store, config.target.as_ref());
                 offspring.push(ChainIndividual::new(child, fit));
                 report.total_candidates += 1;
                 if offspring.len() >= config.population_size {
@@ -326,6 +333,11 @@ fn composite(f: &nasrudin_core::FitnessScore) -> f64 {
     // `complexity` is *low* for long chains, so we *down-weight* it
     // and rely on `depth` to push composition. Without these tweaks
     // the GA converges on length-1 single-axiom chains.
+    //
+    // Target-direction terms (`target_shape`, `ladder_progress`) get
+    // heavy weight when set — this is the "don't settle for tautologies
+    // in the right symbol set" pressure. They're zero when no target is
+    // configured, so behaviour is unchanged for legacy runs.
     1.5 * f.novelty
         + 1.0 * f.nasrudin_relevance
         + 3.0 * f.depth          // ↑ from 1.0
@@ -333,6 +345,8 @@ fn composite(f: &nasrudin_core::FitnessScore) -> f64 {
         + 0.2 * f.complexity     // ↓ from 0.5 (don't reward terseness)
         + 0.5 * f.dimensional
         + 0.5 * f.symmetry
+        + 6.0 * f.target_shape   // direction
+        + 4.0 * f.ladder_progress
 }
 
 fn run_chain_for_final(chain: &Chain, store: &AxiomStore) -> Option<Expr> {
@@ -382,6 +396,7 @@ mod tests {
             max_chain_len: 8,
             prover_root: None, // no lake verify in unit tests
             max_lake_verifications: 0,
+            target: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -404,6 +419,7 @@ mod tests {
             max_chain_len: 10,
             prover_root: None,
             max_lake_verifications: 0,
+            target: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);

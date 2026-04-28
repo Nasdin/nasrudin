@@ -235,6 +235,8 @@ fn main() {
                 symmetry: 0.8, // Lorentz invariant
                 connectivity: 1.0,
                 nasrudin_relevance: 1.0,
+                target_shape: 0.0,
+                ladder_progress: 0.0,
             },
             generation: 1,
             created_at: now_epoch(),

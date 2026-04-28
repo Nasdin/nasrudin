@@ -35,6 +35,16 @@ pub enum RuleStep {
     /// Load a named axiom from the store as the new working expression.
     IntroduceAxiom { axiom_name: String },
 
+    /// Load a previously-verified theorem as the new working expression.
+    /// Functionally identical to `IntroduceAxiom` from the chain's
+    /// perspective (both look up a name in the store and install its
+    /// statement as the current expression), but tagged separately so
+    /// the audit / search heuristics can tell "this chain composes off
+    /// a peer-verified result" from "this chain starts from postulates."
+    /// The `theorem_name` is the synthetic name the worker registered
+    /// after seed-syncing the peer theorem (typically `peer_<hash>`).
+    IntroduceTheorem { theorem_name: String },
+
     /// Substitute every occurrence of `var` with `value` in `current`.
     SubstituteValue {
         var: String,
@@ -139,6 +149,24 @@ impl Chain {
                 })?;
                 IntroduceAxiom {
                     axiom_name: axiom_name.clone(),
+                    statement: ax.statement.clone(),
+                }
+                .apply(ctx)
+            }
+            // IntroduceTheorem replays identically: peer-verified
+            // theorems live in the AxiomStore as synthetic axioms
+            // (the worker's seed-sync registers them), so the
+            // derivation rule is the same. The variant is kept
+            // separate so audit and search heuristics can distinguish
+            // composing-off-peer from starting-from-postulates.
+            RuleStep::IntroduceTheorem { theorem_name } => {
+                let ax = store.get(theorem_name).ok_or_else(|| {
+                    DeriveError::AxiomNotFound {
+                        name: theorem_name.clone(),
+                    }
+                })?;
+                IntroduceAxiom {
+                    axiom_name: theorem_name.clone(),
                     statement: ax.statement.clone(),
                 }
                 .apply(ctx)

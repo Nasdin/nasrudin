@@ -14,8 +14,10 @@ pub mod fitness;
 pub mod individual;
 pub mod island;
 pub mod mutation;
+pub mod beam;
 pub mod population;
 pub mod selection;
+pub mod target;
 
 pub use config::GaConfig;
 pub use engine::{DiscoveryEvent, GaEngine, GaStatusSnapshot};

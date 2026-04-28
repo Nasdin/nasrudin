@@ -120,6 +120,12 @@ async fn main() {
         std::process::exit(2);
     }
     println!("  ✓ {forbidden_axiom} is NOT in the store. No cheating.");
+
+    // Canonical-form audit: even if the forbidden name doesn't appear,
+    // a smuggler could register E=mc² under a different name. Hash-match
+    // every axiom's canonical statement against the headline deny-list.
+    nasrudin_derive::no_cheat_audit::audit_or_panic(&store, "worker startup");
+    println!("  ✓ no-cheat canonical-form audit passed");
     println!();
 
     // ── Seed-sync from peers via /api/seed ───────────────────────────
@@ -144,13 +150,21 @@ async fn main() {
                 );
                 println!("    store size now: {} entries", store.len());
                 // Re-check the no-cheating invariant after the fold-in:
-                // a peer theorem must not equal the forbidden headline.
+                // a peer theorem must not equal the forbidden headline,
+                // either by name OR by canonical form. The canonical
+                // audit is the load-bearing one — it catches a peer
+                // theorem registered as `peer_<hash>` whose statement
+                // happens to be E=mc².
                 if store.get(forbidden_axiom).is_some() {
                     eprintln!(
                         "✗ FAIL: peer-fed `{forbidden_axiom}` after seed-sync. Refusing."
                     );
                     std::process::exit(2);
                 }
+                nasrudin_derive::no_cheat_audit::audit_or_panic(
+                    &store,
+                    "worker post-seed-sync",
+                );
             }
             Err(e) => {
                 eprintln!(
@@ -161,6 +175,33 @@ async fn main() {
         println!();
     }
 
+    // Resolve target: --target sr_rest_energy is the canonical first POC.
+    // The shape itself is *not* added to the AxiomStore — it's metadata
+    // used to bias the search via target_shape + ladder_progress fitness.
+    // The no-cheat audit confirms this invariant at boot.
+    let target_name = std::env::args()
+        .skip_while(|a| a != "--target")
+        .nth(1)
+        .or_else(|| std::env::var("NASRUDIN_TARGET").ok())
+        .unwrap_or_else(|| match domain.as_str() {
+            "sr" => "sr_rest_energy".into(),
+            _ => String::new(),
+        });
+    let target_spec = if target_name.is_empty() {
+        None
+    } else {
+        match nasrudin_ga::target::TargetSpec::lookup(&target_name) {
+            Some(spec) => {
+                println!("▶ Target: {} (ladder of {} rungs)", spec.name, spec.ladder.len());
+                Some(spec)
+            }
+            None => {
+                eprintln!("✗ Unknown target spec `{target_name}`. Available: sr_rest_energy");
+                std::process::exit(2);
+            }
+        }
+    };
+
     let config = DiscoveryConfig {
         population_size: pop,
         generations: gens,
@@ -170,6 +211,7 @@ async fn main() {
         max_chain_len,
         prover_root: prover_root.clone(),
         max_lake_verifications: if prover_root.is_some() { max_lake } else { 0 },
+        target: target_spec,
     };
 
     println!(

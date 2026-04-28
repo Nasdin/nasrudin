@@ -15,18 +15,42 @@ and writes `output/catalog.json`.
 
 open Lean PhysLeanExtract
 
-/-- Main entry point for the extraction tool. -/
-def main : IO Unit := do
+/-- Main entry point for the extraction tool.
+    `lake exe extract` walks PhysLean only.
+    `lake exe extract --whitelist=Mathlib.Algebra,Real.,Mathlib.Analysis.SpecialFunctions.Pow.Real`
+       walks the listed namespace prefixes (in *addition* to PhysLean
+       defaults if `+phys` is in the list, otherwise *replaces* them).
+    `lake exe extract --output=output/math_corpus.json` redirects output. -/
+def main (args : List String) : IO Unit := do
   IO.println "PhysLean Extraction Tool"
   IO.println "========================"
   IO.println ""
 
+  -- Parse CLI flags. We support:
+  --   --whitelist=A,B,C   comma-separated namespace prefixes
+  --   --output=path       output file (default output/catalog.json)
+  let getFlag (key : String) : Option String :=
+    args.findSome? fun a =>
+      let p := key ++ "="
+      if a.startsWith p then some (a.drop p.length) else none
+  let whitelistStr := getFlag "--whitelist" |>.getD ""
+  let outputPath := getFlag "--output" |>.getD "output/catalog.json"
+  let whitelist : List String :=
+    if whitelistStr.isEmpty then []
+    else whitelistStr.splitOn ","
+      |>.map String.trim |>.filter (fun s => !s.isEmpty)
+  if whitelist.isEmpty then
+    IO.println "Whitelist: PhysLean defaults (no --whitelist given)"
+  else
+    IO.println s!"Whitelist: {whitelist}"
+
   -- Initialize search paths for .olean files
   Lean.initSearchPath (← Lean.findSysroot)
 
-  IO.println "Loading PhysLean environment (this may take a moment)..."
-
-  -- Load PhysLean environment (reads compiled .olean files)
+  IO.println "Loading environment (this may take a moment)..."
+  -- Always import PhysLean (which transitively imports Mathlib). When
+  -- only Mathlib namespaces are in the whitelist, PhysLean's load is
+  -- harmless overhead — the walker just won't emit PhysLean constants.
   let env ← Lean.importModules #[{ module := `PhysLean }] {} 0
 
   IO.println s!"Environment loaded: {env.constants.map₁.size} constants"
@@ -41,7 +65,7 @@ def main : IO Unit := do
   -- Run walker in MetaM to extract theorems and types
   IO.println "Walking environment for theorems..."
   let ((theorems, types), _) ← (do
-    let theorems ← walkTheorems
+    let theorems ← walkTheoremsWithWhitelist whitelist
     let types ← walkTypes
     pure (theorems, types)
     : Meta.MetaM _).run'.toIO coreCtx coreState
@@ -65,10 +89,15 @@ def main : IO Unit := do
   -- Generate catalog JSON
   let catalog := renderCatalog theorems types "v4.26.0" "4.26.0"
 
-  -- Write to output/catalog.json
-  let outputPath := "output/catalog.json"
-  -- Ensure output directory exists
-  IO.FS.createDirAll "output"
+  -- Coverage report: how many theorems got a populated expr_ast?
+  let astHits := theorems.filter (·.exprAst.isSome) |>.size
+  IO.println s!"  {astHits} / {theorems.size} theorems have populated expr_ast"
+
+  -- Ensure parent directory exists (handles output/ subdir case).
+  let parts := outputPath.splitOn "/"
+  if parts.length > 1 then
+    let dir := "/".intercalate (parts.dropLast)
+    IO.FS.createDirAll dir
   IO.FS.writeFile outputPath catalog
   IO.println s!"Wrote catalog to {outputPath}"
   IO.println "Done."

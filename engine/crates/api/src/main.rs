@@ -29,7 +29,7 @@ use nasrudin_ga::{DiscoveryEvent, GaConfig, GaEngine, GaStatusSnapshot};
 use nasrudin_lean_bridge::LeanBridge;
 use nasrudin_rocks::TheoremDb;
 
-use axum::routing::delete;
+use axum::routing::{delete, post};
 
 // GaStatusSnapshot is now imported from nasrudin_ga
 
@@ -102,6 +102,14 @@ async fn main() -> anyhow::Result<()> {
     axiom_store.load_special_relativity_upstream();
     axiom_store.load_electromagnetism_upstream();
     tracing::info!("AxiomStore size after upstream layering: {}", axiom_store.len());
+
+    // No-cheat audit: hard-fail boot if any registered axiom matches a
+    // known headline result. Headline results (E=mc², photon dispersion,
+    // mass-shell) must be *derived* by the GA, not loaded as starting
+    // blocks — otherwise the rediscovery proof-of-concept is vacuous.
+    nasrudin_derive::no_cheat_audit::audit_or_panic(&axiom_store, "physics-api boot");
+    tracing::info!("No-cheat audit passed: 0 forbidden headlines in AxiomStore");
+
     let axiom_store = Arc::new(axiom_store);
 
     // Channels
@@ -256,6 +264,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/domains", get(list_domains))
         .route("/api/axioms", get(list_axioms))
         .route("/api/seed", get(handlers::seed::seed))
+        .route("/api/search", post(handlers::search::search))
         .layer(GovernorLayer::new(rate_limit::api_standard()));
 
     // Health-relaxed: monitoring & liveness (120 req/min, burst 30)

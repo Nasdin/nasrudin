@@ -630,6 +630,18 @@ pub fn evaluate_chain(chain: &Chain, store: &AxiomStore) -> ChainEvalResult {
 /// - **nasrudin_relevance**: 1.0 if the final expression is an equation
 ///   (`BinOp::Eq`), else 0.0. Most physics theorems are equations.
 pub fn evaluate_chain_fitness(chain: &Chain, store: &AxiomStore) -> FitnessScore {
+    evaluate_chain_fitness_with_target(chain, store, None)
+}
+
+/// Like [`evaluate_chain_fitness`] but additionally scores the chain's
+/// final expression against a target shape and (optionally) a sub-goal
+/// ladder. The target signals stay zero when no `target` is given —
+/// behaviour identical to the old one-arg form.
+pub fn evaluate_chain_fitness_with_target(
+    chain: &Chain,
+    store: &AxiomStore,
+    target: Option<&crate::target::TargetSpec>,
+) -> FitnessScore {
     let eval = evaluate_chain(chain, store);
     let executes = if eval.executes { 1.0 } else { 0.0 };
     let steps = eval.steps_run as f64;
@@ -654,6 +666,14 @@ pub fn evaluate_chain_fitness(chain: &Chain, store: &AxiomStore) -> FitnessScore
     );
     let relevance = if is_eq { 1.0 } else { 0.0 };
 
+    let (target_shape, ladder_progress) = match (&eval.final_expr, target) {
+        (Some(expr), Some(spec)) => (
+            crate::target::shape_similarity(expr, &spec.final_target),
+            crate::target::ladder_score(expr, spec),
+        ),
+        _ => (0.0, 0.0),
+    };
+
     FitnessScore {
         novelty: executes,
         complexity,
@@ -662,6 +682,8 @@ pub fn evaluate_chain_fitness(chain: &Chain, store: &AxiomStore) -> FitnessScore
         symmetry: 0.5,    // v2: detect Lorentz invariance.
         connectivity,
         nasrudin_relevance: relevance,
+        target_shape,
+        ladder_progress,
     }
 }
 

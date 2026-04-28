@@ -77,6 +77,7 @@ impl AxiomStore {
         let catalog: serde_json::Value = serde_json::from_str(&content)?;
 
         let mut count = 0;
+        let mut ast_count = 0;
         if let Some(theorems) = catalog.get("theorems").and_then(|t| t.as_array()) {
             for thm in theorems {
                 let name = thm.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
@@ -96,20 +97,36 @@ impl AxiomStore {
                     _ => Domain::PureMath,
                 };
 
-                // For catalog-loaded axioms, we store a placeholder Expr
-                // since the type signatures are in Lean syntax, not our AST.
-                // The GA engine will reference these by name.
+                // Prefer the structured `expr_ast` field (emitted by the
+                // updated PhysLean extractor); fall back to a `Var`
+                // placeholder when the entry is decorative-only. The GA
+                // can compose meaningfully only with real Expr trees;
+                // placeholder entries stay introducible by name but
+                // can't participate in `RearrangeEquation` etc.
+                let statement = thm
+                    .get("expr_ast")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| serde_json::from_value::<Expr>(v.clone()).ok())
+                    .map(|e| {
+                        ast_count += 1;
+                        e
+                    })
+                    .unwrap_or_else(|| Expr::Var(name.to_string()));
+
                 self.register(Axiom {
                     name: name.to_string(),
                     domain,
-                    statement: Expr::Var(name.to_string()),
+                    statement,
                     description: doc,
                 });
                 count += 1;
             }
         }
 
-        tracing::info!("Loaded {count} axioms from catalog");
+        tracing::info!(
+            "Loaded {count} axioms from catalog ({ast_count} with structured Expr AST, {} placeholder)",
+            count - ast_count
+        );
         Ok(count)
     }
 

@@ -176,6 +176,8 @@ mod tests {
                 symmetry: objectives[4],
                 connectivity: objectives[5],
                 nasrudin_relevance: objectives[6],
+                target_shape: 0.0,
+                ladder_progress: 0.0,
             },
             generation: 0,
             created_at: 0,
