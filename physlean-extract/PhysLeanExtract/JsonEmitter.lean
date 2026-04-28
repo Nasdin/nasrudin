@@ -39,6 +39,9 @@ def theoremToJson (t : ExtractedTheorem) (domain : PhysDomain) : String :=
   let shortName := t.name.toString.replace "PhysLean." ""
     |>.replace "." "_"
     |>.toLower
+  let exprAstField := match t.exprAst with
+    | some ast => ",\n    \"expr_ast\": " ++ ast.compress
+    | none     => ",\n    \"expr_ast\": null"
   "{" ++
     "\n    \"name\": " ++ jsonString shortName ++
     ",\n    \"physlean_name\": " ++ jsonString t.name.toString ++
@@ -48,6 +51,7 @@ def theoremToJson (t : ExtractedTheorem) (domain : PhysDomain) : String :=
     ",\n    \"can_reaxiomatize\": " ++ jsonBool t.canReaxiomatize ++
     ",\n    \"source\": \"physlean\"" ++
     ",\n    \"doc_string\": " ++ jsonOptString t.docString ++
+    exprAstField ++
     "\n  }"
 
 /-- Render a type entry as JSON. -/

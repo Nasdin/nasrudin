@@ -1,4 +1,5 @@
 import Lean
+import PhysLeanExtract.ExprAst
 
 /-!
 # PhysLean Environment Walker
@@ -33,7 +34,13 @@ structure ExtractedTheorem where
   docString : Option String
   /-- Whether the signature is simple enough to re-axiomatize -/
   canReaxiomatize : Bool
-  deriving Inhabited, Repr
+  /-- Structured `nasrudin_core::Expr` AST, when the type signature falls
+      inside the supported subset (`Eq`, real arithmetic, `Real.sqrt`,
+      named free variables). `none` for everything else. The Rust
+      AxiomStore loader only registers entries with a populated
+      `exprAst`; the rest stay as decorative catalog rows. -/
+  exprAst : Option Lean.Json
+  deriving Inhabited
 
 /-- Represents an extracted type/structure from PhysLean. -/
 structure ExtractedType where
@@ -151,6 +158,7 @@ def walkTheorems : MetaM (Array ExtractedTheorem) := do
         pure (toString val.type)
       -- Look up doc string
       let doc ← findDocString? env name
+      let ast ← try exprToAst val.type catch _ => pure none
       results := results.push {
         name := name
         typeSignature := typeStr
@@ -158,6 +166,7 @@ def walkTheorems : MetaM (Array ExtractedTheorem) := do
         isTheorem := true
         docString := doc
         canReaxiomatize := true  -- Will be refined by TypeRewriter
+        exprAst := ast
       }
     | .defnInfo val =>
       let typeStr ← try
@@ -165,6 +174,7 @@ def walkTheorems : MetaM (Array ExtractedTheorem) := do
       catch _ =>
         pure (toString val.type)
       let doc ← findDocString? env name
+      let ast ← try exprToAst val.type catch _ => pure none
       results := results.push {
         name := name
         typeSignature := typeStr
@@ -172,6 +182,7 @@ def walkTheorems : MetaM (Array ExtractedTheorem) := do
         isTheorem := false
         docString := doc
         canReaxiomatize := true
+        exprAst := ast
       }
     | _ => pure ()
 
