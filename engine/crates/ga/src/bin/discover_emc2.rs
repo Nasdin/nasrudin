@@ -16,12 +16,31 @@
 //! (dry) or minutes (with lake). To genuinely *find* E=mc² spontaneously,
 //! expect to run for hours-to-days of GA evolution and dozens of lake
 //! verifications. This binary is the apparatus for that experiment.
+//!
+//! ## Phase 9 / Task 7.1
+//!
+//! Verified discoveries are submitted via HTTP POST to `/api/ingest` on
+//! the running `physics-api` daemon, NOT written to disk as
+//! `prover/PhysicsGenerator/Derived/Discover*.lean` files. The lake build
+//! still writes the .lean file *temporarily* (lake requires a file on
+//! disk to compile), but we delete it immediately after successful
+//! submission so no `Discover*.lean` files persist on disk going forward.
+//!
+//! Required env vars:
+//!   * `NASRUDIN_WORKER_KEY` — bearer token (`nsk_worker_…`). Required.
+//!   * `NASRUDIN_API_URL`    — base URL. Defaults to `http://localhost:3001`.
+//!   * `NASRUDIN_WORKER_ID`  — worker handle. Defaults to `in-proc-worker-1`.
 
 use nasrudin_derive::axiom_store::AxiomStore;
-use nasrudin_ga::chain_engine::{DiscoveryConfig, run_discovery};
-use std::path::PathBuf;
+use nasrudin_derive::{Chain, RuleStep};
+use nasrudin_ga::chain_engine::{DiscoveryConfig, VerifiedDiscovery, run_discovery};
+use std::path::{Path, PathBuf};
 
-fn main() {
+const DEFAULT_API_URL: &str = "http://localhost:3001";
+const DEFAULT_WORKER_ID: &str = "in-proc-worker-1";
+
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     let gens: usize = arg_value(&args, "--gens").unwrap_or(50);
@@ -44,6 +63,31 @@ fn main() {
     println!("  No headline-result strategies. No headline axioms.");
     println!("  Pure combinatorics + GA over upstream postulates.");
     println!("═══════════════════════════════════════════════════════");
+    println!();
+
+    // ── Resolve API submission config (Task 7.1) ─────────────────────
+    // Worker key is REQUIRED *only if* we're going to verify (otherwise
+    // there are no discoveries to submit). For dry runs (no `--verify`),
+    // we skip the check so devs can run the GA without the API up.
+    let api_cfg = if prover_root.is_some() {
+        match ApiSubmitConfig::from_env() {
+            Ok(cfg) => {
+                println!("▶ API submission target: {}", cfg.api_url);
+                println!("    worker_id: {}", cfg.worker_id);
+                Some(cfg)
+            }
+            Err(msg) => {
+                eprintln!("✗ {msg}");
+                eprintln!(
+                    "  Set NASRUDIN_WORKER_KEY=nsk_worker_… to enable submission, or"
+                );
+                eprintln!("  drop the --verify flag for a dry run.");
+                std::process::exit(2);
+            }
+        }
+    } else {
+        None
+    };
     println!();
 
     let mut store = AxiomStore::new();
@@ -89,8 +133,10 @@ fn main() {
         max_lake_verifications: if prover_root.is_some() { max_lake } else { 0 },
     };
 
-    println!("▶ Running discovery: pop={}, gens={}, max_chain_len={}, lake_budget={}",
-        pop, gens, max_chain_len, config.max_lake_verifications);
+    println!(
+        "▶ Running discovery: pop={}, gens={}, max_chain_len={}, lake_budget={}",
+        pop, gens, max_chain_len, config.max_lake_verifications
+    );
     println!();
 
     let mut rng = rand::rng();
@@ -132,6 +178,40 @@ fn main() {
                 println!("  ★ E = m·c² SPONTANEOUSLY DERIVED AND VERIFIED ★");
             }
         }
+
+        // ── Submit to /api/ingest, then erase the on-disk Discover*.lean
+        //    files so nothing persists in `prover/PhysicsGenerator/Derived/`
+        //    going forward (Phase 9 acceptance criterion #14).
+        if let (Some(cfg), Some(prover)) = (api_cfg.as_ref(), prover_root.as_ref()) {
+            println!();
+            println!("▶ Submitting {} discoveries to {}", report.verified.len(), cfg.api_url);
+            let domain_str = domain.clone();
+            for d in &report.verified {
+                match submit_discovery(cfg, &domain_str, d).await {
+                    Ok(()) => {
+                        println!("  ✓ submitted: {} (gen {})", d.canonical, d.generation);
+                    }
+                    Err(e) => {
+                        // Don't abort: the lake build already proved the
+                        // math is correct locally. Failed submissions can
+                        // be retried later (Phase 9 v2).
+                        eprintln!(
+                            "  ! submit failed for gen {} ({}): {e}",
+                            d.generation, d.canonical
+                        );
+                    }
+                }
+                // Always delete the local .lean file. Even if the POST
+                // failed, we don't want `Discover*.lean` to accumulate
+                // in the prover dir — that's the whole point of Task 7.1.
+                if let Err(e) = remove_module_file(prover, &d.module_path) {
+                    eprintln!(
+                        "  ! could not remove {} from prover dir: {e}",
+                        d.module_path
+                    );
+                }
+            }
+        }
     }
     println!();
 }
@@ -141,4 +221,159 @@ fn arg_value<T: std::str::FromStr>(args: &[String], flag: &str) -> Option<T> {
         .position(|a| a == flag)
         .and_then(|pos| args.get(pos + 1))
         .and_then(|s| s.parse().ok())
+}
+
+/// Submission config sourced from env. Worker key is required.
+struct ApiSubmitConfig {
+    api_url: String,
+    worker_key: String,
+    worker_id: String,
+}
+
+impl ApiSubmitConfig {
+    fn from_env() -> Result<Self, String> {
+        let worker_key = std::env::var("NASRUDIN_WORKER_KEY").map_err(|_| {
+            "NASRUDIN_WORKER_KEY is required for verified-discovery submission".to_string()
+        })?;
+        if worker_key.trim().is_empty() {
+            return Err("NASRUDIN_WORKER_KEY is empty".to_string());
+        }
+        let api_url = std::env::var("NASRUDIN_API_URL")
+            .unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+        let worker_id = std::env::var("NASRUDIN_WORKER_ID")
+            .unwrap_or_else(|_| DEFAULT_WORKER_ID.to_string());
+        Ok(Self {
+            api_url,
+            worker_key,
+            worker_id,
+        })
+    }
+}
+
+/// Build the JSON for a single chain. Mirrors the chain-step shape that
+/// the API treats opaquely as `serde_json::Value`. We hand-build because
+/// `RuleStep` doesn't derive Serialize.
+fn chain_to_json(chain: &Chain) -> serde_json::Value {
+    let steps: Vec<serde_json::Value> = chain
+        .0
+        .iter()
+        .map(|step| match step {
+            RuleStep::IntroduceAxiom { axiom_name } => serde_json::json!({
+                "kind": "IntroduceAxiom",
+                "axiom_name": axiom_name,
+            }),
+            RuleStep::SubstituteValue { var, value, reason } => serde_json::json!({
+                "kind": "SubstituteValue",
+                "var": var,
+                "value": value.to_canonical(),
+                "reason": reason,
+            }),
+            RuleStep::AlgebraicSimplify => serde_json::json!({
+                "kind": "AlgebraicSimplify",
+            }),
+            RuleStep::RearrangeEquation { description, target } => serde_json::json!({
+                "kind": "RearrangeEquation",
+                "description": description,
+                "target": target.to_canonical(),
+            }),
+            RuleStep::TakePositiveRoot => serde_json::json!({
+                "kind": "TakePositiveRoot",
+            }),
+        })
+        .collect();
+    serde_json::Value::Array(steps)
+}
+
+/// Pull every IntroduceAxiom name out of the chain (deduplicated, in
+/// first-seen order).
+fn axioms_used(chain: &Chain) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for step in &chain.0 {
+        if let RuleStep::IntroduceAxiom { axiom_name } = step {
+            if !out.iter().any(|a| a == axiom_name) {
+                out.push(axiom_name.clone());
+            }
+        }
+    }
+    out
+}
+
+/// POST a single verified discovery to `/api/ingest`.
+async fn submit_discovery(
+    cfg: &ApiSubmitConfig,
+    domain: &str,
+    d: &VerifiedDiscovery,
+) -> anyhow::Result<()> {
+    submit_to_api(
+        &cfg.api_url,
+        &cfg.worker_key,
+        &cfg.worker_id,
+        // No vergen wired up; record "unknown" so the API's required
+        // field is non-empty. Phase 9 v2 can plumb VERGEN_GIT_SHA.
+        "unknown",
+        &d.canonical,
+        domain,
+        &d.lean_source,
+        chain_to_json(&d.chain),
+        axioms_used(&d.chain),
+        Some(d.chain.len() as u32),
+        Some(d.generation as u64),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn submit_to_api(
+    api_url: &str,
+    worker_key: &str,
+    worker_id: &str,
+    engine_git_sha: &str,
+    canonical_statement: &str,
+    domain_str: &str,
+    lean_source: &str,
+    chain_json: serde_json::Value,
+    axioms_used: Vec<String>,
+    depth: Option<u32>,
+    generation: Option<u64>,
+) -> anyhow::Result<()> {
+    let payload = serde_json::json!({
+        "worker_id": worker_id,
+        "engine_git_sha": engine_git_sha,
+        "lean_version": "4.27.0",
+        "theorems": [{
+            "canonical_statement": canonical_statement,
+            "domain": domain_str,
+            "lean_source": lean_source,
+            "chain": chain_json,
+            "axioms_used": axioms_used,
+            "depth": depth,
+            "generation": generation,
+        }]
+    });
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{api_url}/api/ingest"))
+        .bearer_auth(worker_key)
+        .json(&payload)
+        .send()
+        .await?;
+    let status = resp.status();
+    if status.is_success() || status == reqwest::StatusCode::CONFLICT {
+        return Ok(());
+    }
+    let body = resp.text().await.unwrap_or_default();
+    anyhow::bail!("ingest failed: {status} body={body}");
+}
+
+/// Translate a Lean module path (e.g.
+/// `PhysicsGenerator.Derived.DiscoverGen3`) into its on-disk file
+/// (`<prover_root>/PhysicsGenerator/Derived/DiscoverGen3.lean`) and
+/// remove it. No-op if the file isn't there.
+fn remove_module_file(prover_root: &Path, module_path: &str) -> std::io::Result<()> {
+    let relative = format!("{}.lean", module_path.replace('.', "/"));
+    let file_path = prover_root.join(&relative);
+    if file_path.exists() {
+        std::fs::remove_file(&file_path)?;
+    }
+    Ok(())
 }
