@@ -8,6 +8,11 @@ mod m20260601_000005_search_indexes;
 mod m20260710_000006_user_llm_keys;
 mod m20260801_000007_conjecture_jobs;
 mod m20260801_000008_conjecture_events;
+mod m20260429_000009_billing;
+mod m20260429_000010_billing_events;
+mod m20260429_000011_targeted_search_usage;
+mod m20260429_000012_api_usage_daily;
+mod m20260901_000009_manual_verifications;
 
 pub struct Migrator;
 
@@ -23,6 +28,11 @@ impl MigratorTrait for Migrator {
             Box::new(m20260710_000006_user_llm_keys::Migration),
             Box::new(m20260801_000007_conjecture_jobs::Migration),
             Box::new(m20260801_000008_conjecture_events::Migration),
+            Box::new(m20260429_000009_billing::Migration),
+            Box::new(m20260429_000010_billing_events::Migration),
+            Box::new(m20260429_000011_targeted_search_usage::Migration),
+            Box::new(m20260429_000012_api_usage_daily::Migration),
+            Box::new(m20260901_000009_manual_verifications::Migration),
         ]
     }
 }

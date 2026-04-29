@@ -1,8 +1,11 @@
 pub mod api_keys;
+pub mod api_usage_daily;
+pub mod billing_events;
 pub mod conjecture_events;
 pub mod conjecture_jobs;
 pub mod saved_searches;
 pub mod sessions;
+pub mod targeted_search_usage;
 pub mod theorems;
 pub mod user_llm_keys;
 pub mod user_preferences;

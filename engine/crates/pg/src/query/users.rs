@@ -16,8 +16,31 @@ pub async fn create_user(
         password_hash: Set(password_hash.to_owned()),
         display_name: Set(display_name.map(|s| s.to_owned())),
         created_at: Set(chrono::Utc::now().into()),
+        plan_tier: Set("free".to_owned()),
+        stripe_customer_id: Set(None),
+        stripe_subscription_id: Set(None),
+        current_period_end: Set(None),
+        plan_cycle_start: Set(None),
     };
     model.insert(db).await
+}
+
+/// Persist a Stripe customer id on the user row. Called the first time we
+/// initiate Checkout for a user — subsequent checkouts reuse the customer.
+pub async fn set_stripe_customer_id(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    customer_id: &str,
+) -> Result<(), DbErr> {
+    users::Entity::update_many()
+        .col_expr(
+            users::Column::StripeCustomerId,
+            sea_orm::sea_query::Expr::value(customer_id),
+        )
+        .filter(users::Column::Id.eq(user_id))
+        .exec(db)
+        .await
+        .map(|_| ())
 }
 
 /// Find a user by their UUID.

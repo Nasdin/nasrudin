@@ -11,6 +11,11 @@ pub struct Model {
     pub password_hash: String,
     pub display_name: Option<String>,
     pub created_at: DateTimeWithTimeZone,
+    pub plan_tier: String,
+    pub stripe_customer_id: Option<String>,
+    pub stripe_subscription_id: Option<String>,
+    pub current_period_end: Option<DateTimeWithTimeZone>,
+    pub plan_cycle_start: Option<DateTimeWithTimeZone>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
