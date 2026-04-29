@@ -610,12 +610,20 @@ async fn main() -> anyhow::Result<()> {
             )
             .layer(GovernorLayer::new(rate_limit::platform_worker()));
 
+        // Stripe webhook — Stripe-authed (signature header), not user-authed.
+        // Lives outside the auth_layer so it doesn't get a 401 from missing
+        // session, and outside platform_user's IP rate-limit so a busy
+        // webhook delivery isn't throttled.
+        let billing_webhook = Router::new()
+            .route("/api/billing/webhook", post(handlers::billing::webhook));
+
         app = app
             .merge(auth_strict)
             .merge(auth_session)
             .merge(platform_user)
             .merge(platform_worker)
-            .layer(auth_layer);
+            .layer(auth_layer)
+            .merge(billing_webhook);
 
         tracing::info!("Auth endpoints enabled (PostgreSQL available)");
     } else {
