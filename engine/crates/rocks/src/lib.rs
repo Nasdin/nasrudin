@@ -9,6 +9,9 @@ use rocksdb::{BlockBasedOptions, ColumnFamilyDescriptor, IteratorMode, Options, 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod attempts_cache;
+pub use attempts_cache::{AttemptOutcome, AttemptRecord, AttemptsCache};
+
 /// Column family names used by the theorem database.
 const CF_THEOREMS: &str = "theorems";
 const CF_PROOFS: &str = "proofs";
