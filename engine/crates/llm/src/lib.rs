@@ -13,8 +13,9 @@ pub mod registry;
 
 pub use anthropic::AnthropicProvider;
 pub use encryption::{decrypt, encrypt, key_hint, EncryptedKey};
+pub use ollama::OllamaProvider;
 pub use openai::OpenAiProvider;
 pub use provider::{
     CompletionRequest, CompletionResponse, LlmError, LlmProvider, ResponseFormat, TokenChunk,
 };
-// Remaining provider impls + Registry are re-exported as their modules land.
+// Registry re-export lands in Task 6.
