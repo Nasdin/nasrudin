@@ -293,6 +293,20 @@ export function useCreateConjecture() {
   });
 }
 
+/** Phase F: trigger paper-draft generation. Returns 202; the actual
+ *  draft streams via the /sse channel as `paper_chunk` events.
+ */
+export function useStartPaperDraft(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ job_id: string; state: string }>(`/api/conjecture/${id}/paper`, {
+        method: 'POST',
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['conjecture', id] }),
+  });
+}
+
 export function useStartConjecture(id: string) {
   const qc = useQueryClient();
   return useMutation({

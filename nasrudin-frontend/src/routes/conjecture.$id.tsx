@@ -5,11 +5,13 @@ import { SuggestionCard } from '~/components/conjecture/SuggestionCard';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { isApiError } from '~/lib/api';
+import { API_BASE } from '~/lib/api';
 import {
   useConjecture,
   useConjectureStream,
   useMe,
   useStartConjecture,
+  useStartPaperDraft,
 } from '~/lib/queries';
 
 export const Route = createFileRoute('/conjecture/$id')({ component: ConjectureJobPage });
@@ -132,8 +134,99 @@ function ConjectureJobPage() {
             </ul>
           </div>
         )}
+
+        {view.state === 'Complete' && view.outcome === 'Verified' && (
+          <PaperDraftSection id={id} events={liveEvents} />
+        )}
       </div>
       <AppFooter />
+    </div>
+  );
+}
+
+function PaperDraftSection({
+  id,
+  events,
+}: {
+  id: string;
+  events: import('~/lib/types').ConjectureSseEvent[];
+}) {
+  const start = useStartPaperDraft(id);
+  // Reconstruct the live draft from paper_chunk events arriving on SSE.
+  const liveDraft = events
+    .filter((e) => e.kind === 'paper_chunk')
+    .map((e) => {
+      const p = e.payload as { text?: string };
+      return p?.text ?? '';
+    })
+    .join('');
+  const isStreaming =
+    events.some((e) => e.kind === 'paper_chunk') &&
+    !events.some((e) => e.kind === 'paper_done' || e.kind === 'paper_error');
+  const errorEvent = events.find((e) => e.kind === 'paper_error');
+
+  return (
+    <div className="card" style={{ marginTop: 24 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          marginBottom: 16,
+        }}
+      >
+        <h3 className="section-h" style={{ fontSize: 22, margin: 0 }}>
+          Paper draft
+        </h3>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <a
+            href={`${API_BASE}/api/conjecture/${id}/paper.md`}
+            download={`conjecture-${id}.md`}
+            className="btn btn-secondary"
+            style={{ fontSize: 13 }}
+          >
+            Download .md
+          </a>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => start.mutate()}
+            disabled={start.isPending || isStreaming}
+          >
+            {start.isPending || isStreaming ? 'Generating…' : 'Generate draft'}
+          </button>
+        </div>
+      </div>
+      {errorEvent && (
+        <div role="alert" style={{ color: 'var(--danger-500)', fontSize: 13, marginBottom: 12 }}>
+          Stream error:{' '}
+          {(errorEvent.payload as { error?: string })?.error ?? 'unknown'}
+        </div>
+      )}
+      {liveDraft.length > 0 ? (
+        <pre
+          style={{
+            whiteSpace: 'pre-wrap',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 13,
+            color: 'var(--ink-900)',
+            background: 'var(--bg-raised)',
+            padding: 16,
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--paper-200)',
+            maxHeight: 480,
+            overflowY: 'auto',
+          }}
+        >
+          {liveDraft}
+        </pre>
+      ) : (
+        <div style={{ color: 'var(--ink-500)', fontSize: 13 }}>
+          {start.isPending
+            ? 'Calling LLM…'
+            : 'Click "Generate draft" to ask the same provider that proposed the conjecture to write a 1-2 page Markdown paper from the verified theorems.'}
+        </div>
+      )}
     </div>
   );
 }
