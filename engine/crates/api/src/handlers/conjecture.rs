@@ -44,6 +44,36 @@ pub async fn create(
     let pg = &auth_sess.backend.db;
     let user_id = auth.user.id;
 
+    // Targeted-search quota gate. Free tier gets 0; paid tiers get the
+    // ceiling from PlanTier::quotas(). Counted against the user's current
+    // billing period (Stripe cycle) or the calendar month for free users.
+    let plan_tier = crate::billing::PlanTier::from_db(&auth.user.plan_tier);
+    let quota = plan_tier.quotas().targeted_searches_per_period;
+    let now = chrono::Utc::now();
+    let cycle_start = auth
+        .user
+        .plan_cycle_start
+        .map(|d| d.with_timezone(&chrono::Utc));
+    let period_start = crate::billing::period_start(cycle_start, now);
+    let used = nasrudin_pg::query::targeted_search_usage::count_in_period(
+        pg,
+        user_id,
+        period_start,
+    )
+    .await
+    .unwrap_or(0);
+    if used >= quota as u64 {
+        return (
+            StatusCode::PAYMENT_REQUIRED,
+            Json(serde_json::json!({
+                "error": "targeted_search_quota_exhausted",
+                "limit_per_period": quota,
+                "plan_tier": plan_tier.as_db(),
+            })),
+        )
+            .into_response();
+    }
+
     let job_id = match nasrudin_pg::query::conjecture_jobs::create(
         pg,
         nasrudin_pg::query::conjecture_jobs::CreateInput {
@@ -63,6 +93,20 @@ pub async fn create(
             return err(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
         }
     };
+
+    // Record usage immediately after the row exists so re-issued requests
+    // reflect the new count. Best-effort: a record-failure won't undo the
+    // already-created job — we'd rather double-count than refund silently.
+    if let Err(e) = nasrudin_pg::query::targeted_search_usage::record(
+        pg,
+        user_id,
+        job_id,
+        period_start,
+    )
+    .await
+    {
+        tracing::warn!("targeted_search_usage record failed for job {job_id}: {e}");
+    }
 
     let suggestions = match run_llm_phase(
         &state,

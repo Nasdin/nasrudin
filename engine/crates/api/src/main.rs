@@ -372,6 +372,19 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Reverify drain loop disabled (no PostgreSQL)");
     }
 
+    // Phase E: spawn the conjecture lease reaper iff Postgres is wired.
+    // Requeues stale `state='Running' AND lease_expires_at < NOW()` jobs
+    // every 30s and emits `worker_lost` events so SSE subscribers see it.
+    if state.pg.is_some() {
+        let reaper = Arc::new(physics_api::conjecture::reaper::ConjectureLeaseReaper::new(
+            Arc::clone(&state),
+        ));
+        tokio::spawn(Arc::clone(&reaper).run());
+        tracing::info!("Conjecture lease reaper spawned");
+    } else {
+        tracing::info!("Conjecture lease reaper disabled (no PostgreSQL)");
+    }
+
     // RocksDB-primary ingest write-behind: spawn the PG drain loop iff
     // Postgres is wired. The hot ingest path persists to RocksDB +
     // pg_insert_queue synchronously; this task drains the queue every
@@ -589,6 +602,10 @@ async fn main() -> anyhow::Result<()> {
             .route("/api/billing/checkout", post(handlers::billing::checkout))
             .route("/api/billing/portal", post(handlers::billing::portal))
             .route("/api/billing/me", get(handlers::billing::me))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                physics_api::billing::api_quota_layer::api_quota,
+            ))
             .layer(GovernorLayer::new(rate_limit::platform_user()));
 
         // Platform-worker: worker registration + heartbeat + ingest. Bearer nsk_worker_.
@@ -607,6 +624,24 @@ async fn main() -> anyhow::Result<()> {
             .route(
                 "/api/ingest",
                 axum::routing::post(handlers::ingest::ingest),
+            )
+            // Phase E: conjecture worker endpoints (claim/heartbeat/submit/complete).
+            // Each consumes from the same per-worker rate-limit bucket as /api/ingest.
+            .route(
+                "/api/conjecture/claim",
+                axum::routing::post(handlers::conjecture::claim),
+            )
+            .route(
+                "/api/conjecture/{id}/heartbeat",
+                axum::routing::post(handlers::conjecture::heartbeat),
+            )
+            .route(
+                "/api/conjecture/{id}/submit",
+                axum::routing::post(handlers::conjecture::submit),
+            )
+            .route(
+                "/api/conjecture/{id}/complete",
+                axum::routing::post(handlers::conjecture::complete_handler),
             )
             .layer(GovernorLayer::new(rate_limit::platform_worker()));
 
