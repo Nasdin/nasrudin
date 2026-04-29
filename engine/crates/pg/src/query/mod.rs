@@ -1,4 +1,5 @@
 pub mod api_keys;
+pub mod conjecture_jobs;
 pub mod me_workers;
 pub mod saved_searches;
 pub mod search;
