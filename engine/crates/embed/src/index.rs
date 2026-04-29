@@ -119,6 +119,17 @@ impl EmbeddingIndex {
     pub fn header(&self) -> IndexHeader {
         self.header
     }
+
+    /// Embed `text` then call [`Self::nearest`].
+    pub fn nearest_text(
+        &self,
+        embedder: &crate::model::Embedder,
+        text: &str,
+        k: usize,
+    ) -> Result<Vec<NearestHit>> {
+        let v = embedder.embed_one(text)?;
+        Ok(self.nearest(&v, k))
+    }
 }
 
 /// Sidecar path: `corpus.embed` → `corpus.embed.hnsw`.
@@ -155,5 +166,17 @@ mod tests {
         let p = std::path::PathBuf::from("/tmp/corpus.embed");
         let s = sidecar_path(&p);
         assert_eq!(s, std::path::PathBuf::from("/tmp/corpus.embed.hnsw"));
+    }
+
+    #[test]
+    fn nearest_text_signature_compiles() {
+        // Pure type-level test: confirm the signature lines up. Real
+        // round-trip is covered in tests/integration_semantic.rs.
+        let _f: fn(
+            &EmbeddingIndex,
+            &crate::model::Embedder,
+            &str,
+            usize,
+        ) -> Result<Vec<NearestHit>> = EmbeddingIndex::nearest_text;
     }
 }
