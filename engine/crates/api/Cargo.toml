@@ -19,6 +19,10 @@ path = "src/bin/backfill_existing_lean.rs"
 name = "cache-stats"
 path = "src/bin/cache_stats.rs"
 
+[[bin]]
+name = "embed_build"
+path = "src/bin/embed_build.rs"
+
 [dependencies]
 nasrudin-core = { path = "../core" }
 nasrudin-rocks = { path = "../rocks" }
@@ -26,6 +30,7 @@ nasrudin-pg = { path = "../pg" }
 nasrudin-ga = { path = "../ga" }
 nasrudin-derive = { path = "../derive" }
 nasrudin-lean-bridge = { path = "../lean-bridge" }
+nasrudin-embed = { path = "../embed" }
 sea-orm = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true }

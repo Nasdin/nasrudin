@@ -3004,6 +3004,7 @@ dependencies = [
  "hex",
  "nasrudin-core",
  "nasrudin-derive",
+ "nasrudin-embed",
  "nasrudin-ga",
  "nasrudin-lean-bridge",
  "nasrudin-pg",
