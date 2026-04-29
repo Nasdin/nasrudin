@@ -17,11 +17,13 @@ import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as LibraryRouteImport } from './routes/library'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
+import { Route as ConjectureRouteImport } from './routes/conjecture'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as ApiDocsRouteImport } from './routes/api-docs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TheoremIdRouteImport } from './routes/theorem.$id'
+import { Route as ConjectureIdRouteImport } from './routes/conjecture.$id'
 
 const WorkersRoute = WorkersRouteImport.update({
   id: '/workers',
@@ -63,6 +65,11 @@ const LeaderboardRoute = LeaderboardRouteImport.update({
   path: '/leaderboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConjectureRoute = ConjectureRouteImport.update({
+  id: '/conjecture',
+  path: '/conjecture',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BrowseRoute = BrowseRouteImport.update({
   id: '/browse',
   path: '/browse',
@@ -88,12 +95,18 @@ const TheoremIdRoute = TheoremIdRouteImport.update({
   path: '/theorem/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConjectureIdRoute = ConjectureIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ConjectureRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api-docs': typeof ApiDocsRoute
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
+  '/conjecture': typeof ConjectureRouteWithChildren
   '/leaderboard': typeof LeaderboardRoute
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
@@ -102,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/workers': typeof WorkersRoute
+  '/conjecture/$id': typeof ConjectureIdRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRoutesByTo {
@@ -109,6 +123,7 @@ export interface FileRoutesByTo {
   '/api-docs': typeof ApiDocsRoute
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
+  '/conjecture': typeof ConjectureRouteWithChildren
   '/leaderboard': typeof LeaderboardRoute
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
@@ -117,6 +132,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/workers': typeof WorkersRoute
+  '/conjecture/$id': typeof ConjectureIdRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRoutesById {
@@ -125,6 +141,7 @@ export interface FileRoutesById {
   '/api-docs': typeof ApiDocsRoute
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
+  '/conjecture': typeof ConjectureRouteWithChildren
   '/leaderboard': typeof LeaderboardRoute
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
@@ -133,6 +150,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/workers': typeof WorkersRoute
+  '/conjecture/$id': typeof ConjectureIdRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRouteTypes {
@@ -142,6 +160,7 @@ export interface FileRouteTypes {
     | '/api-docs'
     | '/api-keys'
     | '/browse'
+    | '/conjecture'
     | '/leaderboard'
     | '/library'
     | '/pricing'
@@ -150,6 +169,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signin'
     | '/workers'
+    | '/conjecture/$id'
     | '/theorem/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -157,6 +177,7 @@ export interface FileRouteTypes {
     | '/api-docs'
     | '/api-keys'
     | '/browse'
+    | '/conjecture'
     | '/leaderboard'
     | '/library'
     | '/pricing'
@@ -165,6 +186,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signin'
     | '/workers'
+    | '/conjecture/$id'
     | '/theorem/$id'
   id:
     | '__root__'
@@ -172,6 +194,7 @@ export interface FileRouteTypes {
     | '/api-docs'
     | '/api-keys'
     | '/browse'
+    | '/conjecture'
     | '/leaderboard'
     | '/library'
     | '/pricing'
@@ -180,6 +203,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/signin'
     | '/workers'
+    | '/conjecture/$id'
     | '/theorem/$id'
   fileRoutesById: FileRoutesById
 }
@@ -188,6 +212,7 @@ export interface RootRouteChildren {
   ApiDocsRoute: typeof ApiDocsRoute
   ApiKeysRoute: typeof ApiKeysRoute
   BrowseRoute: typeof BrowseRoute
+  ConjectureRoute: typeof ConjectureRouteWithChildren
   LeaderboardRoute: typeof LeaderboardRoute
   LibraryRoute: typeof LibraryRoute
   PricingRoute: typeof PricingRoute
@@ -257,6 +282,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LeaderboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/conjecture': {
+      id: '/conjecture'
+      path: '/conjecture'
+      fullPath: '/conjecture'
+      preLoaderRoute: typeof ConjectureRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/browse': {
       id: '/browse'
       path: '/browse'
@@ -292,14 +324,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TheoremIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/conjecture/$id': {
+      id: '/conjecture/$id'
+      path: '/$id'
+      fullPath: '/conjecture/$id'
+      preLoaderRoute: typeof ConjectureIdRouteImport
+      parentRoute: typeof ConjectureRoute
+    }
   }
 }
+
+interface ConjectureRouteChildren {
+  ConjectureIdRoute: typeof ConjectureIdRoute
+}
+
+const ConjectureRouteChildren: ConjectureRouteChildren = {
+  ConjectureIdRoute: ConjectureIdRoute,
+}
+
+const ConjectureRouteWithChildren = ConjectureRoute._addFileChildren(
+  ConjectureRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiDocsRoute: ApiDocsRoute,
   ApiKeysRoute: ApiKeysRoute,
   BrowseRoute: BrowseRoute,
+  ConjectureRoute: ConjectureRouteWithChildren,
   LeaderboardRoute: LeaderboardRoute,
   LibraryRoute: LibraryRoute,
   PricingRoute: PricingRoute,
@@ -313,3 +365,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}
