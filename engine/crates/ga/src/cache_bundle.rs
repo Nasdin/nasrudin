@@ -22,6 +22,19 @@ pub struct CacheBundle {
     pub ttl_days: i64,
 }
 
+impl std::fmt::Debug for CacheBundle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The two RocksDB caches don't impl Debug; surface the fields
+        // we *can* show. `DiscoveryConfig` derives Debug, so this lets
+        // the GA's debug logging print a meaningful summary.
+        f.debug_struct("CacheBundle")
+            .field("lean_version", &self.lean_version)
+            .field("worker_id", &self.worker_id)
+            .field("ttl_days", &self.ttl_days)
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

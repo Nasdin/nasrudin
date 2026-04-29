@@ -16,7 +16,7 @@
 
 use crate::chain_ga::{
     ChainIndividual, ChainVerifyOutcome, mutate_chain, splice_chains,
-    verify_chain,
+    verify_chain_cached,
 };
 use nasrudin_core::Expr;
 use nasrudin_derive::{AxiomStore, Chain, RuleStep};
@@ -55,6 +55,11 @@ pub struct DiscoveryConfig {
     /// and previous workers have already paid it. Empty = no skips
     /// (legacy / single-worker behaviour).
     pub rejected_canonicals: std::sync::Arc<HashSet<Vec<u8>>>,
+    /// When `Some`, the GA's lake-verify path goes through the cache
+    /// layer (skip on hit, record on success). The bundle is `Clone`
+    /// (Arc-backed) so `DiscoveryConfig` keeps its existing `Clone`
+    /// derive without lifetime gymnastics.
+    pub cache_ctx: Option<crate::cache_bundle::CacheBundle>,
 }
 
 impl Default for DiscoveryConfig {
@@ -70,6 +75,7 @@ impl Default for DiscoveryConfig {
             max_lake_verifications: 0,
             target: None,
             rejected_canonicals: std::sync::Arc::new(HashSet::new()),
+            cache_ctx: None,
         }
     }
 }
@@ -222,12 +228,13 @@ pub fn run_discovery(
                     report.lake_attempts += 1;
                     let basename = format!("DiscoverGen{gen_idx}");
                     let theorem_name = format!("discover_gen{gen_idx}");
-                    match verify_chain(
+                    match verify_chain_cached(
                         &top.chain,
                         store,
                         prover_root.as_path(),
                         &basename,
                         &theorem_name,
+                        config.cache_ctx.as_ref(),
                     ) {
                         ChainVerifyOutcome::Verified {
                             lean_source,
@@ -414,6 +421,7 @@ mod tests {
             max_lake_verifications: 0,
             target: None,
             rejected_canonicals: std::sync::Arc::new(HashSet::new()),
+            cache_ctx: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -438,6 +446,7 @@ mod tests {
             max_lake_verifications: 0,
             target: None,
             rejected_canonicals: std::sync::Arc::new(HashSet::new()),
+            cache_ctx: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);

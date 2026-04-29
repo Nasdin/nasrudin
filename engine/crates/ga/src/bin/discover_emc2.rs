@@ -242,6 +242,7 @@ async fn main() {
         max_lake_verifications: if prover_root.is_some() { max_lake } else { 0 },
         target: target_spec,
         rejected_canonicals: rejected_canonicals.clone(),
+        cache_ctx: None,
     };
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
