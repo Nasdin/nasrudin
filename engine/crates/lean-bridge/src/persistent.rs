@@ -128,6 +128,7 @@ impl PersistentElaborator {
                     }
                 } else if let Response::Fatal { message } = resp {
                     tracing::error!("persistent lean fatal: {message}");
+                    drain_inflight_with_fatal(&inflight_r, &message).await;
                 }
             }
         });
@@ -241,6 +242,21 @@ fn response_id(resp: &Response) -> Option<u64> {
     }
 }
 
+/// Drain every pending oneshot in `inflight` and signal each one with a
+/// `Response::Fatal { message }`. Called when the elaborator emits a
+/// non-correlated `Fatal` so callers fail fast instead of waiting for
+/// the per-request timeout.
+async fn drain_inflight_with_fatal(inflight: &Inflight, message: &str) {
+    let mut g = inflight.lock().await;
+    let drained: Vec<oneshot::Sender<Response>> = g.drain().map(|(_, s)| s).collect();
+    drop(g);
+    for sender in drained {
+        let _ = sender.send(Response::Fatal {
+            message: message.to_string(),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +293,27 @@ mod tests {
             Some(11)
         );
         assert_eq!(request_id(&Request::Shutdown), None);
+    }
+
+    /// Synthetic test: directly invoke the inflight-drain helper with a
+    /// populated map, confirm every oneshot fires with a Fatal payload
+    /// (mirroring what the reader task does on Fatal).
+    #[tokio::test]
+    async fn fatal_drains_inflight_oneshots() {
+        let inflight: Inflight = Arc::new(Mutex::new(HashMap::new()));
+        let (tx_a, rx_a) = oneshot::channel::<Response>();
+        let (tx_b, rx_b) = oneshot::channel::<Response>();
+        {
+            let mut g = inflight.lock().await;
+            g.insert(1, tx_a);
+            g.insert(2, tx_b);
+        }
+        drain_inflight_with_fatal(&inflight, "lean process exploded").await;
+        let r_a = rx_a.await.expect("oneshot A should fire");
+        let r_b = rx_b.await.expect("oneshot B should fire");
+        assert!(matches!(r_a, Response::Fatal { .. }));
+        assert!(matches!(r_b, Response::Fatal { .. }));
+        assert!(inflight.lock().await.is_empty());
     }
 
     #[test]
