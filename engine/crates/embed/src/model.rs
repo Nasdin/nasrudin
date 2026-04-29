@@ -1,16 +1,68 @@
-// stub — implemented in Task 4
-use anyhow::Result;
+//! Text → 384-dim wrapper around `fastembed`.
 
-pub struct Embedder;
+use anyhow::{Context, Result};
+use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+
+/// Wraps a fastembed `TextEmbedding`. One instance per process is
+/// usually sufficient — model load is ~150 MB resident, ~1 second cold.
+pub struct Embedder {
+    inner: TextEmbedding,
+}
 
 impl Embedder {
+    /// Construct using the default model (BGE small en v1.5, 384 dims).
     pub fn new() -> Result<Self> {
-        anyhow::bail!("Embedder::new not yet implemented")
+        let inner = TextEmbedding::try_new(
+            InitOptions::new(EmbeddingModel::BGESmallENV15).with_show_download_progress(false),
+        )
+        .context("init fastembed BGE small")?;
+        Ok(Self { inner })
     }
-    pub fn embed_one(&self, _text: &str) -> Result<Vec<f32>> {
-        anyhow::bail!("Embedder::embed_one not yet implemented")
+
+    /// Embed a single text. Returns a 384-dim vector.
+    pub fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
+        let mut v = self
+            .inner
+            .embed(vec![text.to_string()], None)
+            .context("fastembed embed_one")?;
+        v.pop().context("fastembed returned empty embed batch")
     }
-    pub fn embed_batch(&self, _texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        anyhow::bail!("Embedder::embed_batch not yet implemented")
+
+    /// Embed a batch. Faster than calling `embed_one` per element.
+    pub fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        self.inner.embed(texts, None).context("fastembed embed_batch")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Heavy: downloads the model on first run (~130 MB). CI should
+    /// either pre-warm `~/.cache/fastembed/` or set
+    /// `NASRUDIN_SKIP_EMBED_DOWNLOAD=1` to skip.
+    #[test]
+    #[ignore]
+    fn embed_one_returns_384_dims() {
+        if std::env::var("NASRUDIN_SKIP_EMBED_DOWNLOAD").is_ok() {
+            return;
+        }
+        let e = Embedder::new().expect("model init");
+        let v = e.embed_one("E equals m c squared").unwrap();
+        assert_eq!(v.len(), 384);
+    }
+
+    #[test]
+    #[ignore]
+    fn deterministic_across_calls() {
+        if std::env::var("NASRUDIN_SKIP_EMBED_DOWNLOAD").is_ok() {
+            return;
+        }
+        let e = Embedder::new().expect("model init");
+        let a = e.embed_one("kinetic energy").unwrap();
+        let b = e.embed_one("kinetic energy").unwrap();
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert!((x - y).abs() < 1e-5, "embeddings should be ~deterministic");
+        }
     }
 }
