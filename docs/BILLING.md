@@ -32,33 +32,54 @@ Setting any of these wrong won't crash the boot — `BillingClient::from_env()` 
 
 ## First-time setup (Stripe dashboard, test mode)
 
-1. **Create one Product** named "Nasrudin Researcher" with two recurring Prices:
-   - `$19/mo` — "Researcher (monthly)"
-   - `$182.40/yr` — "Researcher (annual, 20% off)"
-2. **Enable Stripe Tax** (Settings → Tax). Required for EU VAT from day one.
-3. **Configure Customer Portal** (Settings → Billing → Customer portal):
-   - Allow cancellation: **at end of period**
-   - Allow plan switching: monthly ↔ annual
-   - Allow payment-method updates
-   - Show invoice history
-4. **Create webhook endpoint** (Developers → Webhooks → Add endpoint):
-   - URL: `https://<host>/api/billing/webhook`
-   - Events:
-     - `checkout.session.completed`
-     - `customer.subscription.created`
-     - `customer.subscription.updated`
-     - `customer.subscription.deleted`
-     - `invoice.paid`
-     - `invoice.payment_failed`
-   - Save the **signing secret** as `STRIPE_WEBHOOK_SECRET`.
+**Test-mode resources are already provisioned for this project** (test API
+key + product + prices live in `.env`):
 
-For local dev with the Stripe CLI:
+| Resource             | Test-mode id                                |
+|----------------------|---------------------------------------------|
+| Product              | `prod_UQY6z9ugEnCRRI` (Nasrudin Researcher)  |
+| Price (monthly)      | `price_1TRh0fDrlrOn1hRGpS3INgKd` ($19/mo)    |
+| Price (annual, −20%) | `price_1TRh0kDrlrOn1hRGOzY2xrpo` ($182.40/yr)|
+| Portal configuration | `bpc_1TRh0sDrlrOn1hRGULhEcLiF` (default)     |
+
+To re-create them from scratch (e.g. on a fresh test-mode account):
+
+```bash
+# Product
+curl -u $STRIPE_SECRET_KEY: https://api.stripe.com/v1/products \
+  -d "name=Nasrudin Researcher" \
+  -d "metadata[plan_tier]=researcher"
+
+# Prices (use the product id from above)
+curl -u $STRIPE_SECRET_KEY: https://api.stripe.com/v1/prices \
+  -d "product=prod_…" -d "currency=usd" -d "unit_amount=1900" \
+  -d "recurring[interval]=month" -d "lookup_key=researcher_monthly"
+
+curl -u $STRIPE_SECRET_KEY: https://api.stripe.com/v1/prices \
+  -d "product=prod_…" -d "currency=usd" -d "unit_amount=18240" \
+  -d "recurring[interval]=year" -d "lookup_key=researcher_annual"
+```
+
+**Enable Stripe Tax** (Settings → Tax in dashboard). Required for EU VAT.
+
+**Webhook secret for local dev:**
 
 ```bash
 stripe listen --forward-to localhost:3001/api/billing/webhook
-# This prints a fresh whsec_… for the duration of the listener.
-# Copy that into your local .env as STRIPE_WEBHOOK_SECRET.
+# Prints a fresh whsec_… valid for the duration of the listener.
+# Paste into .env as STRIPE_WEBHOOK_SECRET, then restart `just dev-engine`.
 ```
+
+**For production:** create a real webhook endpoint in the live-mode dashboard
+pointing at `https://<host>/api/billing/webhook`. Subscribe to:
+
+- `customer.subscription.created`
+- `customer.subscription.updated`
+- `customer.subscription.deleted`
+- `invoice.paid`
+- `invoice.payment_failed`
+
+Save the signing secret as `STRIPE_WEBHOOK_SECRET` in production env.
 
 ---
 
@@ -167,8 +188,8 @@ users.plan_tier ──→ AuthOrApiKey extractor exposes PlanTier
 | File                                                   | Role                                            |
 |--------------------------------------------------------|-------------------------------------------------|
 | `engine/crates/api/src/billing/tier.rs`                | `PlanTier` enum, `Quotas`, `period_start`       |
-| `engine/crates/api/src/billing/stripe_client.rs`       | reqwest wrapper for Stripe REST API             |
-| `engine/crates/api/src/billing/webhook.rs`             | HMAC verify + event parser                      |
+| `engine/crates/api/src/billing/stripe_client.rs`       | async-stripe wrapper (Customer / Checkout / Portal) |
+| `engine/crates/api/src/billing/webhook.rs`             | typed Webhook::construct_event + dispatch       |
 | `engine/crates/api/src/billing/api_quota_layer.rs`     | per-day request middleware                      |
 | `engine/crates/api/src/handlers/billing.rs`            | checkout / portal / me / webhook handlers       |
 | `engine/crates/pg/src/query/billing.rs`                | webhook idempotency + sub-state mutators        |

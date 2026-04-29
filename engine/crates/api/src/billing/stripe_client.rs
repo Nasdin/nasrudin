@@ -1,13 +1,19 @@
-//! Thin HTTP client for the three Stripe endpoints we use:
-//! Create Customer, Create Checkout Session, Create Billing Portal Session.
+//! Stripe API client built on async-stripe.
 //!
-//! Deliberately not using async-stripe — Stripe's REST surface is stable
-//! (form-encoded POST, JSON response) and a 200-line wrapper insulates
-//! us from upstream SDK churn. Webhook handling lives in `webhook.rs`.
+//! Wraps `stripe::Client` with a `BillingConfig` carrying our env-var
+//! values (price ids, redirect URLs, webhook secret) so handlers don't
+//! have to thread them through individually.
 
+use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
-use serde::Deserialize;
+use stripe::{
+    BillingPortalSession, CheckoutSession, CheckoutSessionMode, Client, CreateBillingPortalSession,
+    CreateCheckoutSession, CreateCheckoutSessionAutomaticTax, CreateCheckoutSessionLineItems,
+    CreateCheckoutSessionSubscriptionData, CreateCustomer, Customer, CustomerId, Expandable,
+    Subscription,
+};
 
 #[derive(Clone)]
 pub struct BillingConfig {
@@ -21,31 +27,18 @@ pub struct BillingConfig {
 
 #[derive(Clone)]
 pub struct BillingClient {
-    pub http: reqwest::Client,
-    pub secret_key: String,
+    pub stripe: Client,
     pub cfg: Arc<BillingConfig>,
 }
 
-const STRIPE_API: &str = "https://api.stripe.com/v1";
-
 #[derive(Debug, thiserror::Error)]
 pub enum StripeError {
-    #[error("http error: {0}")]
-    Http(#[from] reqwest::Error),
-    #[error("stripe returned {status}: {body}")]
-    Api { status: u16, body: String },
+    #[error("stripe: {0}")]
+    Stripe(#[from] stripe::StripeError),
     #[error("missing field in stripe response: {0}")]
     MissingField(&'static str),
-}
-
-#[derive(Deserialize)]
-struct CustomerResp {
-    id: String,
-}
-
-#[derive(Deserialize)]
-struct SessionResp {
-    url: Option<String>,
+    #[error("malformed customer id: {0}")]
+    BadCustomerId(String),
 }
 
 impl BillingClient {
@@ -61,31 +54,9 @@ impl BillingClient {
             webhook_secret: std::env::var("STRIPE_WEBHOOK_SECRET")?,
         };
         Ok(Self {
-            http: reqwest::Client::new(),
-            secret_key,
+            stripe: Client::new(secret_key),
             cfg: Arc::new(cfg),
         })
-    }
-
-    async fn post_form<T: for<'de> Deserialize<'de>>(
-        &self,
-        path: &str,
-        form: &[(&str, &str)],
-    ) -> Result<T, StripeError> {
-        let url = format!("{STRIPE_API}/{path}");
-        let resp = self
-            .http
-            .post(&url)
-            .basic_auth(&self.secret_key, Some(""))
-            .form(form)
-            .send()
-            .await?;
-        let status = resp.status().as_u16();
-        if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(StripeError::Api { status, body });
-        }
-        Ok(resp.json::<T>().await?)
     }
 
     /// Create a Stripe customer and return its id. We attach `user_id` as
@@ -96,47 +67,81 @@ impl BillingClient {
         email: &str,
         user_id: uuid::Uuid,
     ) -> Result<String, StripeError> {
-        let user_id_str = user_id.to_string();
-        let form = [
-            ("email", email),
-            ("metadata[user_id]", user_id_str.as_str()),
-        ];
-        let resp: CustomerResp = self.post_form("customers", &form).await?;
-        Ok(resp.id)
+        let mut params = CreateCustomer::new();
+        params.email = Some(email);
+        let mut metadata = HashMap::new();
+        metadata.insert("user_id".to_string(), user_id.to_string());
+        params.metadata = Some(metadata);
+        let customer = Customer::create(&self.stripe, params).await?;
+        Ok(customer.id.to_string())
     }
 
     /// Create a Checkout Session for a subscription on `price_id`, return
-    /// the hosted URL the user should be redirected to.
+    /// the hosted URL the user should be redirected to. Stripe Tax is
+    /// enabled so EU/UK VAT is collected without extra app code.
     pub async fn create_checkout_session(
         &self,
         customer_id: &str,
         price_id: &str,
         user_id: uuid::Uuid,
     ) -> Result<String, StripeError> {
-        let user_id_str = user_id.to_string();
-        let form = [
-            ("mode", "subscription"),
-            ("customer", customer_id),
-            ("line_items[0][price]", price_id),
-            ("line_items[0][quantity]", "1"),
-            ("success_url", self.cfg.checkout_success_url.as_str()),
-            ("cancel_url", self.cfg.checkout_cancel_url.as_str()),
-            ("automatic_tax[enabled]", "true"),
-            ("subscription_data[metadata][user_id]", user_id_str.as_str()),
-        ];
-        let resp: SessionResp = self.post_form("checkout/sessions", &form).await?;
-        resp.url.ok_or(StripeError::MissingField("url"))
+        let cust = CustomerId::from_str(customer_id)
+            .map_err(|_| StripeError::BadCustomerId(customer_id.to_string()))?;
+        let mut params = CreateCheckoutSession::new();
+        params.mode = Some(CheckoutSessionMode::Subscription);
+        params.customer = Some(cust);
+        params.success_url = Some(self.cfg.checkout_success_url.as_str());
+        params.cancel_url = Some(self.cfg.checkout_cancel_url.as_str());
+        params.line_items = Some(vec![CreateCheckoutSessionLineItems {
+            price: Some(price_id.to_string()),
+            quantity: Some(1),
+            ..Default::default()
+        }]);
+        let mut sub_metadata = HashMap::new();
+        sub_metadata.insert("user_id".to_string(), user_id.to_string());
+        params.subscription_data = Some(CreateCheckoutSessionSubscriptionData {
+            metadata: Some(sub_metadata),
+            ..Default::default()
+        });
+        params.automatic_tax = Some(CreateCheckoutSessionAutomaticTax {
+            enabled: true,
+            ..Default::default()
+        });
+        let session = CheckoutSession::create(&self.stripe, params).await?;
+        session
+            .url
+            .ok_or(StripeError::MissingField("checkout_session.url"))
     }
 
-    /// Create a Customer Portal session — used by /profile's "Manage
-    /// billing" button to drop the user into Stripe's hosted UI for
-    /// cancel / payment-method-update / invoice-history.
+    /// Open a Customer Portal session — used by the /profile "Manage
+    /// billing" button so users can self-serve cancel, change payment
+    /// method, or view invoices.
     pub async fn create_portal_session(&self, customer_id: &str) -> Result<String, StripeError> {
-        let form = [
-            ("customer", customer_id),
-            ("return_url", self.cfg.portal_return_url.as_str()),
-        ];
-        let resp: SessionResp = self.post_form("billing_portal/sessions", &form).await?;
-        resp.url.ok_or(StripeError::MissingField("url"))
+        let cust = CustomerId::from_str(customer_id)
+            .map_err(|_| StripeError::BadCustomerId(customer_id.to_string()))?;
+        let mut params = CreateBillingPortalSession::new(cust);
+        params.return_url = Some(self.cfg.portal_return_url.as_str());
+        let session = BillingPortalSession::create(&self.stripe, params).await?;
+        Ok(session.url)
     }
+}
+
+/// Pull a `customer` id out of either a fully-resolved `Customer` object
+/// or an unexpanded id reference. Stripe's webhook payloads send
+/// unexpanded ids by default.
+pub fn customer_id_from_expandable(c: &Expandable<Customer>) -> Option<String> {
+    match c {
+        Expandable::Id(id) => Some(id.to_string()),
+        Expandable::Object(obj) => Some(obj.id.to_string()),
+    }
+}
+
+/// Pull the price id out of the first subscription item (Phase 1: every
+/// subscription has exactly one item — the Researcher seat).
+pub fn first_price_id(sub: &Subscription) -> Option<String> {
+    sub.items
+        .data
+        .first()
+        .and_then(|item| item.price.as_ref())
+        .map(|p| p.id.to_string())
 }

@@ -15,7 +15,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthOrApiKey;
-use crate::billing::webhook::{ParseError, WebhookProcessor};
+use crate::billing::webhook;
 use crate::state::AppState;
 
 fn err(status: StatusCode, code: &str) -> Response {
@@ -181,26 +181,23 @@ pub async fn webhook(
         None => return err(StatusCode::BAD_REQUEST, "missing_signature"),
     };
 
-    let processor = WebhookProcessor {
-        secret: billing.cfg.webhook_secret.clone(),
-    };
-    let event = match processor.parse_event(&body, sig_header) {
+    let event = match webhook::parse_event(&body, sig_header, &billing.cfg.webhook_secret) {
         Ok(e) => e,
-        Err(ParseError::SignatureMismatch) | Err(ParseError::MalformedHeader) => {
+        Err(e) => {
+            tracing::warn!("webhook signature verify failed: {e}");
             return err(StatusCode::BAD_REQUEST, "invalid_signature");
         }
-        Err(_) => return err(StatusCode::BAD_REQUEST, "invalid_payload"),
     };
-
-    let payload_json: serde_json::Value =
-        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
 
     // Idempotent insert: if Stripe replayed an event we already processed,
     // return 200 immediately without re-applying side effects.
+    let payload_json: serde_json::Value =
+        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    let event_type = format!("{:?}", event.type_);
     let is_new = match nasrudin_pg::query::billing::record_event_if_new(
         pg,
-        &event.id,
-        &event.event_type,
+        event.id.as_str(),
+        &event_type,
         payload_json,
     )
     .await
@@ -215,83 +212,10 @@ pub async fn webhook(
         return (StatusCode::OK, "").into_response();
     }
 
-    let result = match event.event_type.as_str() {
-        "customer.subscription.created" | "customer.subscription.updated" => {
-            handle_subscription_event(billing, pg, &event.data.object, false).await
-        }
-        "customer.subscription.deleted" => {
-            handle_subscription_event(billing, pg, &event.data.object, true).await
-        }
-        // invoice.paid / invoice.payment_failed are logged but don't
-        // mutate plan_tier — subscription.updated already drives period
-        // rollover. Dunning UX (warning the user, downgrading on grace
-        // period exhaust) is a Phase-3 follow-up.
-        _ => Ok(()),
-    };
-
-    let err_msg = result.as_ref().err().map(|s| s.as_str());
+    let result = webhook::dispatch(&event, &billing.cfg, pg).await;
+    let err_msg_owned = result.as_ref().err().map(|e| e.to_string());
+    let err_msg = err_msg_owned.as_deref();
     let _ =
-        nasrudin_pg::query::billing::mark_event_processed(pg, &event.id, err_msg).await;
+        nasrudin_pg::query::billing::mark_event_processed(pg, event.id.as_str(), err_msg).await;
     (StatusCode::OK, "").into_response()
-}
-
-/// Pull the fields we need out of a `subscription` event object and
-/// drive the user state in Postgres. `cancelled` short-circuits to
-/// "downgrade to free" without inspecting the price id.
-async fn handle_subscription_event(
-    billing: &crate::billing::stripe_client::BillingClient,
-    pg: &nasrudin_pg::sea_orm::DatabaseConnection,
-    object: &serde_json::Value,
-    cancelled: bool,
-) -> Result<(), String> {
-    let customer_id = object
-        .get("customer")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "no customer in event".to_string())?;
-
-    if cancelled {
-        return nasrudin_pg::query::billing::apply_subscription_cancelled(pg, customer_id)
-            .await
-            .map_err(|e| e.to_string());
-    }
-
-    // status == "canceled" or "incomplete_expired" arriving via .updated
-    // means treat as cancelled for our purposes.
-    let status = object.get("status").and_then(|v| v.as_str()).unwrap_or("");
-    if matches!(status, "canceled" | "incomplete_expired" | "unpaid") {
-        return nasrudin_pg::query::billing::apply_subscription_cancelled(pg, customer_id)
-            .await
-            .map_err(|e| e.to_string());
-    }
-
-    let subscription_id = object
-        .get("id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "no subscription id".to_string())?;
-    let price_id = object
-        .pointer("/items/data/0/price/id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let cycle_start = object
-        .get("current_period_start")
-        .and_then(|v| v.as_i64())
-        .and_then(|t| chrono::DateTime::<chrono::Utc>::from_timestamp(t, 0))
-        .ok_or_else(|| "bad current_period_start".to_string())?;
-    let period_end = object
-        .get("current_period_end")
-        .and_then(|v| v.as_i64())
-        .and_then(|t| chrono::DateTime::<chrono::Utc>::from_timestamp(t, 0))
-        .ok_or_else(|| "bad current_period_end".to_string())?;
-
-    let tier = crate::billing::webhook::tier_for_price(price_id, &billing.cfg);
-    nasrudin_pg::query::billing::apply_subscription_active(
-        pg,
-        customer_id,
-        subscription_id,
-        tier.as_db(),
-        cycle_start,
-        period_end,
-    )
-    .await
-    .map_err(|e| e.to_string())
 }
