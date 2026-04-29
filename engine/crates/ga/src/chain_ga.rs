@@ -26,13 +26,20 @@
 //! the suffix. The resulting children may not execute — they're rejected
 //! by the pre-filter rather than repaired.
 
-use nasrudin_core::{BinOp, Expr, FitnessScore, PhysConst};
+use crate::cache_bundle::CacheBundle;
+use nasrudin_core::{
+    axiom_id_from_name, axiom_set_hash, canonical_hash, skeleton_hash, BinOp, Expr, FitnessScore,
+    PhysConst,
+};
 use nasrudin_derive::lean_emitter::{LeanEmitConfig, emit_lean_file};
-use nasrudin_derive::lean_verify::{LeanVerifier, LeanVerifyResult};
+use nasrudin_derive::lean_verify::{verify_with_cache, LeanVerifier, LeanVerifyResult, VerifyWithCacheCtx};
 use nasrudin_derive::{AxiomStore, Chain, DerivationContext, DerivationStrategy, RuleStep};
+use nasrudin_rocks::{AttemptsCache, TacticPriorsCache};
 use rand::Rng;
 use rand::seq::IteratorRandom;
+use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::atomic::Ordering;
 
 /// Mutate `chain` by exactly one operator chosen uniformly at random.
 ///
@@ -718,6 +725,23 @@ pub fn verify_chain(
     module_basename: &str,
     theorem_name: &str,
 ) -> ChainVerifyOutcome {
+    verify_chain_cached(chain, store, prover_root, module_basename, theorem_name, None)
+}
+
+/// Cache-aware variant of [`verify_chain`].
+///
+/// When `bundle` is `Some`, the lake-build path goes through the
+/// `attempts` cache (skip on hit, write on miss) and on success
+/// records the winning module name into `tactic_priors`. When
+/// `None`, behaves identically to [`verify_chain`].
+pub fn verify_chain_cached(
+    chain: &Chain,
+    store: &AxiomStore,
+    prover_root: impl AsRef<Path>,
+    module_basename: &str,
+    theorem_name: &str,
+    bundle: Option<&CacheBundle>,
+) -> ChainVerifyOutcome {
     // Pre-filter: run the chain.
     let mut ctx = DerivationContext::new();
     if let Err(e) = chain.execute(store, &mut ctx) {
@@ -725,11 +749,14 @@ pub fn verify_chain(
             reason: format!("{e}"),
         };
     }
-    if ctx.current().is_none() {
-        return ChainVerifyOutcome::PreFilterFailed {
-            reason: "chain produced no current expression".into(),
-        };
-    }
+    let final_expr = match ctx.current() {
+        Some(e) => e.clone(),
+        None => {
+            return ChainVerifyOutcome::PreFilterFailed {
+                reason: "chain produced no current expression".into(),
+            };
+        }
+    };
 
     // Emit Lean via the generic emitter.
     let cfg = LeanEmitConfig {
@@ -740,9 +767,72 @@ pub fn verify_chain(
     let lean_source = emit_lean_file(&ctx, &cfg);
     let module_path = format!("PhysicsGenerator.Derived.{module_basename}");
 
-    // Lake-build it.
     let verifier = LeanVerifier::new(prover_root.as_ref());
-    let outcome = verifier.verify_file(&lean_source, &module_path);
+
+    let outcome = if let Some(b) = bundle {
+        // Build the 16-byte cache key: canonical_hash || axiom_set_hash.
+        let canonical_str = final_expr.to_canonical();
+        let mut canon8 = [0u8; 8];
+        let canon_bytes = canonical_hash(&canonical_str);
+        canon8.copy_from_slice(&canon_bytes[..8]);
+
+        // Walk chain steps, collect axiom names (and IntroduceTheorem names),
+        // hash each into a synthetic 8-byte ID, then BLAKE3 the sorted set.
+        let mut axiom_ids: BTreeSet<[u8; 8]> = BTreeSet::new();
+        for step in &chain.0 {
+            match step {
+                RuleStep::IntroduceAxiom { axiom_name } => {
+                    axiom_ids.insert(axiom_id_from_name(axiom_name));
+                }
+                RuleStep::IntroduceTheorem { theorem_name } => {
+                    axiom_ids.insert(axiom_id_from_name(theorem_name));
+                }
+                _ => {}
+            }
+        }
+        let axiom_hash = axiom_set_hash(&axiom_ids);
+        let cache_key = AttemptsCache::make_key(&canon8, &axiom_hash);
+
+        // Account hit/miss before calling verify_with_cache (which does its
+        // own lookup but doesn't touch CacheStats).
+        let pre_hit = b
+            .attempts
+            .get_with_ttl(&cache_key, chrono::Duration::days(b.ttl_days))
+            .ok()
+            .flatten()
+            .is_some();
+        if pre_hit {
+            b.stats.attempts_hits.fetch_add(1, Ordering::Relaxed);
+        } else {
+            b.stats.attempts_misses.fetch_add(1, Ordering::Relaxed);
+        }
+
+        let vctx = VerifyWithCacheCtx {
+            verifier: &verifier,
+            cache: &b.attempts,
+            cache_key: &cache_key,
+            lean_version: &b.lean_version,
+            worker_id: &b.worker_id,
+            ttl_days: b.ttl_days,
+        };
+        let raw = verify_with_cache(&vctx, &lean_source, &module_path);
+
+        // On verifier success, record the module / theorem name as the
+        // tactic prior for this goal skeleton. We don't extract a discrete
+        // tactic name from `lake build` today; persisting `theorem_name`
+        // gives the priors layer something to rank without claiming a
+        // specific tactic chain.
+        if matches!(raw, LeanVerifyResult::Success) {
+            let skel_hash = skeleton_hash(&final_expr);
+            let priors_key = TacticPriorsCache::make_key(&skel_hash, &axiom_hash);
+            if let Err(e) = b.tactic_priors.record_success(&priors_key, theorem_name, 0) {
+                tracing::warn!("tactic_priors record_success failed: {e}");
+            }
+        }
+        raw
+    } else {
+        verifier.verify_file(&lean_source, &module_path)
+    };
 
     // Iter 17 fix: on Lean rejection or toolchain error, remove the
     // emitted .lean file from the prover directory so it doesn't
@@ -795,6 +885,42 @@ mod tests {
         let mut s = AxiomStore::new();
         s.load_special_relativity_upstream();
         s
+    }
+
+    #[test]
+    fn verify_chain_cached_with_empty_chain_pre_filter_rejects() {
+        // Smoke test: verify_chain_cached compiles, accepts an
+        // Option<&CacheBundle>, and short-circuits the empty chain
+        // before any cache or lake-build attempt.
+        use crate::cache_bundle::CacheBundle;
+        use nasrudin_derive::CacheStats;
+        use nasrudin_rocks::{AttemptsCache, TacticPriorsCache};
+        use std::sync::Arc;
+        use tempfile::tempdir;
+
+        let dir_a = tempdir().unwrap();
+        let attempts = Arc::new(AttemptsCache::open(dir_a.path().to_str().unwrap()).unwrap());
+        let dir_t = tempdir().unwrap();
+        let priors = Arc::new(TacticPriorsCache::open(dir_t.path().to_str().unwrap()).unwrap());
+        let bundle = CacheBundle {
+            attempts,
+            tactic_priors: priors,
+            stats: Arc::new(CacheStats::default()),
+            lean_version: "4.27.0".into(),
+            worker_id: "test".into(),
+            ttl_days: 30,
+        };
+        let store = upstream_store();
+        let chain = Chain(vec![]);
+        let outcome = verify_chain_cached(
+            &chain,
+            &store,
+            std::path::Path::new("/nonexistent"),
+            "test_basename",
+            "test_thm",
+            Some(&bundle),
+        );
+        assert!(matches!(outcome, ChainVerifyOutcome::PreFilterFailed { .. }));
     }
 
     #[test]
