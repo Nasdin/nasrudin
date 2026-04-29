@@ -89,9 +89,14 @@ def main (args : List String) : IO Unit := do
   -- Generate catalog JSON
   let catalog := renderCatalog theorems types "v4.26.0" "4.26.0"
 
-  -- Coverage report: how many theorems got a populated expr_ast?
-  let astHits := theorems.filter (·.exprAst.isSome) |>.size
-  IO.println s!"  {astHits} / {theorems.size} theorems have populated expr_ast"
+  -- Coverage report: every theorem has a populated expr_ast (the
+  -- universal translator is total). Count the rows whose tree is
+  -- richer than just `Var(name)` — those are the ones the GA can
+  -- actually mutate. Bare `Var` rows are inert placeholders.
+  let astRich := theorems.filter (fun t =>
+    let s := t.exprAst.compress
+    !s.startsWith "{\"Var\"") |>.size
+  IO.println s!"  {astRich} / {theorems.size} theorems have a structured (non-Var-only) expr_ast"
 
   -- Ensure parent directory exists (handles output/ subdir case).
   let parts := outputPath.splitOn "/"

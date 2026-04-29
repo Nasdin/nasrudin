@@ -20,45 +20,32 @@ open Lean Meta
 private def strHas (haystack : String) (needle : String) : Bool :=
   (haystack.splitOn needle).length > 1
 
-/-- Represents an extracted theorem from PhysLean. -/
+/-- Represents an extracted theorem from PhysLean / Mathlib. -/
 structure ExtractedTheorem where
-  /-- Fully qualified Lean name -/
   name : Name
-  /-- Pretty-printed type signature -/
   typeSignature : String
-  /-- Raw (unprocessed) type signature from ppExpr -/
   rawSignature : String
-  /-- Whether this is a theorem (vs definition/constant) -/
   isTheorem : Bool
-  /-- Doc string if available -/
   docString : Option String
-  /-- Whether the signature is simple enough to re-axiomatize -/
   canReaxiomatize : Bool
-  /-- Structured `nasrudin_core::Expr` AST, when the type signature falls
-      inside the supported subset (`Eq`, real arithmetic, `Real.sqrt`,
-      named free variables). `none` for everything else. The Rust
-      AxiomStore loader only registers entries with a populated
-      `exprAst`; the rest stay as decorative catalog rows. -/
-  exprAst : Option Lean.Json
+  /-- Universal `nasrudin_core::Expr` AST. The translator is total, so
+      every entry has a populated tree (curried `App` chains for
+      unknown heads). The Rust AxiomStore tries to deserialise the
+      tree; failures fall back to a `Var(name)` placeholder. -/
+  exprAst : Lean.Json
   deriving Inhabited
 
-/-- Represents an extracted type/structure from PhysLean. -/
 structure ExtractedType where
-  /-- Fully qualified Lean name -/
   name : Name
-  /-- Kind: "structure", "inductive", "def" -/
   kind : String
-  /-- Pretty-printed type signature -/
   typeSignature : String
-  /-- Field names with types if structure (e.g., "fieldName : Type") -/
   fields : Array String
-  /-- Doc string if available -/
   docString : Option String
   deriving Inhabited, Repr
 
-/-- Default namespace whitelist for PhysLean content. PhysLean opens
-    these via `namespace`/`open` so definitions appear under these
-    prefixes rather than under `PhysLean.*`. -/
+/-- PhysLean-side namespace prefixes (PhysLean opens these via
+    `namespace`/`open` so definitions appear under these prefixes
+    rather than under `PhysLean.*`). -/
 private def physLeanTopNamespaces : List String :=
   [ "PhysLean."
   , "Lorentz."
@@ -74,16 +61,55 @@ private def physLeanTopNamespaces : List String :=
   , "CliffordAlgebra."
   ]
 
-/-- Mathlib namespaces worth extracting for the GA's algebraic
-    rewrite vocabulary. Curated to real-arithmetic identities with
-    statements that survive the `exprToAst` translator. -/
+/-- Default Mathlib whitelist when `--whitelist=` includes the magic
+    `+mathlib` token. Wide enough to capture algebra/analysis/order/
+    real/nat/int/complex while skipping CategoryTheory and pure
+    type-class plumbing. -/
 def mathlibTopNamespaces : List String :=
-  [ "Mathlib.Algebra.Ring.Basic"
-  , "Mathlib.Algebra.GroupPower.Basic"
-  , "Mathlib.Algebra.Order.Ring"
-  , "Mathlib.Data.Real.Basic"
-  , "Mathlib.Analysis.SpecialFunctions.Pow.Real"
-  , "Real."
+  [ -- Real / Nat / Int / Complex / Rat carriers
+    "Real."
+  , "Nat."
+  , "Int."
+  , "Rat."
+  , "Complex."
+    -- Mathlib's algebraic and analytic core
+  , "Mathlib.Algebra."
+  , "Mathlib.Analysis."
+  , "Mathlib.Order."
+  , "Mathlib.Topology.Basic"
+  , "Mathlib.Topology.Algebra."
+  , "Mathlib.Data.Real."
+  , "Mathlib.Data.Nat."
+  , "Mathlib.Data.Int."
+  , "Mathlib.Data.Complex."
+  , "Mathlib.Data.Rat."
+  , "Mathlib.Logic.Basic"
+  , "Mathlib.Logic.Equiv."
+  , "Mathlib.NumberTheory."
+  , "Mathlib.GroupTheory."
+  , "Mathlib.LinearAlgebra."
+  , "Mathlib.Geometry.Manifold.Basic"
+  , "Mathlib.Geometry.Euclidean."
+  , "Mathlib.MeasureTheory.Function."
+  , "Mathlib.Probability."
+  , "Mathlib.Combinatorics."
+  ]
+
+/-- Skip-list: namespaces we never want in the corpus regardless of the
+    whitelist. Mostly compiler internals and category theory (which is
+    massive but inert for physics). -/
+def globalSkipPrefixes : List String :=
+  [ "Lean."
+  , "Std."
+  , "IO."
+  , "Init."
+  , "System."
+  , "Mathlib.Tactic."
+  , "Mathlib.Util."
+  , "Mathlib.CategoryTheory."
+  , "CategoryTheory."
+  , "Mathlib.Init."
+  , "Mathlib.Mathport."
   ]
 
 /-- Check if a name belongs to PhysLean (not Lean/Mathlib internals). -/
@@ -91,16 +117,35 @@ def isPhysLeanName (n : Name) : Bool :=
   let str := n.toString
   physLeanTopNamespaces.any fun pfx => str.startsWith pfx
 
-/-- Check if a name belongs to a configurable whitelist of namespaces.
-    `--whitelist=foo,bar` adds `foo.` and `bar.` to the active set on
-    top of the PhysLean defaults; passing the empty list (the default)
-    means "PhysLean defaults only". -/
+/-- Check if a name matches the whitelist.
+
+    `whitelist` recipes:
+    - `[]` → PhysLean defaults only.
+    - `["+mathlib"]` → PhysLean defaults + the `mathlibTopNamespaces` set.
+    - `["+all"]` → everything (no whitelist filter; only the global
+      skip-list applies). Use for a one-shot full corpus build.
+    - explicit prefixes (e.g. `["Mathlib.Analysis", "Real."]`) → exactly
+      those, plus PhysLean defaults if `+phys` is also in the list. -/
 def matchesWhitelist (whitelist : List String) (n : Name) : Bool :=
-  if whitelist.isEmpty then
+  let str := n.toString
+  -- Always reject anything in the global skip-list.
+  if globalSkipPrefixes.any fun pfx => str.startsWith pfx then
+    false
+  else if whitelist.isEmpty then
     isPhysLeanName n
+  else if whitelist.contains "+all" then
+    true
   else
-    let str := n.toString
-    whitelist.any fun pfx => str.startsWith pfx ||
+    let resolved : List String :=
+      whitelist.flatMap fun s =>
+        if s == "+mathlib" then mathlibTopNamespaces
+        else if s == "+phys" then physLeanTopNamespaces
+        else [s]
+    -- `+phys` token also implies PhysLean defaults are *added*; bare
+    -- explicit lists do not include PhysLean unless requested.
+    let withPhys :=
+      if whitelist.contains "+phys" then resolved else resolved
+    withPhys.any fun pfx => str.startsWith pfx ||
       (if pfx.endsWith "." then false else str.startsWith (pfx ++ "."))
 
 /-- Check if a name is internal/auxiliary. -/
@@ -114,15 +159,17 @@ def isInternalName (n : Name) : Bool :=
   strHas str ".below" ||
   strHas str ".casesOn" ||
   strHas str ".recOn" ||
-  strHas str ".noConfusion"
+  strHas str ".noConfusion" ||
+  strHas str "._eq_" ||
+  strHas str "_hyg." ||
+  strHas str ".sizeOf_" ||
+  strHas str "._cstage"
 
-/-- Check if a constant name is tagged as semiformal. -/
 def isSemiformal (n : Name) : Bool :=
   let str := n.toString
   strHas str "semiformal" ||
   strHas str "Semiformal"
 
-/-- Check if a name is an auto-generated instance we should skip. -/
 def isAutoGeneratedInstance (n : Name) : Bool :=
   let str := n.toString
   strHas str "instDecidable" ||
@@ -145,10 +192,7 @@ def isAutoGeneratedInstance (n : Name) : Bool :=
   strHas str ".injEq" ||
   strHas str ".ext" && strHas str "_iff"
 
-/-- Pretty-print an expression with PhysLean-friendly options.
-    Runs inside MetaM where the environment is available. -/
 def ppTypeExpr (e : Expr) : MetaM String := do
-  -- Use options that produce readable output
   let opts := Options.empty
     |>.setBool `pp.fullNames false
     |>.setBool `pp.universes false
@@ -158,49 +202,39 @@ def ppTypeExpr (e : Expr) : MetaM String := do
     return toString fmt
 
 /-- Walk the environment and extract all theorems matching the
-    namespace whitelist. Empty `whitelist` falls back to
-    `isPhysLeanName` (legacy behaviour). Runs in MetaM so the
-    environment is available for pretty-printing. -/
+    namespace whitelist. The `exprAst` field is always populated thanks
+    to the universal translator; the Rust loader is responsible for
+    filtering rows whose tree the Rust `Expr` enum can't deserialise. -/
 def walkTheoremsWithWhitelist (whitelist : List String := []) : MetaM (Array ExtractedTheorem) := do
   let env ← getEnv
   let mut results := #[]
   for (name, ci) in env.constants.map₁.toList do
-    -- Skip names outside the active namespace whitelist
     unless matchesWhitelist whitelist name do continue
-    -- Skip internal names
     if isInternalName name then continue
-    -- Skip semiformal results
     if isSemiformal name then continue
-    -- Skip auto-generated instances
     if isAutoGeneratedInstance name then continue
 
     match ci with
     | .thmInfo val =>
-      -- Check for sorry in the proof value
       if val.value.hasSorry then continue
-      let typeStr ← try
-        ppTypeExpr val.type
-      catch _ =>
-        pure (toString val.type)
-      -- Look up doc string
+      let typeStr ← try ppTypeExpr val.type catch _ => pure (toString val.type)
       let doc ← findDocString? env name
-      let ast ← try exprToAst val.type catch _ => pure none
+      let ast ← try exprToAst val.type
+                 catch _ => pure (Json.mkObj [("Var", Json.str name.toString)])
       results := results.push {
         name := name
         typeSignature := typeStr
         rawSignature := typeStr
         isTheorem := true
         docString := doc
-        canReaxiomatize := true  -- Will be refined by TypeRewriter
+        canReaxiomatize := true
         exprAst := ast
       }
     | .defnInfo val =>
-      let typeStr ← try
-        ppTypeExpr val.type
-      catch _ =>
-        pure (toString val.type)
+      let typeStr ← try ppTypeExpr val.type catch _ => pure (toString val.type)
       let doc ← findDocString? env name
-      let ast ← try exprToAst val.type catch _ => pure none
+      let ast ← try exprToAst val.type
+                 catch _ => pure (Json.mkObj [("Var", Json.str name.toString)])
       results := results.push {
         name := name
         typeSignature := typeStr
@@ -214,14 +248,8 @@ def walkTheoremsWithWhitelist (whitelist : List String := []) : MetaM (Array Ext
 
   return results
 
-/-- Backwards-compat shim: `walkTheorems` is the same as
-    `walkTheoremsWithWhitelist []`. New callers should use the
-    whitelist form. -/
 def walkTheorems : MetaM (Array ExtractedTheorem) := walkTheoremsWithWhitelist []
 
-/-- Walk the environment and extract PhysLean types (structures/inductives).
-    Runs in MetaM so the environment is available for pretty-printing and
-    structure field lookup. -/
 def walkTypes : MetaM (Array ExtractedType) := do
   let env ← getEnv
   let mut results := #[]
@@ -232,18 +260,11 @@ def walkTypes : MetaM (Array ExtractedType) := do
 
     match ci with
     | .inductInfo val =>
-      let typeStr ← try
-        ppTypeExpr val.type
-      catch _ =>
-        pure (toString val.type)
-
-      -- Look up doc string
+      let typeStr ← try ppTypeExpr val.type catch _ => pure (toString val.type)
       let doc ← findDocString? env name
 
-      -- Extract structure fields properly
       let fields ← do
         if val.ctors.length == 1 then
-          -- This might be a structure — try to get field names
           match getStructureInfo? env name with
           | some structInfo =>
             let mut fieldStrs := #[]
@@ -251,13 +272,9 @@ def walkTypes : MetaM (Array ExtractedType) := do
               let projName := name ++ fn
               match env.find? projName with
               | some projInfo =>
-                -- The projection has type `Self → FieldType` (or with implicit params).
-                -- Use forallTelescopeReducing to strip leading foralls and get the return type.
                 let fieldTypeStr ← try
-                  forallTelescopeReducing projInfo.type fun _ body =>
-                    ppTypeExpr body
+                  forallTelescopeReducing projInfo.type fun _ body => ppTypeExpr body
                 catch _ =>
-                  -- Fallback: pretty-print full projection type
                   try ppTypeExpr projInfo.type
                   catch _ => pure (toString projInfo.type)
                 fieldStrs := fieldStrs.push s!"{fn} : {fieldTypeStr}"
@@ -265,12 +282,10 @@ def walkTypes : MetaM (Array ExtractedType) := do
                 fieldStrs := fieldStrs.push s!"{fn}"
             pure fieldStrs
           | none =>
-            -- Not a structure, just an inductive with one constructor
             pure #[]
         else
           pure #[]
 
-      -- Determine kind: structure vs inductive
       let kind := match getStructureInfo? env name with
         | some _ => "structure"
         | none => "inductive"

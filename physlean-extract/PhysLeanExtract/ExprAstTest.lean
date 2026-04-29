@@ -37,9 +37,8 @@ private def runOne (n : Name) : MetaM Unit := do
   match env.find? n with
   | none => IO.println s!"  ✗ {n}: not found in env"
   | some ci =>
-      match ← exprToAst ci.type with
-      | none => IO.println s!"  ✗ {n}: outside supported subset (head = {exprHeadKind ci.type})"
-      | some j => IO.println s!"  ✓ {n}\n      {j.compress}"
+      let j ← exprToAst ci.type
+      IO.println s!"  ✓ {n}\n      {j.compress}"
 
 def runTests : MetaM Unit := do
   IO.println "ExprAst sanity tests"

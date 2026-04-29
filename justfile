@@ -127,16 +127,30 @@ build-extract:
 extract-physlean: build-extract
     cd physlean-extract && lake exe extract
 
-# Extract a curated Mathlib subset to physlean-extract/output/math_corpus.json.
-# The whitelist targets real-arithmetic identities the GA can rewrite over
-# (algebra, exponent/power rules over ℝ). PhysLean must already be built
-# (`just build-extract` once). The output JSON's `expr_ast` field is the
-# load-bearing one — nasrudin_derive::AxiomStore only registers a real
-# Expr for entries with `expr_ast != null`.
+# Extract a wide Mathlib + PhysLean corpus to math_corpus.json. The
+# universal Lean→Expr translator emits a structured AST for every
+# walked theorem (curried `App` chains for unknown heads), so the GA
+# gets the full corpus as building blocks rather than a hand-curated
+# subset. PhysLean must be built once via `just build-extract`.
 extract-mathlib: build-extract
     cd physlean-extract && lake exe extract \
-        --whitelist=Mathlib.Algebra.Ring.Basic,Mathlib.Algebra.GroupPower.Basic,Mathlib.Algebra.Order.Ring,Mathlib.Data.Real.Basic,Mathlib.Analysis.SpecialFunctions.Pow.Real,Real. \
+        --whitelist=+phys,+mathlib \
         --output=output/math_corpus.json
+
+# Pull latest PhysLean + Mathlib upstreams, rebuild the dependency
+# closure, re-extract the corpus, then hot-reload the live API. New
+# upstream theorems flow into the GA's `IntroduceTheorem` candidate
+# pool without an API redeploy. Set `ADMIN_TOKEN` and `API_URL` in
+# the environment (defaults to localhost:3001).
+refresh-corpus:
+    cd physlean-extract && lake update PhysLean
+    cd physlean-extract && lake build PhysLean
+    just extract-mathlib
+    @echo "Hot-reloading API AxiomStore..."
+    @curl -fsS -X POST \
+        -H "Authorization: Bearer $${ADMIN_TOKEN:-changeme}" \
+        "$${API_URL:-http://localhost:3001}/api/admin/reload_corpus" \
+        | python3 -m json.tool || echo "(reload skipped — API not running or token wrong)"
 
 # Generate .lean axiom files from PhysLean catalog
 generate-axioms:

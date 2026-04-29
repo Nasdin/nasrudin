@@ -13,7 +13,6 @@ namespace PhysLeanExtract
 
 open Lean
 
-/-- Escape a string for JSON output. -/
 private def jsonEscape (s : String) : String :=
   s.replace "\\" "\\\\"
    |>.replace "\"" "\\\""
@@ -21,27 +20,22 @@ private def jsonEscape (s : String) : String :=
    |>.replace "\r" "\\r"
    |>.replace "\t" "\\t"
 
-/-- Render a JSON string value. -/
 private def jsonString (s : String) : String :=
   "\"" ++ jsonEscape s ++ "\""
 
-/-- Render an optional JSON string value. -/
 private def jsonOptString : Option String → String
   | some s => jsonString s
   | none => "null"
 
-/-- Render a boolean as JSON. -/
 private def jsonBool (b : Bool) : String :=
   if b then "true" else "false"
 
-/-- Render a theorem entry as JSON. -/
+/-- Render a theorem entry as JSON. The `expr_ast` field is always
+    populated (the universal translator never fails). -/
 def theoremToJson (t : ExtractedTheorem) (domain : PhysDomain) : String :=
   let shortName := t.name.toString.replace "PhysLean." ""
     |>.replace "." "_"
     |>.toLower
-  let exprAstField := match t.exprAst with
-    | some ast => ",\n    \"expr_ast\": " ++ ast.compress
-    | none     => ",\n    \"expr_ast\": null"
   "{" ++
     "\n    \"name\": " ++ jsonString shortName ++
     ",\n    \"physlean_name\": " ++ jsonString t.name.toString ++
@@ -51,10 +45,9 @@ def theoremToJson (t : ExtractedTheorem) (domain : PhysDomain) : String :=
     ",\n    \"can_reaxiomatize\": " ++ jsonBool t.canReaxiomatize ++
     ",\n    \"source\": \"physlean\"" ++
     ",\n    \"doc_string\": " ++ jsonOptString t.docString ++
-    exprAstField ++
+    ",\n    \"expr_ast\": " ++ t.exprAst.compress ++
     "\n  }"
 
-/-- Render a type entry as JSON. -/
 def typeToJson (t : ExtractedType) : String :=
   let fieldArr := t.fields.toList.map jsonString
   let fieldsStr := ", ".intercalate fieldArr
@@ -70,27 +63,28 @@ def typeToJson (t : ExtractedType) : String :=
     ",\n    \"doc_string\": " ++ jsonOptString t.docString ++
     "\n  }"
 
-/-- Render the full catalog JSON. -/
+/-- Render the full catalog JSON. **No domain filter** — every walked
+    theorem flows through. Theorems whose namespace doesn't map to a
+    known `PhysDomain` get `domain = "Unknown"`; the Rust loader maps
+    that to `Domain::PureMath` and registers them anyway. -/
 def renderCatalog
     (theorems : Array ExtractedTheorem)
     (types : Array ExtractedType)
     (physleanVersion : String)
     (leanVersion : String) : String :=
-  -- Build theorem entries with domain tags
-  let thmEntries := theorems.toList.filterMap fun t =>
+  let thmEntries := theorems.toList.map fun t =>
     let domain := tagDomain t.name
-    if domain == .Unknown then none
-    else some (theoremToJson t domain)
+    theoremToJson t domain
   let thmsStr := ",\n    ".intercalate thmEntries
 
-  -- Build type entries (filtered to known domains)
+  -- Types still filter Unknown — they're decorative metadata for the
+  -- frontend, not GA building blocks.
   let typeEntries := types.toList.filterMap fun t =>
     let domain := tagDomain t.name
     if domain == .Unknown then none
     else some (typeToJson t)
   let typesStr := ",\n    ".intercalate typeEntries
 
-  -- Build domain_imports map
   let domainImports := [
     ("ClassicalMechanics", "PhysicsGenerator.Generated.Mechanics"),
     ("SpecialRelativity", "PhysicsGenerator.Generated.SpecialRelativity"),

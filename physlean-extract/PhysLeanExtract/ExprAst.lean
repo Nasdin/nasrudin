@@ -2,28 +2,31 @@ import Lean
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 /-!
-# Lean → nasrudin_core::Expr AST translator
+# Lean → nasrudin_core::Expr AST translator (universal)
 
 Walks a Lean `Expr` tree and emits a JSON object whose shape matches the
-`nasrudin_core::Expr` enum (engine/crates/core/src/expr.rs). Only a small
-subset of Lean is supported — enough to capture real-arithmetic equations
-of the form physics axioms typically take (`E = m·c²`, `(√a)² = a`, etc.).
+`nasrudin_core::Expr` enum (engine/crates/core/src/expr.rs).
 
-Anything outside the subset returns `none` and gets logged as a skip
-reason. The Rust side (AxiomStore) only loads entries with a populated
-`expr_ast` field.
+This translator is **total**: every Lean expression yields some structured
+tree. Known heads (`HAdd/Eq/Le/Iff/Real.exp/...`) get specialised
+`BinOp`/`UnOp`/`Const` nodes; everything else lands as a curried `App`
+chain over a `Var(headName)`. Hypothesis-shaped `forallE` (Prop → Prop,
+non-dependent) becomes `BinOp(Implies, …)`; dependent foralls become
+`Pi(name, type, body)`; `lam` becomes `Lam(name, type, body)`.
 
-Wire shape (matches `Expr`'s `#[derive(Serialize, Deserialize)]`):
+Wire shape (matches Rust's externally-tagged serde derive):
 
-  Var(String)                     →  {"Var": "E"}
-  Const(PhysConst)                →  {"Const": "SpeedOfLight"}
-  Lit(num, den)                   →  {"Lit": [num, den]}
-  BinOp(op, lhs, rhs)             →  {"BinOp": ["Add"|"Sub"|"Mul"|"Div"|"Pow"|"Eq", <lhs>, <rhs>]}
-  UnaryOp(op, arg)                →  {"UnaryOp": ["Neg"|"Sqrt", <arg>]}
+  Var(String)                    → {"Var": "E"}
+  Const(PhysConst)               → {"Const": "SpeedOfLight"}
+  Lit(num, den)                  → {"Lit": [num, den]}
+  App(lhs, rhs)                  → {"App": [<lhs>, <rhs>]}
+  Lam(name, ty, body)            → {"Lam": ["x", <ty>, <body>]}
+  Pi(name, ty, body)             → {"Pi":  ["x", <ty>, <body>]}
+  BinOp(op, lhs, rhs)            → {"BinOp": ["Op", <lhs>, <rhs>]}
+  UnOp(op, arg)                  → {"UnOp":  ["Op", <arg>]}
 
-The 7-variant Expr enum is what the GA's Chain::execute walks; matching
-that exact shape means the catalog's `expr_ast` deserializes directly
-into an Axiom statement with no glue code.
+The Rust `Expr` enum (BinOp/UnOp variants) is the source of truth for
+the operator name strings emitted here.
 -/
 
 namespace PhysLeanExtract
@@ -33,19 +36,15 @@ open Lean Meta
 /-- A handful of named physics constants we recognise on the LHS/RHS of
     Lean equations. Names match `nasrudin_core::PhysConst`. -/
 private def physConstName : Name → Option String
-  -- Speed of light: PhysLean exposes this as `PhysLean.SpeedOfLight` or
-  -- a few aliases; ground-instance forms also appear as the raw symbol
-  -- `c` after carrier specialisation.
   | `PhysLean.SpeedOfLight        => some "SpeedOfLight"
   | `PhysLean.PhysicalConstants.c => some "SpeedOfLight"
-  | `PhysLean.PhysicalConstants.G => some "GravitationalConstant"
-  | `PhysLean.PhysicalConstants.hbar => some "Hbar"
-  | `PhysLean.PhysicalConstants.k_B => some "BoltzmannConstant"
+  | `PhysLean.PhysicalConstants.G => some "GravConst"
+  | `PhysLean.PhysicalConstants.hbar => some "ReducedPlanck"
+  | `PhysLean.PhysicalConstants.k_B => some "Boltzmann"
+  | `Real.pi => some "Pi"
   | _ => none
 
-/-- Pull out a Nat literal from a `Lean.Expr` if it has one. Handles the
-    common encodings: `OfNat.ofNat n`, `Nat.succ ... Nat.zero`, raw
-    `Expr.lit (Literal.natVal n)`. -/
+/-- Pull out a Nat literal from a `Lean.Expr` if it has one. -/
 private partial def asNatLit? (e : Expr) : Option Nat :=
   match e with
   | .lit (.natVal n) => some n
@@ -54,10 +53,7 @@ private partial def asNatLit? (e : Expr) : Option Nat :=
   | _ => none
 
 /-- Recognise the subset of Lean `Expr` heads we translate as binary
-    operators. The tuple (head-name, arg-count-to-pop) tells the walker
-    which arguments are operands vs. type/instance carriers. For
-    `HAdd.hAdd α β γ inst a b` we always want the *last two* arguments,
-    regardless of how many universe / type / instance args precede them. -/
+    operators. Names match the Rust `BinOp` enum variants verbatim. -/
 private def binOpFor : Name → Option String
   | ``HAdd.hAdd => some "Add"
   | ``HSub.hSub => some "Sub"
@@ -65,92 +61,190 @@ private def binOpFor : Name → Option String
   | ``HDiv.hDiv => some "Div"
   | ``HPow.hPow => some "Pow"
   | ``Eq        => some "Eq"
+  | ``Ne        => some "Ne"
+  | ``Iff       => some "Iff"
+  | ``And       => some "And"
+  | ``Or        => some "Or"
+  | ``LE.le     => some "Le"
+  | ``LT.lt     => some "Lt"
+  | ``GE.ge     => some "Ge"
+  | ``GT.gt     => some "Gt"
   | _           => none
 
-/-- Recognise unary operators. -/
+/-- Recognise unary operators. Names match Rust `UnOp` variants. -/
 private def unOpFor : Name → Option String
-  | ``Neg.neg   => some "Neg"
-  | ``Real.sqrt => some "Sqrt"
-  | _           => none
+  | ``Neg.neg     => some "Neg"
+  | ``Real.sqrt   => some "Sqrt"
+  | ``Real.exp    => some "Exp"
+  | ``Real.log    => some "Log"
+  | ``Real.sin    => some "Sin"
+  | ``Real.cos    => some "Cos"
+  | ``Real.tan    => some "Tan"
+  | ``abs         => some "Abs"
+  | _             => none
 
-/-- Translate a Lean `Expr` into a `Json` tree matching nasrudin_core::Expr,
-    or `none` if the term is outside the supported subset.
+/-- Build a `Json` for a literal natural number. -/
+private def jsonNat (n : Nat) : Json :=
+  Json.num (JsonNumber.fromInt (Int.ofNat n))
 
-    The translator runs after `Meta.whnf`-style elaboration so type-class
-    instances are usually filled in. Callers should pass a fully-elaborated
-    type expression (`val.type` from a `ConstantInfo`).
+/-- Build the `Lit` wrapper (rational with denominator 1). -/
+private def litJson (n : Nat) : Json :=
+  Json.mkObj [("Lit", Json.arr #[jsonNat n, jsonNat 1])]
 
-    Free variables of `Real`-type become `Var(name)`. Bound variables
-    inside `forallE` binders are visited inside the binder so their
-    `fvarId` is in scope. -/
-partial def exprToAst (e : Expr) : MetaM (Option Json) := do
+/-- Build a `Var` wrapper. -/
+private def varJson (s : String) : Json :=
+  Json.mkObj [("Var", Json.str s)]
+
+/-- Build an `App(f, x)` Json node. -/
+private def appJson (f x : Json) : Json :=
+  Json.mkObj [("App", Json.arr #[f, x])]
+
+/-- Curry an n-ary application head over a list of arg JSONs. -/
+private def appChain (head : Json) (args : Array Json) : Json :=
+  args.foldl (init := head) fun acc a => appJson acc a
+
+/-- Try to pull `BinderInfo`s for the head's declared parameters via
+    `getFunInfo`. Returns the array of `ParamInfo`, or `#[]` if anything
+    goes wrong (e.g. higher-order or partially-applied). -/
+private def tryFunInfo (head : Expr) : MetaM (Array Lean.Meta.ParamInfo) := do
+  try
+    let info ← getFunInfo head
+    return info.paramInfo
+  catch _ => return #[]
+
+/-- Drop type-class / implicit / strict-implicit / inst-implicit args by
+    consulting `getFunInfo` on the head. Args at default-binder positions
+    are kept; everything else is dropped. If `getFunInfo` fails we keep
+    all args (over-emit beats under-emit). -/
+private def explicitArgs (head : Expr) (args : Array Expr) : MetaM (Array Expr) := do
+  let info ← tryFunInfo head
+  if info.isEmpty then return args
+  let mut out := #[]
+  for i in [0:args.size] do
+    if h : i < info.size then
+      let p := info[i]'h
+      if p.binderInfo == BinderInfo.default then
+        out := out.push args[i]!
+    else
+      -- Past the declared params (higher-order return) → keep.
+      out := out.push args[i]!
+  return out
+
+/-- Translate a Lean `Expr` into a `Json` tree matching `nasrudin_core::Expr`.
+
+    **Total**: returns a structured tree for every input. Known heads
+    specialise into `BinOp`/`UnOp`/`Const`/`Lit`; unknown heads fall
+    back to `App(Var headName, …)` curried chains. Hypothesis-shaped
+    foralls become `Implies`; dependent foralls become `Pi`. -/
+partial def exprToAst (e : Expr) : MetaM Json := do
   match e with
-  -- Literals -------------------------------------------------------------
-  | .lit (.natVal n) =>
-      return some <| Json.mkObj [("Lit", Json.arr #[Json.num (JsonNumber.fromInt (Int.ofNat n)), Json.num (JsonNumber.fromInt 1)])]
+  -- Strip metadata wrappers transparently.
+  | .mdata _ inner => exprToAst inner
 
-  -- Named constants ------------------------------------------------------
-  | .const name _ =>
-      match physConstName name with
-      | some pc => return some <| Json.mkObj [("Const", Json.str pc)]
-      | none =>
-          -- Treat any other zero-arg `Real` constant as a free `Var`
-          -- (e.g. `Real.pi`, custom carrier-specialised names).
-          let str := name.toString
-          return some <| Json.mkObj [("Var", Json.str str)]
+  -- Literals -----------------------------------------------------------
+  | .lit (.natVal n) => return litJson n
+  | .lit (.strVal s) => return varJson s!"<str:{s}>"
 
-  -- Free variables (after entering binders) ------------------------------
-  | .fvar fvarId =>
+  -- Bound variables shouldn't appear after telescope, but be defensive.
+  | .bvar i => return varJson s!"_b{i}"
+
+  -- Sort / metavariable → opaque carrier.
+  | .sort _ => return varJson "<sort>"
+  | .mvar id => return varJson s!"?m.{id.name}"
+
+  -- Projection: emit as `Var "Struct.proj"` applied to the struct expr.
+  | .proj structName idx struct => do
+      let inner ← exprToAst struct
+      return appJson (varJson s!"{structName}.{idx}") inner
+
+  -- Free variables (after entering binders) ----------------------------
+  | .fvar fvarId => do
       let decl ← fvarId.getDecl
-      return some <| Json.mkObj [("Var", Json.str decl.userName.toString)]
+      return varJson decl.userName.toString
 
-  -- Universal binders (`∀ x : ℝ, ...`) →  recurse into body with the
-  -- binder introduced as an FVar so its name appears in `Var(...)`.
-  | .forallE _ _ _ _ =>
-      forallTelescope e fun _xs body => exprToAst body
+  -- Named constants ----------------------------------------------------
+  | .const name _ => do
+      match physConstName name with
+      | some pc => return Json.mkObj [("Const", Json.str pc)]
+      | none    => return varJson name.toString
 
-  -- Application chains ---------------------------------------------------
-  | .app _ _ =>
+  -- Universal binders --------------------------------------------------
+  -- Non-dependent forall = implication. If the binder type is a `Prop`
+  -- and doesn't appear free in the body, emit `BinOp(Implies, hyp, body)`.
+  -- Otherwise emit `Pi(name, ty, body)` with the binder introduced as
+  -- a free variable so its name appears in `Var(...)`.
+  | .forallE _binderName binderType body _ => do
+      let isProp ← try Meta.isProp binderType catch _ => pure false
+      let dependent := body.hasLooseBVar 0
+      if isProp && !dependent then
+        let lhs ← exprToAst binderType
+        let rhs ← exprToAst (body.lowerLooseBVars 1 1)
+        return Json.mkObj [("BinOp", Json.arr #[Json.str "Implies", lhs, rhs])]
+      else
+        forallBoundedTelescope e (some 1) fun xs body' => do
+          let x := xs[0]!
+          let xDecl ← x.fvarId!.getDecl
+          let tyJson ← exprToAst xDecl.type
+          let bodyJson ← exprToAst body'
+          return Json.mkObj [("Pi", Json.arr #[Json.str xDecl.userName.toString, tyJson, bodyJson])]
+
+  -- Lambdas ------------------------------------------------------------
+  | .lam _binderName _ _ _ => do
+      lambdaBoundedTelescope e 1 fun xs body' => do
+        let x := xs[0]!
+        let xDecl ← x.fvarId!.getDecl
+        let tyJson ← exprToAst xDecl.type
+        let bodyJson ← exprToAst body'
+        return Json.mkObj [("Lam", Json.arr #[Json.str xDecl.userName.toString, tyJson, bodyJson])]
+
+  -- Let-bindings: substitute (β-reduce) and recurse. Drops the binding
+  -- name but preserves structure — the corpus rarely needs the let-name.
+  | .letE _ _ val body _ => do
+      exprToAst (body.instantiate1 val)
+
+  -- Application chains -------------------------------------------------
+  | .app _ _ => do
       let head := e.getAppFn
       let args := e.getAppArgs
       match head with
       | .const name _ =>
-          -- BinOp: take the last two args, ignore type / instance carriers.
+          -- BinOp: take the last two args (typeclass carriers come first).
           if let some op := binOpFor name then
             if args.size >= 2 then
               let lhs ← exprToAst args[args.size - 2]!
               let rhs ← exprToAst args[args.size - 1]!
-              match lhs, rhs with
-              | some l, some r =>
-                  return some <| Json.mkObj
-                    [("BinOp", Json.arr #[Json.str op, l, r])]
-              | _, _ => return none
-            else return none
-          -- UnaryOp: take last arg.
+              return Json.mkObj [("BinOp", Json.arr #[Json.str op, lhs, rhs])]
+            else
+              -- Partially-applied operator — fall through to App chain.
+              let explicit ← explicitArgs head args
+              let explicitJ ← explicit.mapM exprToAst
+              return appChain (varJson name.toString) explicitJ
           else if let some op := unOpFor name then
             if args.size >= 1 then
               let inner ← exprToAst args[args.size - 1]!
-              match inner with
-              | some i =>
-                  return some <| Json.mkObj
-                    [("UnaryOp", Json.arr #[Json.str op, i])]
-              | none => return none
-            else return none
-          -- OfNat numeric literal: `OfNat.ofNat <type> (Nat.lit n)`.
+              return Json.mkObj [("UnOp", Json.arr #[Json.str op, inner])]
+            else
+              return varJson name.toString
           else if name == ``OfNat.ofNat then
             match asNatLit? e with
-            | some n =>
-                return some <| Json.mkObj
-                  [("Lit", Json.arr #[Json.num (JsonNumber.fromInt (Int.ofNat n)), Json.num (JsonNumber.fromInt 1)])]
-            | none => return none
-          else return none
-      | _ => return none
+            | some n => return litJson n
+            | none =>
+                let explicit ← explicitArgs head args
+                let explicitJ ← explicit.mapM exprToAst
+                return appChain (varJson name.toString) explicitJ
+          else
+            -- Unknown const head → curried App chain over explicit args.
+            let explicit ← explicitArgs head args
+            let explicitJ ← explicit.mapM exprToAst
+            return appChain (varJson name.toString) explicitJ
+      | _ => do
+          -- Non-const head (fvar, lambda, projection, …): recurse into
+          -- the head and curry over all args (no FunInfo available).
+          let headJ ← exprToAst head
+          let argJ ← args.mapM exprToAst
+          return appChain headJ argJ
 
-  -- Anything else (lambdas, `proj`, `mdata`, `mvar`, …) → reject.
-  | _ => return none
-
-/-- Diagnostic: what kind of node did we hit? Useful for the
-    `skipped: 14127 — references CategoryTheory` style coverage report. -/
+/-- Diagnostic: what kind of node did we hit? Useful for coverage reports. -/
 def exprHeadKind (e : Expr) : String :=
   match e with
   | .bvar _ => "bvar"
