@@ -15,6 +15,8 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chrono::Duration as ChronoDuration;
+use nasrudin_rocks::{AttemptOutcome, AttemptRecord, AttemptsCache};
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 
@@ -178,6 +180,71 @@ impl LakeBuilder {
             }
         }
     }
+
+    /// Cache-backed wrapper around [`Self::verify`]. On hit (within
+    /// `ttl_days`), returns the cached outcome without invoking
+    /// `lake build`. On miss, runs `verify` and writes the outcome.
+    /// Errors from `verify` (transient process failures) bubble up
+    /// without persistence.
+    pub async fn verify_cached(
+        &self,
+        cache: &AttemptsCache,
+        cache_key: &[u8; 16],
+        lean_version: &str,
+        worker_id: &str,
+        ttl_days: i64,
+        lean_source: &str,
+        theorem_id_hex: &str,
+    ) -> Result<VerifyOutcome> {
+        let max_age = ChronoDuration::days(ttl_days);
+        if let Ok(Some(rec)) = cache.get_with_ttl(cache_key, max_age) {
+            return Ok(match rec.outcome {
+                AttemptOutcome::Verified { tactic, .. } => VerifyOutcome::Verified {
+                    tactic: if tactic.is_empty() {
+                        "cached".into()
+                    } else {
+                        tactic
+                    },
+                    duration_ms: 0,
+                },
+                AttemptOutcome::RejectedTypeError { msg } => VerifyOutcome::Rejected {
+                    reason: "cached_rejected".into(),
+                    stderr_tail: msg,
+                },
+                AttemptOutcome::RejectedTimeout => VerifyOutcome::Rejected {
+                    reason: "cached_timeout".into(),
+                    stderr_tail: String::new(),
+                },
+                AttemptOutcome::RejectedTrivial { reason } => VerifyOutcome::Rejected {
+                    reason,
+                    stderr_tail: String::new(),
+                },
+                AttemptOutcome::Pending => self.verify(lean_source, theorem_id_hex).await?,
+            });
+        }
+
+        let raw = self.verify(lean_source, theorem_id_hex).await?;
+        let outcome = match &raw {
+            VerifyOutcome::Verified { tactic, .. } => AttemptOutcome::Verified {
+                theorem_id: [0u8; 8],
+                tactic: tactic.clone(),
+            },
+            VerifyOutcome::Rejected { reason, stderr_tail } => AttemptOutcome::RejectedTypeError {
+                msg: format!("{reason}: {stderr_tail}"),
+            },
+        };
+        let record = AttemptRecord {
+            outcome,
+            lean_version: lean_version.to_string(),
+            timestamp: chrono::Utc::now(),
+            attempted_by: worker_id.to_string(),
+            elapsed_ms: 0,
+        };
+        if let Err(e) = cache.put(cache_key, &record) {
+            tracing::warn!("attempts cache put failed: {e}");
+        }
+        Ok(raw)
+    }
 }
 
 /// Pre-flight firewall: scan `src` for any top-level `axiom` declaration or any
@@ -316,5 +383,43 @@ mod tests {
         let s = "a\nb\nc\nd\ne";
         assert_eq!(tail_lines(s, 2), "d\ne");
         assert_eq!(tail_lines(s, 10), "a\nb\nc\nd\ne");
+    }
+
+    #[tokio::test]
+    async fn verify_cached_returns_hit_without_invoking_lake() {
+        use chrono::Utc;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let cache = AttemptsCache::open(dir.path().to_str().unwrap()).unwrap();
+        let key = [9u8; 16];
+        cache
+            .put(
+                &key,
+                &AttemptRecord {
+                    outcome: AttemptOutcome::Verified {
+                        theorem_id: [0; 8],
+                        tactic: "ring".into(),
+                    },
+                    lean_version: "4.27.0".into(),
+                    timestamp: Utc::now(),
+                    attempted_by: "test".into(),
+                    elapsed_ms: 1,
+                },
+            )
+            .unwrap();
+
+        // LakeBuilder pointing at /nonexistent — a real lake call would
+        // error. Cache hit must short-circuit before that.
+        let lake = LakeBuilder::new(
+            std::path::PathBuf::from("/nonexistent"),
+            std::path::PathBuf::from("/tmp"),
+            1,
+        );
+        let result = lake
+            .verify_cached(&cache, &key, "4.27.0", "test", 30, "lean source", "abc123")
+            .await
+            .expect("cache hit must return Ok");
+        assert!(matches!(result, VerifyOutcome::Verified { .. }));
     }
 }
