@@ -20,6 +20,8 @@ const CF_BY_GENERATION: &str = "by_generation";
 const CF_LATEX_INDEX: &str = "latex_index";
 const CF_STATS: &str = "stats";
 const CF_REVERIFY_QUEUE: &str = "reverify_queue";
+const CF_ATTEMPTS: &str = "attempts";
+const CF_TACTIC_PRIORS: &str = "tactic_priors";
 
 const ALL_CFS: &[&str] = &[
     CF_THEOREMS,
@@ -32,6 +34,8 @@ const ALL_CFS: &[&str] = &[
     CF_LATEX_INDEX,
     CF_STATS,
     CF_REVERIFY_QUEUE,
+    CF_ATTEMPTS,
+    CF_TACTIC_PRIORS,
 ];
 
 /// Database statistics.
@@ -83,7 +87,7 @@ impl TheoremDb {
         // Point-lookup CFs benefit from Bloom filters to avoid unnecessary
         // disk reads for non-existent keys.
         const POINT_LOOKUP_CFS: &[&str] =
-            &[CF_THEOREMS, CF_PROOFS, CF_LINEAGE, CF_REVERIFY_QUEUE];
+            &[CF_THEOREMS, CF_PROOFS, CF_LINEAGE, CF_REVERIFY_QUEUE, CF_ATTEMPTS, CF_TACTIC_PRIORS];
 
         let cf_descriptors: Vec<ColumnFamilyDescriptor> = ALL_CFS
             .iter()
