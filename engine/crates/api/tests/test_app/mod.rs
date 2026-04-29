@@ -130,6 +130,8 @@ pub async fn build() -> Option<TestApp> {
         worker_rate_limiter: Arc::new(WorkerRateLimiter::new(60)),
         admin_token: None,
         cache_ctx: None,
+        embed: None,
+        embed_path: None,
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the

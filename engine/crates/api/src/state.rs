@@ -73,4 +73,10 @@ pub struct AppState {
     /// in production; the per-flag gating happens at the call site via
     /// `cache_ctx.config.attempts_enabled` etc.
     pub cache_ctx: Option<Arc<crate::cache::CacheCtx>>,
+    /// Embedding index over the verified-theorem corpus (Phase B). `None`
+    /// when `NASRUDIN_EMBED_ENABLED` is unset or the file isn't on disk.
+    pub embed: Option<Arc<nasrudin_embed::EmbeddingIndex>>,
+    /// Filesystem path where the index lives. Used by the
+    /// `/api/embed/index.bin` handler to stream the file directly.
+    pub embed_path: Option<std::path::PathBuf>,
 }

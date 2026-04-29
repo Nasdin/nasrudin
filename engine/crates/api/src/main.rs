@@ -157,6 +157,38 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Embedding index (Phase B). Off by default; flip on with
+    // NASRUDIN_EMBED_ENABLED=1.
+    let embed_enabled = std::env::var("NASRUDIN_EMBED_ENABLED")
+        .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let embed_path: Option<std::path::PathBuf> = if embed_enabled {
+        Some(
+            std::env::var("NASRUDIN_EMBED_OUT")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                    std::path::PathBuf::from(home).join(".nasrudin/embed/corpus.embed")
+                }),
+        )
+    } else {
+        None
+    };
+    let embed: Option<Arc<nasrudin_embed::EmbeddingIndex>> =
+        embed_path.as_ref().and_then(|p| {
+            if !p.exists() {
+                tracing::info!("embed: index not yet built at {p:?}; serving without");
+                return None;
+            }
+            match nasrudin_embed::EmbeddingIndex::open(p) {
+                Ok(i) => Some(Arc::new(i)),
+                Err(e) => {
+                    tracing::warn!("embed: open {p:?} failed: {e}");
+                    None
+                }
+            }
+        });
+
     // Channels
     let (candidates_tx, candidates_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();
     let (verified_tx, verified_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();
@@ -259,6 +291,8 @@ async fn main() -> anyhow::Result<()> {
         worker_rate_limiter,
         admin_token,
         cache_ctx: cache_ctx.clone(),
+        embed,
+        embed_path,
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
@@ -348,6 +382,15 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/events/stats", get(handlers::events::stats));
 
+    // Embed: read-only public access to the corpus index (Phase B).
+    // Workers poll checksum on heartbeat and download index.bin on
+    // mismatch — both safe to expose without auth (the index content
+    // is derived from the public corpus).
+    let embed_routes = Router::new()
+        .route("/api/embed/checksum", get(handlers::embed::checksum))
+        .route("/api/embed/index.bin", get(handlers::embed::index_bin))
+        .layer(GovernorLayer::new(rate_limit::api_standard()));
+
     // Public workers list — readable without auth (returns [] if PG unavailable).
     let workers_public = Router::new()
         .route("/api/workers", get(handlers::workers::list))
@@ -359,6 +402,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(health)
         .merge(admin)
         .merge(sse)
+        .merge(embed_routes)
         .merge(workers_public);
 
     // Add auth routes only if PostgreSQL is available

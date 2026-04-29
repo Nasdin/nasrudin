@@ -61,6 +61,7 @@ tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 clap = { version = "4", features = ["derive"] }
 rocksdb = { workspace = true }
+tokio-util = { version = "0.7", features = ["io"] }
 
 [dev-dependencies]
 tempfile = "3"
