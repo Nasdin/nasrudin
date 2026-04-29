@@ -13,6 +13,7 @@ mod m20260429_000010_billing_events;
 mod m20260429_000011_targeted_search_usage;
 mod m20260429_000012_api_usage_daily;
 mod m20260901_000009_manual_verifications;
+mod m20260901_000010_worker_reputation;
 
 pub struct Migrator;
 
@@ -33,6 +34,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260429_000011_targeted_search_usage::Migration),
             Box::new(m20260429_000012_api_usage_daily::Migration),
             Box::new(m20260901_000009_manual_verifications::Migration),
+            Box::new(m20260901_000010_worker_reputation::Migration),
         ]
     }
 }

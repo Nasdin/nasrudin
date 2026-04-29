@@ -25,6 +25,10 @@ pub async fn register(
         theorems_produced_total: NotSet,
         uptime_seconds: NotSet,
         engine_git_sha: NotSet,
+        reputation_score: NotSet, // defaults to 1.0 via the SQL DEFAULT
+        spot_check_pass_count: NotSet,
+        spot_check_fail_count: NotSet,
+        auto_revoked_at: NotSet,
     };
     model.insert(db).await
 }
@@ -192,6 +196,79 @@ pub async fn increment_contribution(
     ))
     .await?;
     Ok(())
+}
+
+/// P-Task 5: record a single lake-promotion outcome for the worker
+/// that submitted the underlying chain. Updates the EMA reputation
+/// score (0.99 × prev + 0.01 × (1 if pass else 0)) and bumps the
+/// pass/fail counters atomically. Single UPDATE so concurrent
+/// promotion drains can't race.
+///
+/// Called by the lake_promotion drain after every Verified or
+/// Rejected outcome, looking up the contributor_id from the theorem
+/// row.
+pub async fn record_spot_check(
+    db: &impl ConnectionTrait,
+    id: &str,
+    passed: bool,
+) -> Result<()> {
+    let pass_inc = if passed { 1 } else { 0 };
+    let fail_inc = if passed { 0 } else { 1 };
+    let target = if passed { 1.0_f64 } else { 0.0_f64 };
+    db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE workers \
+         SET reputation_score = (0.99::real * reputation_score) + (0.01::real * $2::real), \
+             spot_check_pass_count = spot_check_pass_count + $3, \
+             spot_check_fail_count = spot_check_fail_count + $4 \
+         WHERE id = $1",
+        [
+            id.into(),
+            target.into(),
+            (pass_inc as i32).into(),
+            (fail_inc as i32).into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Mark a worker auto-revoked due to repeated lake-build failures.
+/// Stamps `auto_revoked_at = NOW()`. The `WorkerAuth` extractor checks
+/// `auto_revoked_at IS NULL` (alongside `revoked_at` on the api_keys
+/// row) before accepting a bearer.
+pub async fn auto_revoke(db: &impl ConnectionTrait, id: &str, reason: &str) -> Result<()> {
+    let now: chrono::DateTime<chrono::FixedOffset> = Utc::now().into();
+    db.execute_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE workers SET auto_revoked_at = $1, status = 'disconnected' \
+         WHERE id = $2 AND auto_revoked_at IS NULL",
+        [now.into(), id.into()],
+    ))
+    .await?;
+    tracing::warn!(worker_id = %id, reason = %reason, "worker auto-revoked");
+    Ok(())
+}
+
+/// Look up a worker's current reputation score. Used by the ingest
+/// gate (P-Task 5) — wrap in an in-process LRU cache with 5-min TTL
+/// at the call site so a hot worker doesn't pay one PG round-trip per
+/// theorem submission.
+pub async fn get_reputation(db: &impl ConnectionTrait, id: &str) -> Result<Option<f32>> {
+    use sea_orm::FromQueryResult;
+    #[derive(FromQueryResult)]
+    struct R {
+        reputation_score: f32,
+    }
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT reputation_score FROM workers WHERE id = $1",
+        [id.into()],
+    );
+    Ok(R::find_by_statement(stmt)
+        .one(db)
+        .await?
+        .map(|r| r.reputation_score))
 }
 
 /// List all registered workers ordered by `theorems_contributed DESC` — the
