@@ -15,6 +15,10 @@ path = "src/main.rs"
 name = "backfill_existing_lean"
 path = "src/bin/backfill_existing_lean.rs"
 
+[[bin]]
+name = "cache-stats"
+path = "src/bin/cache_stats.rs"
+
 [dependencies]
 nasrudin-core = { path = "../core" }
 nasrudin-rocks = { path = "../rocks" }
@@ -50,6 +54,8 @@ regex = "1"
 walkdir = "2"
 tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+clap = { version = "4", features = ["derive"] }
+rocksdb = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
