@@ -18,6 +18,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 bloomfilter = { workspace = true }
 chrono = { workspace = true }
+uuid = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 instant-distance = { workspace = true }
 bincode = "1"

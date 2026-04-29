@@ -18,6 +18,7 @@ pub mod island;
 pub mod mutation;
 pub mod beam;
 pub mod population;
+pub mod research_client;
 pub mod selection;
 pub mod target;
 
