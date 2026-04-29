@@ -13,6 +13,7 @@ pub mod format;
 pub mod index;
 pub mod model;
 
+pub use builder::IndexBuilder;
 pub use checksum::{compute_index_checksum, IndexChecksum};
 pub use format::{IndexHeader, EMBED_DIM, INDEX_MAGIC, INDEX_VERSION};
 pub use index::{EmbeddingIndex, NearestHit};
