@@ -114,3 +114,80 @@ impl LeanVerifier {
         }
     }
 }
+
+use chrono::Duration;
+use nasrudin_rocks::attempts_cache::{AttemptOutcome, AttemptsCache};
+
+/// Cache-backed wrapper around [`LeanVerifier::verify_file`].
+///
+/// On cache hit (within TTL), returns the cached outcome translated back
+/// to a [`LeanVerifyResult`]. On miss, calls the underlying verifier,
+/// caches the outcome, and returns the verifier's original result.
+///
+/// `cache_key` should be `AttemptsCache::make_key(canonical_hash, axiom_set_hash)`
+/// computed by the caller — the verifier doesn't know what axioms are in scope.
+///
+/// `ttl_days` controls how long a cached outcome is considered fresh. Records
+/// older than this are treated as cache misses (the underlying verifier runs
+/// again and overwrites the row).
+pub fn verify_with_cache(
+    verifier: &LeanVerifier,
+    cache: &AttemptsCache,
+    cache_key: &[u8; 16],
+    lean_version: &str,
+    worker_id: &str,
+    lean_content: &str,
+    module_path: &str,
+    ttl_days: i64,
+) -> LeanVerifyResult {
+    let max_age = Duration::days(ttl_days);
+    let result = cache.lookup_or_compute(cache_key, max_age, worker_id, lean_version, || {
+        match verifier.verify_file(lean_content, module_path) {
+            LeanVerifyResult::Success => AttemptOutcome::Verified {
+                // The caller doesn't pass canonical_hash separately; downstream
+                // tasks that need the theorem id can recompute it from the
+                // verified statement. Leave zeros here as a sentinel.
+                theorem_id: [0u8; 8],
+                tactic: String::new(),
+            },
+            LeanVerifyResult::Failed { stderr } => AttemptOutcome::RejectedTypeError {
+                msg: truncate(&stderr, 256),
+            },
+            LeanVerifyResult::ProcessError { message } => AttemptOutcome::RejectedTypeError {
+                msg: truncate(&message, 256),
+            },
+        }
+    });
+
+    match result {
+        Ok(record) => match record.outcome {
+            AttemptOutcome::Verified { .. } => LeanVerifyResult::Success,
+            AttemptOutcome::RejectedTypeError { msg } => LeanVerifyResult::Failed { stderr: msg },
+            AttemptOutcome::RejectedTimeout => LeanVerifyResult::Failed {
+                stderr: "timeout".into(),
+            },
+            AttemptOutcome::RejectedTrivial { reason } => LeanVerifyResult::Failed {
+                stderr: reason,
+            },
+            AttemptOutcome::Pending => LeanVerifyResult::ProcessError {
+                message: "pending".into(),
+            },
+        },
+        Err(e) => LeanVerifyResult::ProcessError {
+            message: format!("cache: {e}"),
+        },
+    }
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        // Truncate at character boundary — find the last char boundary at-or-before `n`.
+        let mut idx = n;
+        while idx > 0 && !s.is_char_boundary(idx) {
+            idx -= 1;
+        }
+        format!("{}…", &s[..idx])
+    }
+}

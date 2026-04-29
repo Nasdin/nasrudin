@@ -110,6 +110,39 @@ impl AttemptsCache {
             _ => Ok(None),
         }
     }
+
+    /// Lookup-or-compute: on cache hit (within TTL), return the cached record.
+    /// On miss, run `compute()`, build a record stamped with now / version /
+    /// elapsed / worker, persist it, and return it.
+    ///
+    /// Caller is responsible for building the 16-byte key via `make_key`.
+    pub fn lookup_or_compute<F>(
+        &self,
+        key: &[u8; 16],
+        max_age: Duration,
+        attempted_by: &str,
+        lean_version: &str,
+        compute: F,
+    ) -> Result<AttemptRecord>
+    where
+        F: FnOnce() -> AttemptOutcome,
+    {
+        if let Some(hit) = self.get_with_ttl(key, max_age)? {
+            return Ok(hit);
+        }
+        let started = std::time::Instant::now();
+        let outcome = compute();
+        let elapsed_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+        let record = AttemptRecord {
+            outcome,
+            lean_version: lean_version.to_string(),
+            timestamp: Utc::now(),
+            attempted_by: attempted_by.to_string(),
+            elapsed_ms,
+        };
+        self.put(key, &record)?;
+        Ok(record)
+    }
 }
 
 #[cfg(test)]
@@ -190,5 +223,32 @@ mod tests {
         cache.put(&key, &fresh).unwrap();
         let got = cache.get_with_ttl(&key, Duration::days(30)).unwrap();
         assert!(got.is_some(), "10-second-old record should pass a 30-day TTL");
+    }
+
+    #[test]
+    fn lookup_or_compute_misses_then_hits() {
+        let (cache, _dir) = fresh_cache();
+        let key = [3u8; 16];
+        let mut compute_calls = 0;
+        let max_age = Duration::days(30);
+
+        let _r1 = cache
+            .lookup_or_compute(&key, max_age, "w1", "4.27.0", || {
+                compute_calls += 1;
+                AttemptOutcome::RejectedTimeout
+            })
+            .unwrap();
+
+        let _r2 = cache
+            .lookup_or_compute(&key, max_age, "w1", "4.27.0", || {
+                compute_calls += 1;
+                AttemptOutcome::RejectedTimeout
+            })
+            .unwrap();
+
+        assert_eq!(
+            compute_calls, 1,
+            "second call should hit cache, not recompute"
+        );
     }
 }
