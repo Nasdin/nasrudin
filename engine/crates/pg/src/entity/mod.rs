@@ -1,4 +1,6 @@
 pub mod api_keys;
+pub mod conjecture_events;
+pub mod conjecture_jobs;
 pub mod saved_searches;
 pub mod sessions;
 pub mod theorems;
