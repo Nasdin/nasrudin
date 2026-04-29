@@ -5,6 +5,7 @@ const NAV = [
   { to: '/search', label: 'Search', key: 'search' },
   { to: '/browse', label: 'Browse corpus', key: 'browse' },
   { to: '/library', label: 'My library', key: 'library' },
+  { to: '/conjecture', label: 'Conjecture', key: 'conjecture' },
   { to: '/workers', label: 'Workers', key: 'workers' },
   { to: '/leaderboard', label: 'Contributors', key: 'leader' },
   { to: '/api-docs', label: 'API & data', key: 'api' },
