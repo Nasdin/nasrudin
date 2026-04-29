@@ -11,6 +11,8 @@ use std::collections::HashMap;
 
 pub mod attempts_cache;
 pub use attempts_cache::{AttemptOutcome, AttemptRecord, AttemptsCache};
+pub mod tactic_priors;
+pub use tactic_priors::{TacticPriorRecord, TacticPriorsCache, TacticSuccess};
 
 /// Column family names used by the theorem database.
 const CF_THEOREMS: &str = "theorems";
