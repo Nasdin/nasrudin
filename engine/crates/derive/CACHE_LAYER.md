@@ -39,12 +39,55 @@ rate over a workload (run before, run a workload, run after, diff).
 Full design: `docs/superpowers/specs/2026-04-28-llm-guided-search-design.md` §3.
 Implementation plan: `docs/superpowers/plans/2026-04-29-llm-guided-search-phase-a-caches.md`.
 
-## Phase A.5 follow-ups (not yet wired)
+## Phase A.5 — Wiring (2026-04-29)
 
-- Worker GA loop integration: feature-flag-guarded calls into `verify_with_cache`
-  from `discover_emc2.rs` and the verification worker pool.
-- Persistent-Lean Lean-side script: today the script is a `Ping`-only stub;
-  full elaboration loop is owned by the prover team.
-- `Fatal` response → drain inflight: when `PersistentElaborator`'s reader
-  task sees `Fatal`, currently it logs but doesn't release pending oneshots;
-  callers wait `request_timeout` (30s default).
+The Phase A caches are now wired into both the GA hot path and the
+server's reverify queue. With `NASRUDIN_CACHE_ATTEMPTS=1`,
+`NASRUDIN_CACHE_TACTIC_PRIORS=1`, and `NASRUDIN_CACHE_PERSISTENT_LEAN=1`
+set on the API server, verification skips redundant `lake build` calls.
+
+### Closed prep items
+
+| Item | Status |
+|---|---|
+| `axiom_set_hash` + `axiom_id_from_name` in `nasrudin_core::axiom_set` | Done |
+| `AttemptsCache::on_existing_db` (shared `Arc<DB>`) | Done |
+| `TacticPriorsCache::on_existing_db` (shared `Arc<DB>`) | Done |
+| `verify_with_cache` 8-arg → `VerifyWithCacheCtx` struct | Done |
+| `PersistentElaborator` Fatal → drain inflight oneshots | Done |
+| `record_success` production caller | Wired in `verify_chain_cached` |
+
+### Wiring map
+
+| Path | Site | Behaviour when flag is on |
+|---|---|---|
+| In-process / external GA | `nasrudin_ga::chain_engine::run_discovery` → `chain_ga::verify_chain_cached` | Skips `lake build` on attempts-cache hit; records `tactic_priors` on success |
+| API reverify queue | `physics_api::reverify::ReverifyQueue::process_one` → `LakeBuilder::verify_cached` | Same skip semantics on the server-side regen + worker-submitted Lean paths |
+| Persistent Lean | `nasrudin_lean_bridge::PersistentElaborator` | A-path verification reuses one long-lived process; Fatal drains all pending oneshots |
+
+### Constructing `CacheCtx`
+
+The API server builds a single `CacheCtx` at boot via
+`physics_api::cache::CacheCtx::build(&db)`. It carries:
+
+- `config: CacheConfig` — read from env at boot.
+- `bundle: CacheBundle` — `Arc<AttemptsCache>` + `Arc<TacticPriorsCache>` + `Arc<CacheStats>` against `db.shared_db()`, plus `lean_version`, `worker_id`, `ttl_days`.
+
+External workers build their own `CacheBundle` and pass it into
+`DiscoveryConfig.cache_ctx`. `CacheBundle` is `Clone` (refcount bumps);
+each verify call gets its own clone via `config.cache_ctx.as_ref()`.
+
+### Reading stats
+
+```bash
+cargo run --release --bin cache_stats -- --db ./data/theorems.db
+```
+
+Reports per-CF row counts. Live `CacheStats` counters surface via the
+existing `/api/stats` endpoint once `cache_ctx` is wired into the
+handler (Phase A.6 if requested by ops).
+
+### Disabling
+
+Unset the env vars (or set to `0`/`false`/`no`). All call sites fall
+back to direct verification with no behavioural drift.
