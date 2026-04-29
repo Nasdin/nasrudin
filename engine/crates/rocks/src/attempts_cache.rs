@@ -55,11 +55,11 @@ pub struct AttemptRecord {
 /// RocksDB wrapper for the `attempts` column family.
 ///
 /// In tests, opens a fresh standalone RocksDB containing only the
-/// `attempts` CF (via [`AttemptsCache::open`]). In production, the cache
-/// is intended to share the engine's main `TheoremDb` instance — that
-/// integration lives in Phase A.5 (out of scope for this module).
+/// `attempts` CF (via [`AttemptsCache::open`]). In production, shares
+/// the engine's main `TheoremDb` instance via
+/// [`AttemptsCache::on_existing_db`] (Phase A.5).
 pub struct AttemptsCache {
-    db: DB,
+    db: std::sync::Arc<DB>,
 }
 
 impl AttemptsCache {
@@ -72,6 +72,22 @@ impl AttemptsCache {
         let cf = ColumnFamilyDescriptor::new(CF_ATTEMPTS, Options::default());
         let db = DB::open_cf_descriptors(&opts, path, vec![cf])
             .context("open attempts cache db")?;
+        Ok(Self {
+            db: std::sync::Arc::new(db),
+        })
+    }
+
+    /// Construct an `AttemptsCache` backed by an existing RocksDB
+    /// instance — typically the engine's main `TheoremDb`. The caller
+    /// must already have the `attempts` CF registered (it's in
+    /// [`crate::ALL_CFS`]); we just take a borrowed clone of the
+    /// shared handle.
+    pub fn on_existing_db(db: std::sync::Arc<DB>) -> Result<Self> {
+        if db.cf_handle(CF_ATTEMPTS).is_none() {
+            anyhow::bail!(
+                "attempts CF missing on shared DB; did you open via TheoremDb::new?"
+            );
+        }
         Ok(Self { db })
     }
 
@@ -258,6 +274,25 @@ mod tests {
             compute_calls, 1,
             "second call should hit cache, not recompute"
         );
+    }
+
+    #[test]
+    fn on_existing_db_shares_storage_with_main_db() {
+        use crate::TheoremDb;
+        let dir = tempdir().unwrap();
+        let main = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+        let cache = AttemptsCache::on_existing_db(main.shared_db()).unwrap();
+        let key = [7u8; 16];
+        let record = AttemptRecord {
+            outcome: AttemptOutcome::RejectedTimeout,
+            lean_version: "4.27.0".into(),
+            timestamp: Utc::now(),
+            attempted_by: "shared".into(),
+            elapsed_ms: 1,
+        };
+        cache.put(&key, &record).unwrap();
+        let cache2 = AttemptsCache::on_existing_db(main.shared_db()).unwrap();
+        assert!(cache2.get(&key).unwrap().is_some());
     }
 
     #[test]

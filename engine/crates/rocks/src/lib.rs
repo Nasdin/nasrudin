@@ -79,7 +79,7 @@ pub struct LineageRecord {
 
 /// RocksDB-backed theorem database.
 pub struct TheoremDb {
-    db: DB,
+    db: std::sync::Arc<DB>,
 }
 
 impl TheoremDb {
@@ -110,7 +110,17 @@ impl TheoremDb {
         let db = DB::open_cf_descriptors(&db_opts, path, cf_descriptors)
             .context("Failed to open RocksDB")?;
 
-        Ok(Self { db })
+        Ok(Self {
+            db: std::sync::Arc::new(db),
+        })
+    }
+
+    /// Borrowed clone of the underlying RocksDB handle. Used by cache
+    /// wrappers (`AttemptsCache::on_existing_db`,
+    /// `TacticPriorsCache::on_existing_db`) to share the engine's main
+    /// DB instance instead of opening a second standalone database.
+    pub fn shared_db(&self) -> std::sync::Arc<DB> {
+        std::sync::Arc::clone(&self.db)
     }
 
     // ── Theorem CRUD ──────────────────────────────────────────────────
