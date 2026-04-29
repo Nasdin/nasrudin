@@ -18,4 +18,4 @@ pub use openai::OpenAiProvider;
 pub use provider::{
     CompletionRequest, CompletionResponse, LlmError, LlmProvider, ResponseFormat, TokenChunk,
 };
-// Registry re-export lands in Task 6.
+pub use registry::Registry;
