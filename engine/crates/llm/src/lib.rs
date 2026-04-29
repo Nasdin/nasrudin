@@ -11,8 +11,8 @@ pub mod openai;
 pub mod provider;
 pub mod registry;
 
+pub use encryption::{decrypt, encrypt, key_hint, EncryptedKey};
 pub use provider::{
     CompletionRequest, CompletionResponse, LlmError, LlmProvider, ResponseFormat, TokenChunk,
 };
-// The provider impls + Registry + encryption helpers are re-exported
-// as their modules land. See subsequent tasks.
+// Provider impls + Registry are re-exported as their modules land.
