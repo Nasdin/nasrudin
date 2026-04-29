@@ -117,37 +117,47 @@ impl LeanVerifier {
     }
 }
 
+/// Borrowed bundle of identity + caches passed to [`verify_with_cache`].
+///
+/// Holding all of these on one struct keeps the call site tidy at every
+/// production verification path. All fields are borrowed for the
+/// duration of the call — caller owns the [`AttemptsCache`] and
+/// [`LeanVerifier`].
+pub struct VerifyWithCacheCtx<'a> {
+    pub verifier: &'a LeanVerifier,
+    pub cache: &'a AttemptsCache,
+    pub cache_key: &'a [u8; 16],
+    pub lean_version: &'a str,
+    pub worker_id: &'a str,
+    /// How many days a cached outcome is considered fresh. Records older
+    /// than this are treated as cache misses.
+    pub ttl_days: i64,
+}
+
 /// Cache-backed wrapper around [`LeanVerifier::verify_file`].
 ///
-/// On cache hit (within TTL), returns the cached outcome translated back
-/// to a [`LeanVerifyResult`]. On miss, calls the underlying verifier,
-/// caches the outcome, and returns the verifier's original result.
+/// On cache hit (within `ttl_days`), returns the cached outcome
+/// translated back to a [`LeanVerifyResult`]. On miss, calls the
+/// underlying verifier, caches the outcome (skipping `ProcessError` —
+/// transient), and returns the verifier's original result.
 ///
-/// `cache_key` should be `AttemptsCache::make_key(canonical_hash, axiom_set_hash)`
-/// computed by the caller — the verifier doesn't know what axioms are in scope.
+/// `ctx.cache_key` should be `AttemptsCache::make_key(canonical_hash, axiom_set_hash)`
+/// computed by the caller — the verifier doesn't know what axioms are
+/// in scope.
 ///
-/// `ttl_days` controls how long a cached outcome is considered fresh. Records
-/// older than this are treated as cache misses (the underlying verifier runs
-/// again and overwrites the row).
-///
-/// **Note**: when a cached `Verified` outcome is returned, the underlying
-/// `theorem_id` field is filled with zeros (we don't know it at this layer).
-/// Callers that need the canonical hash of the verified theorem must
-/// recompute it from the source.
+/// **Note**: when a cached `Verified` outcome is returned, the
+/// underlying `theorem_id` field is filled with zeros (we don't know
+/// it at this layer). Callers that need the canonical hash of the
+/// verified theorem must recompute it from the source.
 pub fn verify_with_cache(
-    verifier: &LeanVerifier,
-    cache: &AttemptsCache,
-    cache_key: &[u8; 16],
-    lean_version: &str,
-    worker_id: &str,
+    ctx: &VerifyWithCacheCtx<'_>,
     lean_content: &str,
     module_path: &str,
-    ttl_days: i64,
 ) -> LeanVerifyResult {
-    let max_age = Duration::days(ttl_days);
+    let max_age = Duration::days(ctx.ttl_days);
 
     // Cache hit fast-path: if there's a fresh record, translate it back.
-    match cache.get_with_ttl(cache_key, max_age) {
+    match ctx.cache.get_with_ttl(ctx.cache_key, max_age) {
         Ok(Some(record)) => {
             return match record.outcome {
                 AttemptOutcome::Verified { .. } => LeanVerifyResult::Success,
@@ -161,30 +171,24 @@ pub fn verify_with_cache(
                     LeanVerifyResult::Failed { stderr: reason }
                 }
                 AttemptOutcome::Pending => {
-                    // Pending records are written by other code paths (lease-TTL
-                    // mid-attempt). Treat as a cache miss and re-run the verifier
-                    // without persisting (Phase A.5 will own the lease semantics).
-                    verifier.verify_file(lean_content, module_path)
+                    // Pending records are written by other code paths
+                    // (lease-TTL mid-attempt). Treat as a cache miss and
+                    // re-run the verifier without persisting.
+                    ctx.verifier.verify_file(lean_content, module_path)
                 }
             };
         }
-        Ok(None) => {} // miss — fall through and run the verifier
+        Ok(None) => {}
         Err(e) => {
-            // Cache read failure is not a verification result; log and run
-            // the verifier directly without trying to persist.
             tracing::warn!("attempts cache get failed: {e}");
-            return verifier.verify_file(lean_content, module_path);
+            return ctx.verifier.verify_file(lean_content, module_path);
         }
     }
 
-    // Miss: run the verifier.
     let started = std::time::Instant::now();
-    let raw = verifier.verify_file(lean_content, module_path);
+    let raw = ctx.verifier.verify_file(lean_content, module_path);
     let elapsed_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
 
-    // Map the result to a cacheable outcome — but ONLY if it's a stable
-    // signal. Process errors are transient (different machine might
-    // succeed) so we skip the cache write and return the raw result.
     let outcome = match &raw {
         LeanVerifyResult::Success => AttemptOutcome::Verified {
             theorem_id: [0u8; 8],
@@ -201,12 +205,12 @@ pub fn verify_with_cache(
 
     let record = AttemptRecord {
         outcome,
-        lean_version: lean_version.to_string(),
+        lean_version: ctx.lean_version.to_string(),
         timestamp: chrono::Utc::now(),
-        attempted_by: worker_id.to_string(),
+        attempted_by: ctx.worker_id.to_string(),
         elapsed_ms,
     };
-    if let Err(e) = cache.put(cache_key, &record) {
+    if let Err(e) = ctx.cache.put(ctx.cache_key, &record) {
         tracing::warn!("attempts cache put failed: {e}");
     }
     raw
@@ -225,5 +229,52 @@ fn truncate(s: &str, n: usize) -> String {
             idx -= 1;
         }
         format!("{}…", &s[..idx])
+    }
+}
+
+#[cfg(test)]
+mod ctx_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn verify_with_cache_ctx_constructs_with_borrowed_fields() {
+        let dir = tempdir().unwrap();
+        let cache = AttemptsCache::open(dir.path().to_str().unwrap()).unwrap();
+        let key = [0u8; 16];
+        let verifier = LeanVerifier::new("/nonexistent");
+        let ctx = VerifyWithCacheCtx {
+            verifier: &verifier,
+            cache: &cache,
+            cache_key: &key,
+            lean_version: "4.27.0",
+            worker_id: "ctx-test",
+            ttl_days: 30,
+        };
+        assert_eq!(ctx.lean_version, "4.27.0");
+        assert_eq!(ctx.ttl_days, 30);
+    }
+
+    #[test]
+    fn process_error_is_not_cached() {
+        // Verifier pointing at /nonexistent → ProcessError. Cache must
+        // stay empty after the call (transient errors don't persist).
+        let dir = tempdir().unwrap();
+        let cache = AttemptsCache::open(dir.path().to_str().unwrap()).unwrap();
+        let key = [0xef; 16];
+        let verifier = LeanVerifier::new("/nonexistent");
+        let ctx = VerifyWithCacheCtx {
+            verifier: &verifier,
+            cache: &cache,
+            cache_key: &key,
+            lean_version: "4.27.0",
+            worker_id: "test",
+            ttl_days: 30,
+        };
+        let _ = verify_with_cache(&ctx, "stub source", "Stub.Module");
+        assert!(
+            cache.get(&key).unwrap().is_none(),
+            "ProcessError must not be cached"
+        );
     }
 }
