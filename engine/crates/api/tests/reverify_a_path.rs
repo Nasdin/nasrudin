@@ -97,7 +97,8 @@ async fn b_path_verified_flips_status_and_increments_contributor() {
         std::env::temp_dir(),
         1,
     ));
-    let axiom_store = Arc::new(nasrudin_derive::AxiomStore::new());
+    let axiom_store =
+        physics_api::state::SharedAxiomStore::new(nasrudin_derive::AxiomStore::new());
     let (tx, mut rx) = tokio::sync::broadcast::channel::<DiscoveryEvent>(16);
 
     // 3. Insert a Pending theorem with a trivially-true proof. The B-path

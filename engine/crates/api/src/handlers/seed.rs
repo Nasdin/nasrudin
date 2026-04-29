@@ -56,8 +56,8 @@ pub async fn seed(
     // ("SpecialRelativity") so callers can use whichever convention their
     // local DSL prefers.
     let domain_filter = q.domain.clone();
-    let axioms: Vec<serde_json::Value> = state
-        .axiom_store
+    let store = state.axiom_store.load();
+    let axioms: Vec<serde_json::Value> = store
         .iter()
         .filter(|a| {
             domain_filter.as_ref().is_none_or(|d| {

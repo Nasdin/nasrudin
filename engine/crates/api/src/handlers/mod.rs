@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod api_keys;
 pub mod events;
 pub mod ingest;

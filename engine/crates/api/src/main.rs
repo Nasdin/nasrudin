@@ -3,7 +3,7 @@
 //! Full daemon: REST endpoints, SSE discovery stream, GA evolution thread,
 //! and Lean4 verification workers.
 
-use physics_api::{auth, handlers, rate_limit, state::AppState};
+use physics_api::{auth, handlers, rate_limit, state::{AppState, SharedAxiomStore}};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -127,7 +127,17 @@ async fn main() -> anyhow::Result<()> {
     nasrudin_derive::no_cheat_audit::audit_or_panic(&axiom_store, "physics-api boot");
     tracing::info!("No-cheat audit passed: 0 forbidden headlines in AxiomStore");
 
-    let axiom_store = Arc::new(axiom_store);
+    let axiom_store = SharedAxiomStore::new(axiom_store);
+
+    // Admin token for `/api/admin/*` endpoints (corpus reload).
+    // When unset, admin endpoints return 503 — production deployments
+    // must set this in the systemd unit / .env.
+    let admin_token = std::env::var("ADMIN_TOKEN").ok().filter(|s| !s.is_empty());
+    if admin_token.is_some() {
+        tracing::info!("ADMIN_TOKEN configured — admin endpoints enabled");
+    } else {
+        tracing::warn!("ADMIN_TOKEN unset — /api/admin/* endpoints disabled");
+    }
 
     // Channels
     let (candidates_tx, candidates_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();
@@ -154,7 +164,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("In-process GA enabled (NASRUDIN_API_RUN_INPROC_GA=1)");
         let ga_config = GaConfig::default();
         let ga_db = Arc::clone(&db);
-        let ga_axiom_store = (*axiom_store).clone();
+        let ga_axiom_store = (*axiom_store.load()).clone();
         let ga_discovery_tx = discovery_tx.clone();
         let ga_shutdown = Arc::clone(&shutdown);
         let ga_status_ref = Arc::clone(&ga_status);
@@ -210,7 +220,7 @@ async fn main() -> anyhow::Result<()> {
             rocks: Arc::clone(&db),
             pg: pg_conn.clone(),
             lake: Arc::clone(&lake),
-            axiom_store: Arc::clone(&axiom_store),
+            axiom_store: axiom_store.clone(),
             discovery_tx: reverify_event_tx.clone(),
         })
     });
@@ -228,6 +238,7 @@ async fn main() -> anyhow::Result<()> {
         reverify_event_tx,
         reverify,
         worker_rate_limiter,
+        admin_token,
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
@@ -299,6 +310,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/stats", get(stats))
         .layer(GovernorLayer::new(rate_limit::health_relaxed()));
 
+    // Admin: corpus reload (auth-checked inside the handler against
+    // ADMIN_TOKEN). Same rate-limit bucket as auth-strict — a stolen
+    // bearer token is the threat, brute-force is.
+    let admin = Router::new()
+        .route(
+            "/api/admin/reload_corpus",
+            post(handlers::admin::reload_corpus),
+        )
+        .layer(GovernorLayer::new(rate_limit::auth_strict()));
+
     // SSE: no rate limit (long-lived connection)
     let sse = Router::new()
         .route(
@@ -316,6 +337,7 @@ async fn main() -> anyhow::Result<()> {
     let mut app = Router::new()
         .merge(api)
         .merge(health)
+        .merge(admin)
         .merge(sse)
         .merge(workers_public);
 
@@ -681,10 +703,10 @@ async fn list_axioms(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AxiomParams>,
 ) -> Json<serde_json::Value> {
+    let store = state.axiom_store.load();
     let axioms: Vec<serde_json::Value> = if let Some(ref domain_str) = params.domain {
         match parse_domain(domain_str) {
-            Some(domain) => state
-                .axiom_store
+            Some(domain) => store
                 .by_domain(&domain)
                 .into_iter()
                 .map(|a| {
@@ -698,11 +720,10 @@ async fn list_axioms(
             None => vec![],
         }
     } else {
-        state
-            .axiom_store
+        store
             .names()
             .into_iter()
-            .filter_map(|name| state.axiom_store.get(name))
+            .filter_map(|name| store.get(name))
             .map(|a| {
                 serde_json::json!({
                     "name": a.name,

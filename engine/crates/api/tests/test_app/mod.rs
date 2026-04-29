@@ -116,7 +116,7 @@ pub async fn build() -> Option<TestApp> {
         std::env::temp_dir(),
         1,
     ));
-    let axiom_store = Arc::new(AxiomStore::new());
+    let axiom_store = physics_api::state::SharedAxiomStore::new(AxiomStore::new());
 
     let state = Arc::new(AppState {
         db: rocks,
@@ -128,6 +128,7 @@ pub async fn build() -> Option<TestApp> {
         reverify_event_tx,
         reverify: None,
         worker_rate_limiter: Arc::new(WorkerRateLimiter::new(60)),
+        admin_token: None,
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the

@@ -1,15 +1,46 @@
 //! Shared application state.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use nasrudin_derive::AxiomStore;
 use nasrudin_ga::{DiscoveryEvent, GaStatusSnapshot};
 use nasrudin_rocks::TheoremDb;
 
+/// Hot-swappable AxiomStore handle.
+///
+/// `Arc<RwLock<Arc<AxiomStore>>>` under the hood: cheap snapshot on read
+/// (clone the inner Arc, drop the lock immediately), atomic replace on
+/// write (`POST /api/admin/reload_corpus`). Workers continue holding the
+/// old `Arc` for the duration of an in-flight chain replay; the next
+/// `.load()` returns the freshly-loaded store.
+#[derive(Clone)]
+pub struct SharedAxiomStore(Arc<RwLock<Arc<AxiomStore>>>);
+
+impl SharedAxiomStore {
+    pub fn new(store: AxiomStore) -> Self {
+        Self(Arc::new(RwLock::new(Arc::new(store))))
+    }
+
+    /// Take a snapshot. The returned `Arc` is independent — even if the
+    /// store is replaced, the caller's reference stays valid.
+    pub fn load(&self) -> Arc<AxiomStore> {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Atomically replace the active store.
+    pub fn replace(&self, store: AxiomStore) {
+        let mut guard = self.0.write().unwrap_or_else(|e| e.into_inner());
+        *guard = Arc::new(store);
+    }
+}
+
 pub struct AppState {
     pub db: Arc<TheoremDb>,
     pub pg: Option<nasrudin_pg::sea_orm::DatabaseConnection>,
-    pub axiom_store: Arc<AxiomStore>,
+    /// Hot-swappable AxiomStore. Read via `.load()`; replaced atomically
+    /// by `POST /api/admin/reload_corpus` after a fresh
+    /// `lake exe extract` run.
+    pub axiom_store: SharedAxiomStore,
     /// GA-side discovery channel — broadcasts [`nasrudin_ga::DiscoveryEvent`]
     /// to the `/api/events/discoveries` SSE stream.
     pub discovery_tx: tokio::sync::broadcast::Sender<DiscoveryEvent>,
@@ -32,4 +63,8 @@ pub struct AppState {
     /// the `/api/ingest` handler (Phase 9 Task 4.2) at one token per
     /// submitted theorem; default 60/min per worker.
     pub worker_rate_limiter: Arc<crate::rate_limit::WorkerRateLimiter>,
+    /// Shared secret for `/api/admin/*` endpoints (corpus reload, etc.).
+    /// Set via `ADMIN_TOKEN` env var. When `None`, admin endpoints are
+    /// disabled (return 503).
+    pub admin_token: Option<String>,
 }

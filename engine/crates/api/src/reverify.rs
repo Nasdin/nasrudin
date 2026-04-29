@@ -36,7 +36,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use nasrudin_derive::{
-    AxiomStore, Chain, DerivationContext, RuleStep,
+    Chain, DerivationContext, RuleStep,
     lean_emitter::{LeanEmitConfig, emit_lean_file},
     strategies::DerivationStrategy,
 };
@@ -57,7 +57,7 @@ pub struct ReverifyQueue {
     pub rocks: Arc<TheoremDb>,
     pub pg: DatabaseConnection,
     pub lake: Arc<LakeBuilder>,
-    pub axiom_store: Arc<AxiomStore>,
+    pub axiom_store: crate::state::SharedAxiomStore,
     pub discovery_tx: broadcast::Sender<DiscoveryEvent>,
 }
 
@@ -209,7 +209,8 @@ impl ReverifyQueue {
 
         let chain = Chain(steps);
         let mut ctx = DerivationContext::new();
-        let final_expr = match chain.execute(&self.axiom_store, &mut ctx) {
+        let store = self.axiom_store.load();
+        let final_expr = match chain.execute(&store, &mut ctx) {
             Ok(e) => e,
             Err(e) => return ChainCheck::Invalid(format!("replay: {e}")),
         };
