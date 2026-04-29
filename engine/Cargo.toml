@@ -10,6 +10,7 @@ members = [
     "crates/mcp",
     "crates/importer",
     "crates/embed",
+    "crates/llm",
 ]
 resolver = "2"
 
@@ -89,3 +90,9 @@ bytes = "1.11"
 fastembed = "4"
 instant-distance = { version = "0.6", features = ["with-serde"] }
 memmap2 = "0.9"
+
+# LLM router (Phase C)
+aes-gcm = "0.10"
+rand_core = { version = "0.6", features = ["std"] }
+async-trait = "0.1"
+futures = "0.3"
