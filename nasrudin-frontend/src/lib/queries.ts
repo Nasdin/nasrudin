@@ -3,6 +3,7 @@ import { apiFetch, isApiError } from './api';
 import type {
   ApiKeySummary,
   AuthUser,
+  LlmKeysListResponse,
   MeProfile,
   MeStats,
   NewApiKey,
@@ -191,6 +192,44 @@ export function useSearch() {
         method: 'POST',
         body: JSON.stringify(req),
       }),
+  });
+}
+
+// --- /api/me/llm-keys ---
+
+export const llmKeysQueryKey = ['llm-keys'] as const;
+
+export function useLlmKeys() {
+  return useQuery<LlmKeysListResponse>({
+    queryKey: llmKeysQueryKey,
+    queryFn: () => apiFetch<LlmKeysListResponse>('/api/me/llm-keys'),
+  });
+}
+
+export function useSetLlmKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { provider: string; key: string }) =>
+      apiFetch<{ provider: string; key_hint: string }>('/api/me/llm-keys', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: llmKeysQueryKey }),
+  });
+}
+
+export function useRevokeLlmKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (provider: string) => {
+      try {
+        await apiFetch<unknown>(`/api/me/llm-keys/${provider}`, { method: 'DELETE' });
+      } catch (e) {
+        if (isApiError(e) && e.status === 404) return; // already gone
+        throw e;
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: llmKeysQueryKey }),
   });
 }
 

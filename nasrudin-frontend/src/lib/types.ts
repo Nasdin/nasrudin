@@ -200,3 +200,22 @@ export interface SearchResponse {
   parse_error: string | null;
   applied_filters: SearchFilters;
 }
+
+// --- /api/me/llm-keys ---
+
+export type LlmProviderName = 'anthropic' | 'openai' | 'ollama';
+
+export interface LlmKeySummary {
+  /** Stable provider identifier; one of the three first-class names. */
+  provider: string;
+  /** Last 4 plaintext chars; never the full key. */
+  key_hint: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface LlmKeysListResponse {
+  keys: LlmKeySummary[];
+  /** Provider names the server's `Registry` knows about. */
+  known_providers: string[];
+}

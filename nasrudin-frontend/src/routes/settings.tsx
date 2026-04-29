@@ -2,6 +2,7 @@ import { createFileRoute, redirect } from '@tanstack/react-router';
 import { type FormEvent, useEffect, useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { LlmKeysSection } from '~/components/settings/LlmKeysSection';
 import { isApiError } from '~/lib/api';
 import { useMe, useMeProfile, useUpdateMeProfile } from '~/lib/queries';
 
@@ -196,6 +197,8 @@ function SettingsPage() {
             </button>
           </div>
         </form>
+
+        <LlmKeysSection />
       </div>
       <AppFooter />
     </div>
