@@ -18,3 +18,4 @@ hex = { workspace = true }
 nasrudin-lean-bridge = { path = "../lean-bridge" }
 serial_test = "3"
 tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "process", "io-util", "sync"] }
