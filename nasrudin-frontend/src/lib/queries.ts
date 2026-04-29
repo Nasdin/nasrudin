@@ -3,6 +3,10 @@ import { apiFetch, isApiError } from './api';
 import type {
   ApiKeySummary,
   AuthUser,
+  ConjectureListResponse,
+  ConjectureView,
+  CreateConjectureRequest,
+  CreateConjectureResponse,
   LlmKeysListResponse,
   MeProfile,
   MeStats,
@@ -10,6 +14,7 @@ import type {
   SavedSearch,
   SearchRequest,
   SearchResponse,
+  StartConjectureRequest,
   Theorem,
   TheoremListResponse,
   UserProfileFields,
@@ -233,6 +238,53 @@ export function useRevokeLlmKey() {
   });
 }
 
+// --- /api/conjecture ---
+
+export const conjecturesQueryKey = ['conjectures'] as const;
+
+export function useMyConjectures() {
+  return useQuery<ConjectureListResponse>({
+    queryKey: conjecturesQueryKey,
+    queryFn: () => apiFetch<ConjectureListResponse>('/api/me/conjectures'),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useConjecture(id: string) {
+  return useQuery<ConjectureView>({
+    queryKey: ['conjecture', id],
+    queryFn: () => apiFetch<ConjectureView>(`/api/conjecture/${id}`),
+    enabled: !!id,
+  });
+}
+
+export function useCreateConjecture() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateConjectureRequest) =>
+      apiFetch<CreateConjectureResponse>('/api/conjecture', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: conjecturesQueryKey }),
+  });
+}
+
+export function useStartConjecture(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: StartConjectureRequest) =>
+      apiFetch<{ id: string; state: string }>(`/api/conjecture/${id}/start`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['conjecture', id] });
+      qc.invalidateQueries({ queryKey: conjecturesQueryKey });
+    },
+  });
+}
+
 // --- live event streams (SSE) ---
 
-export { useDiscoveryFeed, useStatsStream } from './sse';
+export { useConjectureStream, useDiscoveryFeed, useStatsStream } from './sse';
