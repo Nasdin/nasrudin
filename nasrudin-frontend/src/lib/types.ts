@@ -219,3 +219,86 @@ export interface LlmKeysListResponse {
   /** Provider names the server's `Registry` knows about. */
   known_providers: string[];
 }
+
+// --- /api/conjecture ---
+
+export interface BudgetSpec {
+  wall_seconds: number;
+  max_candidates: number;
+}
+
+/**
+ * One LLM-proposed seed for a conjecture run. The LLM's contract; not a
+ * proof. The GA consumes the chosen suggestion as its starting axiom
+ * subset + initial population + mutation priors.
+ */
+export interface LlmSuggestion {
+  axiom_set: string[];
+  initial_population: string[];
+  mutation_priors: Record<string, number>;
+  target_shape: string | null;
+  rationale: string;
+}
+
+export interface CreateConjectureRequest {
+  hunch: string;
+  domain_hint?: string | null;
+  provider: string;
+  model: string;
+  budget: BudgetSpec;
+}
+
+export interface CreateConjectureResponse {
+  job_id: string;
+  state: string;
+  suggestions: LlmSuggestion[];
+}
+
+export type ConjectureState =
+  | 'Created'
+  | 'LlmComplete'
+  | 'QueuedForWorker'
+  | 'Running'
+  | 'Complete';
+
+export interface ConjectureView {
+  id: string;
+  state: ConjectureState | string;
+  outcome: string | null;
+  hunch: string;
+  domain_hint: string | null;
+  provider: string;
+  model: string;
+  suggestions: LlmSuggestion[] | null;
+  chosen_index: number | null;
+  budget: BudgetSpec;
+  candidates_attempted: number;
+  candidates_verified: number;
+  /** Hex-encoded 8-byte theorem IDs. */
+  verified_theorem_ids: string[];
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface ConjectureListResponse {
+  conjectures: ConjectureView[];
+}
+
+export interface StartConjectureRequest {
+  chosen_index: number;
+  seed_overrides?: unknown;
+}
+
+export type ConjectureEventKind =
+  | 'state_change'
+  | 'progress'
+  | 'candidate_verified'
+  | 'complete';
+
+/** Shape of one event in the SSE stream. */
+export interface ConjectureSseEvent {
+  id: number;
+  kind: ConjectureEventKind | string;
+  payload: unknown;
+  at: string;
+}
