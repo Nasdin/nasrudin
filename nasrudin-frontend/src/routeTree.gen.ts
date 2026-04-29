@@ -24,6 +24,7 @@ import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as ApiDocsRouteImport } from './routes/api-docs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TheoremIdRouteImport } from './routes/theorem.$id'
+import { Route as SearchConceptRouteImport } from './routes/search.concept'
 import { Route as ConjectureIdRouteImport } from './routes/conjecture.$id'
 
 const WorkersRoute = WorkersRouteImport.update({
@@ -101,6 +102,11 @@ const TheoremIdRoute = TheoremIdRouteImport.update({
   path: '/theorem/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SearchConceptRoute = SearchConceptRouteImport.update({
+  id: '/concept',
+  path: '/concept',
+  getParentRoute: () => SearchRoute,
+} as any)
 const ConjectureIdRoute = ConjectureIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -118,11 +124,12 @@ export interface FileRoutesByFullPath {
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
-  '/search': typeof SearchRoute
+  '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/workers': typeof WorkersRoute
   '/conjecture/$id': typeof ConjectureIdRoute
+  '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRoutesByTo {
@@ -136,11 +143,12 @@ export interface FileRoutesByTo {
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
-  '/search': typeof SearchRoute
+  '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/workers': typeof WorkersRoute
   '/conjecture/$id': typeof ConjectureIdRoute
+  '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRoutesById {
@@ -155,11 +163,12 @@ export interface FileRoutesById {
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
-  '/search': typeof SearchRoute
+  '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/workers': typeof WorkersRoute
   '/conjecture/$id': typeof ConjectureIdRoute
+  '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
 export interface FileRouteTypes {
@@ -180,6 +189,7 @@ export interface FileRouteTypes {
     | '/signin'
     | '/workers'
     | '/conjecture/$id'
+    | '/search/concept'
     | '/theorem/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -198,6 +208,7 @@ export interface FileRouteTypes {
     | '/signin'
     | '/workers'
     | '/conjecture/$id'
+    | '/search/concept'
     | '/theorem/$id'
   id:
     | '__root__'
@@ -216,6 +227,7 @@ export interface FileRouteTypes {
     | '/signin'
     | '/workers'
     | '/conjecture/$id'
+    | '/search/concept'
     | '/theorem/$id'
   fileRoutesById: FileRoutesById
 }
@@ -230,7 +242,7 @@ export interface RootRouteChildren {
   LibraryRoute: typeof LibraryRoute
   PricingRoute: typeof PricingRoute
   ProfileRoute: typeof ProfileRoute
-  SearchRoute: typeof SearchRoute
+  SearchRoute: typeof SearchRouteWithChildren
   SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
   WorkersRoute: typeof WorkersRoute
@@ -344,6 +356,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TheoremIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/search/concept': {
+      id: '/search/concept'
+      path: '/concept'
+      fullPath: '/search/concept'
+      preLoaderRoute: typeof SearchConceptRouteImport
+      parentRoute: typeof SearchRoute
+    }
     '/conjecture/$id': {
       id: '/conjecture/$id'
       path: '/$id'
@@ -366,6 +385,17 @@ const ConjectureRouteWithChildren = ConjectureRoute._addFileChildren(
   ConjectureRouteChildren,
 )
 
+interface SearchRouteChildren {
+  SearchConceptRoute: typeof SearchConceptRoute
+}
+
+const SearchRouteChildren: SearchRouteChildren = {
+  SearchConceptRoute: SearchConceptRoute,
+}
+
+const SearchRouteWithChildren =
+  SearchRoute._addFileChildren(SearchRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiDocsRoute: ApiDocsRoute,
@@ -377,7 +407,7 @@ const rootRouteChildren: RootRouteChildren = {
   LibraryRoute: LibraryRoute,
   PricingRoute: PricingRoute,
   ProfileRoute: ProfileRoute,
-  SearchRoute: SearchRoute,
+  SearchRoute: SearchRouteWithChildren,
   SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,
   WorkersRoute: WorkersRoute,

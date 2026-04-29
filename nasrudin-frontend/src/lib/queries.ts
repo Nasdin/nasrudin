@@ -3,6 +3,7 @@ import { apiFetch, isApiError } from './api';
 import type {
   ApiKeySummary,
   AuthUser,
+  ConceptSearchResponse,
   ConjectureListResponse,
   ConjectureView,
   CreateConjectureRequest,
@@ -235,6 +236,28 @@ export function useRevokeLlmKey() {
       }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: llmKeysQueryKey }),
+  });
+}
+
+// --- /api/search/concept ---
+
+export function useConceptSearch(
+  query: string,
+  opts: { includePending?: boolean; limit?: number; enabled?: boolean } = {},
+) {
+  const includePending = opts.includePending ?? true;
+  const limit = opts.limit ?? 30;
+  const enabled = opts.enabled ?? query.trim().length > 0;
+  const params = new URLSearchParams({
+    q: query,
+    include_pending: String(includePending),
+    limit: String(limit),
+  });
+  return useQuery<ConceptSearchResponse>({
+    queryKey: ['concept-search', query, includePending, limit],
+    queryFn: () => apiFetch<ConceptSearchResponse>(`/api/search/concept?${params}`),
+    enabled,
+    staleTime: 30_000,
   });
 }
 

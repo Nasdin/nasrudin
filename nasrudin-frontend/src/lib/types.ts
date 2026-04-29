@@ -293,6 +293,29 @@ export interface StartConjectureRequest {
   seed_overrides?: unknown;
 }
 
+// --- /api/search/concept ---
+
+export interface ConceptHit {
+  theorem_id: string;
+  canonical_statement: string;
+  latex: string | null;
+  domain: string;
+  /** "Verified" | "Pending" | "Rejected" | "Timeout" — string fallback for forward-compat. */
+  status: string;
+  depth: number | null;
+  /** Combined score in [0, 1]. Higher = better match. */
+  score: number;
+  /** Which signal flagged it: "embed" | "text" | "both". */
+  source: 'embed' | 'text' | 'both';
+}
+
+export interface ConceptSearchResponse {
+  query: string;
+  hits: ConceptHit[];
+  took_ms: number;
+  embed_available: boolean;
+}
+
 export type ConjectureEventKind =
   | 'state_change'
   | 'progress'
