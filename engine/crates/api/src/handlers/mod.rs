@@ -3,6 +3,7 @@ pub mod api_keys;
 pub mod embed;
 pub mod events;
 pub mod ingest;
+pub mod llm_keys;
 pub mod me;
 pub mod preferences;
 pub mod saved_searches;

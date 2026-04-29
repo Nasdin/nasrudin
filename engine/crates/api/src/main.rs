@@ -198,6 +198,15 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // LLM key vault (Phase C). Decode the AES-256-GCM key once; when
+    // unset, /api/me/llm-keys returns 503.
+    let llm_encrypt_key = nasrudin_llm::encryption::load_encrypt_key_from_env();
+    if llm_encrypt_key.is_some() {
+        tracing::info!("NASRUDIN_KEY_ENCRYPT configured — /api/me/llm-keys enabled");
+    } else {
+        tracing::warn!("NASRUDIN_KEY_ENCRYPT unset — /api/me/llm-keys returns 503");
+    }
+
     // Channels
     let (candidates_tx, candidates_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();
     let (verified_tx, verified_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();
@@ -302,6 +311,7 @@ async fn main() -> anyhow::Result<()> {
         cache_ctx: cache_ctx.clone(),
         embed,
         embed_path,
+        llm_encrypt_key,
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
@@ -468,6 +478,12 @@ async fn main() -> anyhow::Result<()> {
                 axum::routing::patch(handlers::me::update_profile),
             )
             .route("/api/me/workers", get(handlers::me::workers))
+            .route("/api/me/llm-keys", get(handlers::llm_keys::list))
+            .route("/api/me/llm-keys", post(handlers::llm_keys::set_key))
+            .route(
+                "/api/me/llm-keys/{provider}",
+                delete(handlers::llm_keys::revoke),
+            )
             .layer(GovernorLayer::new(rate_limit::platform_user()));
 
         // Platform-worker: worker registration + heartbeat + ingest. Bearer nsk_worker_.

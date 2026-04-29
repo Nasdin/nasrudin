@@ -132,6 +132,7 @@ pub async fn build() -> Option<TestApp> {
         cache_ctx: None,
         embed: None,
         embed_path: None,
+        llm_encrypt_key: Some([7u8; 32]),
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the

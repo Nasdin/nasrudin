@@ -3140,6 +3140,7 @@ dependencies = [
  "nasrudin-embed",
  "nasrudin-ga",
  "nasrudin-lean-bridge",
+ "nasrudin-llm",
  "nasrudin-pg",
  "nasrudin-rocks",
  "password-auth",

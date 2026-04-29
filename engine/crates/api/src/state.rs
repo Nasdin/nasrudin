@@ -79,4 +79,9 @@ pub struct AppState {
     /// Filesystem path where the index lives. Used by the
     /// `/api/embed/index.bin` handler to stream the file directly.
     pub embed_path: Option<std::path::PathBuf>,
+    /// 32-byte AES-256-GCM key, decoded once at boot from
+    /// `NASRUDIN_KEY_ENCRYPT` (base64). When `None`, the
+    /// `/api/me/llm-keys` endpoints all return 503 with
+    /// `key_encrypt_unset` — production deployments must set this.
+    pub llm_encrypt_key: Option<[u8; 32]>,
 }
