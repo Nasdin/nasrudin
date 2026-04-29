@@ -265,6 +265,81 @@ pub async fn list_mine(
     }
 }
 
+/// SSE stream for one conjecture job. Replays the full event log from
+/// `conjecture_events` first, then subscribes to the in-process broadcast
+/// for live events. Filters by `job_id` so a single broadcast feeds many
+/// concurrent SSE streams.
+pub async fn sse(
+    State(state): State<Arc<AppState>>,
+    auth: AuthOrApiKey,
+    auth_sess: AuthSess,
+    Path(id): Path<Uuid>,
+) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures::stream::{self, StreamExt};
+    use std::convert::Infallible;
+    use std::time::Duration;
+    use tokio_stream::wrappers::BroadcastStream;
+
+    let pg = &auth_sess.backend.db;
+    let user_id = auth.user.id;
+
+    let row = match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "not_found"),
+        Err(e) => {
+            tracing::warn!("get conjecture failed: {e}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        }
+    };
+    if row.owner_id != user_id {
+        return err(StatusCode::NOT_FOUND, "not_found");
+    }
+
+    let history = nasrudin_pg::query::conjecture_jobs::events_after(pg, id, 0, 1024)
+        .await
+        .unwrap_or_default();
+    let history_stream = stream::iter(history.into_iter().map(move |e| {
+        let payload = serde_json::json!({
+            "id": e.id,
+            "kind": e.kind,
+            "payload": e.payload,
+            "at": e.at,
+        });
+        Ok::<Event, Infallible>(Event::default().event(&e.kind).data(payload.to_string()))
+    }));
+
+    let rx = state.conjecture_event_tx.subscribe();
+    let live = BroadcastStream::new(rx).filter_map(move |r| {
+        let job_id = id;
+        async move {
+            match r {
+                Ok(e) if e.job_id == job_id => {
+                    let payload = serde_json::json!({
+                        "id": e.id,
+                        "kind": e.kind,
+                        "payload": e.payload,
+                        "at": e.at,
+                    });
+                    Some(Ok::<Event, Infallible>(
+                        Event::default().event(&e.kind).data(payload.to_string()),
+                    ))
+                }
+                _ => None,
+            }
+        }
+    });
+
+    let merged = history_stream.chain(live);
+    Sse::new(merged)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("ping"),
+        )
+        .into_response()
+}
+
 fn view_from_row(row: &nasrudin_pg::entity::conjecture_jobs::Model) -> ConjectureView {
     let budget: BudgetSpec = serde_json::from_value(row.budget.clone()).unwrap_or(BudgetSpec {
         wall_seconds: 0,

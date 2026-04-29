@@ -44,6 +44,7 @@ tower-sessions = { workspace = true }
 password-auth = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
+futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tower = { workspace = true }
