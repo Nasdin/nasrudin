@@ -50,17 +50,37 @@ use std::sync::atomic::Ordering;
 /// performed here. Use the pre-filter (`Chain::execute`) to reject
 /// chains that don't run.
 pub fn mutate_chain(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
+    mutate_chain_weighted(chain, store, rng, None);
+}
+
+/// Operator names accepted in the `MutationPriors` map. Anything else
+/// is silently ignored so an LLM hallucinating an op-name doesn't
+/// wedge the GA — the empty / unmatched case falls back to uniform.
+pub const MUTATION_OPS: &[&str] = &[
+    "insert_random",
+    "delete_random",
+    "swap_adjacent",
+    "mutate_axiom_name",
+    "mutate_param",
+    "append_productive_suffix",
+];
+
+/// Weighted operator selection. Phase E plumbs an LLM-supplied
+/// `mutation_priors` map (operator name → weight in [0, 1]) here; when
+/// `priors` is `None` or contains no recognised keys, falls back to the
+/// historical uniform 1/6 distribution.
+pub fn mutate_chain_weighted(
+    chain: &mut Chain,
+    store: &AxiomStore,
+    rng: &mut impl Rng,
+    priors: Option<&std::collections::HashMap<String, f32>>,
+) {
     if chain.is_empty() {
         insert_random(chain, store, rng);
         return;
     }
-    // **Iter 18 reverted to uniform weights** — iter 16's aggressive
-    // re-weighting (suffix 4/12, take_root_bonus on fitness) regressed
-    // verification rate from 3/10 (iter 13) to 0/8 (iter 17). The
-    // take_root_bonus pushed selection toward chains whose forced
-    // suffixes had un-derivable targets. Uniform weights performed
-    // better empirically. 6 ops, 1/6 each.
-    let pick = rng.random_range(0..6u8);
+    let weights = resolve_weights(priors);
+    let pick = weighted_pick(&weights, rng);
     match pick {
         0 => insert_random(chain, store, rng),
         1 => delete_random(chain, rng),
@@ -69,6 +89,42 @@ pub fn mutate_chain(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
         4 => mutate_param(chain, store, rng),
         _ => append_productive_suffix(chain, store, rng),
     }
+}
+
+fn resolve_weights(
+    priors: Option<&std::collections::HashMap<String, f32>>,
+) -> [f32; 6] {
+    let mut w = [1.0f32; 6]; // uniform fallback
+    let Some(map) = priors else { return w };
+    let mut any = false;
+    for (i, &name) in MUTATION_OPS.iter().enumerate() {
+        if let Some(&v) = map.get(name) {
+            if v.is_finite() && v >= 0.0 {
+                w[i] = v;
+                any = true;
+            }
+        }
+    }
+    if !any {
+        return [1.0f32; 6];
+    }
+    let sum: f32 = w.iter().sum();
+    if sum <= 0.0 {
+        return [1.0f32; 6];
+    }
+    w
+}
+
+fn weighted_pick(weights: &[f32; 6], rng: &mut impl Rng) -> u8 {
+    let sum: f32 = weights.iter().sum();
+    let mut r = rng.random_range(0.0f32..sum);
+    for (i, &w) in weights.iter().enumerate() {
+        if r < w {
+            return i as u8;
+        }
+        r -= w;
+    }
+    5
 }
 
 /// **Phase 6.5.8** — append a `RearrangeEquation{X²=Y²}` followed by
