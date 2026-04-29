@@ -19,6 +19,11 @@ pub struct AuthUser {
     pub password_hash: String,
     pub display_name: Option<String>,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
+    pub plan_tier: String,
+    pub stripe_customer_id: Option<String>,
+    pub stripe_subscription_id: Option<String>,
+    pub current_period_end: Option<chrono::DateTime<chrono::FixedOffset>>,
+    pub plan_cycle_start: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
 impl AuthUser {
@@ -29,6 +34,11 @@ impl AuthUser {
             password_hash: m.password_hash,
             display_name: m.display_name,
             created_at: m.created_at,
+            plan_tier: m.plan_tier,
+            stripe_customer_id: m.stripe_customer_id,
+            stripe_subscription_id: m.stripe_subscription_id,
+            current_period_end: m.current_period_end,
+            plan_cycle_start: m.plan_cycle_start,
         }
     }
 }

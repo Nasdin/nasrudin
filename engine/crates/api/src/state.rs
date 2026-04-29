@@ -97,6 +97,10 @@ pub struct AppState {
     /// trigger, background crawler). `None` when PG is not configured —
     /// promotion needs PG to fetch lean_source.
     pub lake_promotion: Option<Arc<crate::lake_promotion::LakePromotion>>,
+    /// Stripe billing client. `None` when STRIPE_SECRET_KEY is unset —
+    /// `/api/billing/*` endpoints return 503 in that case so the rest of
+    /// the API still works for local dev without billing config.
+    pub billing: Option<crate::billing::stripe_client::BillingClient>,
     /// In-memory `/api/seed` response cache, keyed by `(domain, top)`.
     /// Each entry holds `(generated_at, response_body_arc)`. TTL is
     /// applied at read time; the cache is invalidated wholesale by
