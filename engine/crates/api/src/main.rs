@@ -466,6 +466,9 @@ async fn main() -> anyhow::Result<()> {
     let health = Router::new()
         .route("/api/health", get(self::health))
         .route("/api/stats", get(stats))
+        // P-Task 9: Prometheus exposition for Grafana scraping. No
+        // auth gate; Caddy restricts source IPs in production.
+        .route("/metrics", get(physics_api::metrics::metrics))
         .layer(GovernorLayer::new(rate_limit::health_relaxed()));
 
     // Admin: corpus reload (auth-checked inside the handler against
@@ -583,6 +586,9 @@ async fn main() -> anyhow::Result<()> {
                 get(handlers::conjecture::sse),
             )
             .route("/api/me/conjectures", get(handlers::conjecture::list_mine))
+            .route("/api/billing/checkout", post(handlers::billing::checkout))
+            .route("/api/billing/portal", post(handlers::billing::portal))
+            .route("/api/billing/me", get(handlers::billing::me))
             .layer(GovernorLayer::new(rate_limit::platform_user()));
 
         // Platform-worker: worker registration + heartbeat + ingest. Bearer nsk_worker_.

@@ -11,6 +11,7 @@ pub mod hydration;
 pub mod keygen;
 pub mod lake_builder;
 pub mod lake_promotion;
+pub mod metrics;
 pub mod pg_drain;
 pub mod rate_limit;
 pub mod reverify;
