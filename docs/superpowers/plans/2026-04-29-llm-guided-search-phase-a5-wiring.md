@@ -823,24 +823,26 @@ Expected: clean.
 Create `engine/crates/ga/src/cache_bundle.rs`:
 
 ```rust
-//! Borrowed bundle of caches + identity passed into `verify_chain`.
+//! Owned bundle of caches + identity passed into `verify_chain`.
 //!
-//! Holding all of these on one struct keeps the GA call site tidy and
-//! avoids spreading 6 positional arguments across `chain_engine` →
-//! `chain_ga` → `verify_chain`.
+//! Holds `Arc`s rather than borrows so the bundle can sit on
+//! `DiscoveryConfig` (which is `Clone`) without lifetime gymnastics.
+//! Each verify call clones the bundle (cheap — just refcount bumps).
+
+use std::sync::Arc;
 
 use nasrudin_derive::CacheStats;
 use nasrudin_rocks::{AttemptsCache, TacticPriorsCache};
 
-/// All borrowed; lifetime tied to the GA discovery loop.
-pub struct CacheBundle<'a> {
-    pub attempts: &'a AttemptsCache,
-    pub tactic_priors: &'a TacticPriorsCache,
-    pub stats: &'a CacheStats,
+#[derive(Clone)]
+pub struct CacheBundle {
+    pub attempts: Arc<AttemptsCache>,
+    pub tactic_priors: Arc<TacticPriorsCache>,
+    pub stats: Arc<CacheStats>,
     /// E.g. `"4.27.0"`. Used as `AttemptRecord.lean_version`.
-    pub lean_version: &'a str,
+    pub lean_version: String,
     /// E.g. `"worker-abcd"`. Used as `AttemptRecord.attempted_by`.
-    pub worker_id: &'a str,
+    pub worker_id: String,
     /// 30 in production. Tests pass a low value (or i64::MAX for "never expire").
     pub ttl_days: i64,
 }
@@ -848,24 +850,23 @@ pub struct CacheBundle<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nasrudin_derive::CacheStats;
     use tempfile::tempdir;
 
     #[test]
-    fn bundle_can_be_constructed_with_borrowed_fields() {
-        let stats = CacheStats::default();
+    fn bundle_can_be_constructed_and_cloned() {
         let dir_a = tempdir().unwrap();
-        let attempts = AttemptsCache::open(dir_a.path().to_str().unwrap()).unwrap();
+        let attempts = Arc::new(AttemptsCache::open(dir_a.path().to_str().unwrap()).unwrap());
         let dir_t = tempdir().unwrap();
-        let priors = TacticPriorsCache::open(dir_t.path().to_str().unwrap()).unwrap();
+        let priors = Arc::new(TacticPriorsCache::open(dir_t.path().to_str().unwrap()).unwrap());
         let bundle = CacheBundle {
-            attempts: &attempts,
-            tactic_priors: &priors,
-            stats: &stats,
-            lean_version: "4.27.0",
-            worker_id: "test",
+            attempts,
+            tactic_priors: priors,
+            stats: Arc::new(CacheStats::default()),
+            lean_version: "4.27.0".into(),
+            worker_id: "test".into(),
             ttl_days: 30,
         };
+        let _cloned = bundle.clone(); // refcount bumps, no deep copy.
         assert_eq!(bundle.lean_version, "4.27.0");
         assert_eq!(bundle.ttl_days, 30);
     }
@@ -925,35 +926,33 @@ Append to `engine/crates/ga/src/chain_ga.rs` inside `#[cfg(test)] mod tests`:
 
 ```rust
     #[test]
-    fn verify_chain_with_cache_no_prover_root_skips_lake_build() {
+    fn verify_chain_with_cache_empty_chain_pre_filter_rejects() {
         // Smoke test: the cache wiring compiles and the verify_chain_cached
-        // signature accepts an Option<CacheBundle>. We don't have a Lean
-        // toolchain in unit tests, so we exercise the None branch (which
-        // mirrors the existing verify_chain behaviour) and the Some branch
-        // through the integration test in Task 11.
+        // signature accepts an Option<&CacheBundle>. We don't have a Lean
+        // toolchain in unit tests, so we feed an empty chain (which the
+        // pre-filter rejects before any lake build attempt). This proves
+        // the new signature compiles and short-circuits before reaching
+        // the cache layer.
         use crate::cache_bundle::CacheBundle;
         use nasrudin_derive::CacheStats;
         use nasrudin_rocks::{AttemptsCache, TacticPriorsCache};
+        use std::sync::Arc;
         use tempfile::tempdir;
 
-        let stats = CacheStats::default();
         let dir_a = tempdir().unwrap();
-        let attempts = AttemptsCache::open(dir_a.path().to_str().unwrap()).unwrap();
+        let attempts = Arc::new(AttemptsCache::open(dir_a.path().to_str().unwrap()).unwrap());
         let dir_t = tempdir().unwrap();
-        let priors = TacticPriorsCache::open(dir_t.path().to_str().unwrap()).unwrap();
+        let priors = Arc::new(TacticPriorsCache::open(dir_t.path().to_str().unwrap()).unwrap());
         let bundle = CacheBundle {
-            attempts: &attempts,
-            tactic_priors: &priors,
-            stats: &stats,
-            lean_version: "4.27.0",
-            worker_id: "test",
+            attempts,
+            tactic_priors: priors,
+            stats: Arc::new(CacheStats::default()),
+            lean_version: "4.27.0".into(),
+            worker_id: "test".into(),
             ttl_days: 30,
         };
         let store = upstream_store();
         let chain = Chain(vec![]);
-        // No prover root path → pre-filter rejects (empty chain). The
-        // assertion is that the cached path returns the same outcome
-        // shape as the un-cached path.
         let outcome = verify_chain_cached(
             &chain,
             &store,
@@ -998,7 +997,7 @@ pub fn verify_chain_cached(
     prover_root: impl AsRef<Path>,
     module_basename: &str,
     theorem_name: &str,
-    bundle: Option<&CacheBundle<'_>>,
+    bundle: Option<&CacheBundle>,
 ) -> ChainVerifyOutcome {
     use std::sync::atomic::Ordering;
 
@@ -1073,10 +1072,10 @@ pub fn verify_chain_cached(
 
         let vctx = VerifyWithCacheCtx {
             verifier: &verifier,
-            cache: b.attempts,
+            cache: &b.attempts,
             cache_key: &cache_key,
-            lean_version: b.lean_version,
-            worker_id: b.worker_id,
+            lean_version: &b.lean_version,
+            worker_id: &b.worker_id,
             ttl_days: b.ttl_days,
         };
         let raw = verify_with_cache(&vctx, &lean_source, &module_path);
@@ -1213,46 +1212,10 @@ Edit `engine/crates/ga/src/chain_engine.rs`. Find the `pub struct DiscoveryConfi
 
 ```rust
     /// When `Some`, the GA's lake-verify path goes through the cache
-    /// layer (skip on hit, record on success). Held as a raw pointer-
-    /// like wrapper rather than `&CacheBundle<'_>` because
-    /// `DiscoveryConfig` is `Clone`. See [`CacheCtxHandle`] below.
-    pub cache_ctx: Option<CacheCtxHandle>,
-```
-
-Then immediately above the struct, define:
-
-```rust
-/// Type-erased pointer to a `CacheBundle`. Holds the bundle for the
-/// duration of a discovery run; the caller (worker, in-process GA) is
-/// responsible for keeping the underlying caches alive.
-///
-/// Cloned along with `DiscoveryConfig` (cheap — it's a borrowed handle
-/// behind an `Arc<Mutex<…>>`-shaped struct on the caller side).
-#[derive(Clone)]
-pub struct CacheCtxHandle {
-    inner: std::sync::Arc<dyn CacheCtxAccess + Send + Sync>,
-}
-
-/// Internal trait erased by `CacheCtxHandle`. Implementors hand out a
-/// `CacheBundle<'_>` for the duration of one verify call.
-pub trait CacheCtxAccess {
-    fn with_bundle<'a>(
-        &'a self,
-        cb: &mut dyn FnMut(&crate::cache_bundle::CacheBundle<'a>),
-    );
-}
-
-impl CacheCtxHandle {
-    pub fn new(inner: std::sync::Arc<dyn CacheCtxAccess + Send + Sync>) -> Self {
-        Self { inner }
-    }
-    pub fn with_bundle<'a>(
-        &'a self,
-        cb: &mut dyn FnMut(&crate::cache_bundle::CacheBundle<'a>),
-    ) {
-        self.inner.with_bundle(cb);
-    }
-}
+    /// layer (skip on hit, record on success). The bundle is `Clone`
+    /// (Arc-backed) so `DiscoveryConfig` keeps its existing `Clone`
+    /// derive without lifetime gymnastics.
+    pub cache_ctx: Option<crate::cache_bundle::CacheBundle>,
 ```
 
 Then add to `Default for DiscoveryConfig`:
@@ -1278,31 +1241,14 @@ Then update the call to `verify_chain` inside `run_discovery`. Find:
 Replace with:
 
 ```rust
-                    let outcome = match config.cache_ctx.as_ref() {
-                        Some(handle) => {
-                            let mut held: Option<crate::chain_ga::ChainVerifyOutcome> = None;
-                            handle.with_bundle(&mut |bundle| {
-                                held = Some(crate::chain_ga::verify_chain_cached(
-                                    &top.chain,
-                                    store,
-                                    prover_root.as_path(),
-                                    &basename,
-                                    &theorem_name,
-                                    Some(bundle),
-                                ));
-                            });
-                            held.unwrap_or(crate::chain_ga::ChainVerifyOutcome::ToolchainError {
-                                message: "cache handle did not produce outcome".into(),
-                            })
-                        }
-                        None => crate::chain_ga::verify_chain(
-                            &top.chain,
-                            store,
-                            prover_root.as_path(),
-                            &basename,
-                            &theorem_name,
-                        ),
-                    };
+                    let outcome = crate::chain_ga::verify_chain_cached(
+                        &top.chain,
+                        store,
+                        prover_root.as_path(),
+                        &basename,
+                        &theorem_name,
+                        config.cache_ctx.as_ref(),
+                    );
                     match outcome {
 ```
 
@@ -1363,18 +1309,16 @@ Create `engine/crates/api/src/cache.rs`:
 use std::sync::Arc;
 
 use nasrudin_derive::{CacheConfig, CacheStats};
+use nasrudin_ga::CacheBundle;
 use nasrudin_rocks::{AttemptsCache, TacticPriorsCache, TheoremDb};
 
-/// Long-lived cache bundle held on `AppState`. `Option`-shaped at the
-/// `AppState` level so feature-flag-off path is a `None` (no
-/// branches, no allocations).
+/// Long-lived cache state held on `AppState`. `config` is read at
+/// boot and stored alongside the bundle so callers can inspect
+/// individual flags (`config.attempts_enabled`, etc.) without
+/// re-reading env each call.
 pub struct CacheCtx {
     pub config: CacheConfig,
-    pub attempts: Arc<AttemptsCache>,
-    pub tactic_priors: Arc<TacticPriorsCache>,
-    pub stats: Arc<CacheStats>,
-    pub lean_version: String,
-    pub worker_id: String,
+    pub bundle: CacheBundle,
 }
 
 impl CacheCtx {
@@ -1395,14 +1339,15 @@ impl CacheCtx {
             std::env::var("NASRUDIN_LEAN_VERSION").unwrap_or_else(|_| "4.27.0".into());
         let worker_id =
             std::env::var("NASRUDIN_WORKER_ID").unwrap_or_else(|_| "api-server".into());
-        Ok(Self {
-            config,
+        let bundle = CacheBundle {
             attempts,
             tactic_priors,
             stats,
             lean_version,
             worker_id,
-        })
+            ttl_days: 30,
+        };
+        Ok(Self { config, bundle })
     }
 }
 ```
@@ -1727,11 +1672,11 @@ For each `match self.lake.verify(<source>, &theorem_id_hex).await? {` block, rep
                         let cache_key = nasrudin_rocks::AttemptsCache::make_key(&canon8, &axiom_hash);
                         self.lake
                             .verify_cached(
-                                &c.attempts,
+                                &c.bundle.attempts,
                                 &cache_key,
-                                &c.lean_version,
-                                &c.worker_id,
-                                30,
+                                &c.bundle.lean_version,
+                                &c.bundle.worker_id,
+                                c.bundle.ttl_days,
                                 <SOURCE_VAR>,
                                 &theorem_id_hex,
                             )
