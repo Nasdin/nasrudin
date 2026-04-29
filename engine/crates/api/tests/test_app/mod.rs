@@ -228,6 +228,23 @@ pub async fn build() -> Option<TestApp> {
             "/api/me/conjectures",
             axum::routing::get(handlers::conjecture::list_mine),
         )
+        // Phase E worker endpoints
+        .route(
+            "/api/conjecture/claim",
+            axum::routing::post(handlers::conjecture::claim),
+        )
+        .route(
+            "/api/conjecture/{id}/heartbeat",
+            axum::routing::post(handlers::conjecture::heartbeat),
+        )
+        .route(
+            "/api/conjecture/{id}/submit",
+            axum::routing::post(handlers::conjecture::submit),
+        )
+        .route(
+            "/api/conjecture/{id}/complete",
+            axum::routing::post(handlers::conjecture::complete_handler),
+        )
         .layer(auth_layer)
         .with_state(state);
 
