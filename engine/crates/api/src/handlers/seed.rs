@@ -120,9 +120,47 @@ pub async fn seed(
     // legacy data still surfaces during the rollout window.
     let _ = pg; // PG kept for the legacy fallback below.
     let mut seed_theorems: Vec<serde_json::Value> = Vec::new();
-    if let Ok(ids) = state.db.list_verified_recent_ids(top as usize) {
+    // P-Task 1 firewall: workers only compose chains on top of LakeVerified
+    // (kernel-confirmed) ancestors. ChainVerified theorems are
+    // intentionally absent from the seed payload; they get queued for
+    // lake-promotion (P-Task 2) so they eventually graduate. Without
+    // this filter, a bogus theorem that passes chain replay but fails
+    // lake build would silently propagate as a peer-axiom across the
+    // cluster — exactly the pollution scenario cascade-reject (P-Task 3)
+    // is designed to clean up *after the fact*. This filter prevents
+    // pollution at the source.
+    //
+    // Pull a wider window than `top` from the recency index so we can
+    // afford to skip ChainVerified rows without thinning the response.
+    let scan_window = (top as usize).saturating_mul(8).max(top as usize);
+    if let Ok(ids) = state.db.list_verified_recent_ids(scan_window) {
         for id in ids {
+            if seed_theorems.len() >= top as usize {
+                break;
+            }
             if let Ok(Some(theorem)) = state.db.get_theorem(&id) {
+                // Hard-filter: only LakeVerified theorems are eligible
+                // peer-axioms.
+                let lake_verified = matches!(
+                    &theorem.verified,
+                    nasrudin_core::VerificationStatus::Verified { tactic_used, .. }
+                        if tactic_used == "lake_build"
+                );
+                if !lake_verified {
+                    // Side effect: enqueue this ChainVerified theorem
+                    // for lake promotion at priority 1 (seed-inclusion
+                    // demand). The /api/seed endpoint heating up the
+                    // promotion queue means workers polling create
+                    // pressure to graduate the freshest theorems first.
+                    if let nasrudin_core::VerificationStatus::Verified { tactic_used, .. }
+                        = &theorem.verified
+                    {
+                        if tactic_used == "chain_replay" {
+                            let _ = state.db.enqueue_lake_promotion(&id, 1);
+                        }
+                    }
+                    continue;
+                }
                 if let Some(ref d) = q.domain {
                     let dom_disp = format!("{}", theorem.domain);
                     let dom_dbg = format!("{:?}", theorem.domain);

@@ -91,6 +91,12 @@ pub struct AppState {
     /// `conjecture_events` for replay.
     pub conjecture_event_tx:
         tokio::sync::broadcast::Sender<crate::conjecture::ConjectureEvent>,
+    /// Lazy lake-build promotion (P-Task 2). Hot path is chain-replay
+    /// primary; this drain promotes ChainVerified theorems to
+    /// LakeVerified on consumption (download, seed-inclusion, manual
+    /// trigger, background crawler). `None` when PG is not configured —
+    /// promotion needs PG to fetch lean_source.
+    pub lake_promotion: Option<Arc<crate::lake_promotion::LakePromotion>>,
     /// In-memory `/api/seed` response cache, keyed by `(domain, top)`.
     /// Each entry holds `(generated_at, response_body_arc)`. TTL is
     /// applied at read time; the cache is invalidated wholesale by

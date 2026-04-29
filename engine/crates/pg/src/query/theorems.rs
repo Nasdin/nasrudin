@@ -229,6 +229,49 @@ pub async fn mark_rejected(
     Ok(())
 }
 
+/// Mark a batch of theorems Rejected with the same reason in one
+/// PG round-trip. Used by the lake-promotion drain after a
+/// `cascade_reject` walk produces a large set of invalidated
+/// descendants — issuing N individual UPDATEs for a 10k-descendant
+/// cascade is unacceptable, this is one statement.
+///
+/// `ids` must be 8-byte canonical hashes. Empty input is a no-op.
+pub async fn mark_rejected_batch(
+    db: &impl ConnectionTrait,
+    ids: &[Vec<u8>],
+    reason: &str,
+) -> Result<u64> {
+    use sea_orm::Statement;
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    // Construct a parameterised IN-list statement. SeaORM accepts
+    // Vec<Vec<u8>> directly through the Value type's bytea variant.
+    let mut placeholders: Vec<String> = Vec::with_capacity(ids.len());
+    let mut values: Vec<sea_orm::Value> = Vec::with_capacity(ids.len() + 1);
+    values.push(reason.into());
+    for (i, id) in ids.iter().enumerate() {
+        // $1 is reason, $2..N+1 are the ids.
+        placeholders.push(format!("${}", i + 2));
+        values.push(id.clone().into());
+    }
+    let sql = format!(
+        "UPDATE theorems SET status = 'Rejected', rejected_reason = $1 \
+         WHERE id IN ({})",
+        placeholders.join(",")
+    );
+    let stmt = Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        &sql,
+        values,
+    );
+    let rows = db
+        .execute_raw(stmt)
+        .await
+        .context("mark_rejected_batch UPDATE")?;
+    Ok(rows.rows_affected())
+}
+
 /// Return the canonical-hash bytes of every theorem currently in the
 /// `Rejected` state. Workers pull this list at startup to build a
 /// negative-result Bloom filter — if a chain produces a canonical

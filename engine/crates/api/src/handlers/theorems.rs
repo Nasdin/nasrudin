@@ -140,6 +140,57 @@ pub async fn lean_download(
         Ok(b) => b,
         Err(_) => return (StatusCode::BAD_REQUEST, "bad_hash").into_response(),
     };
+
+    // P-Task 1+2: download is a "consumption" trigger. If the theorem
+    // is currently ChainVerified (chain replay only, kernel not yet
+    // confirmed), force a synchronous lake-promotion. The user pulling
+    // a `.lean` for citation deserves the kernel guarantee.
+    //
+    // - If LakeVerified or Pending-with-no-chain: serve immediately.
+    // - If ChainVerified: enqueue at priority 0, park up to 60s on the
+    //   per-id Notify. On lake success, serve. On lake failure, the
+    //   drain has already run cascade-reject; return 410 Gone.
+    // - On wait timeout (lake genuinely takes >60s): 202 Accepted with
+    //   Retry-After header.
+    let mut id_arr = [0u8; 8];
+    if hash_bytes.len() == 8 {
+        id_arr.copy_from_slice(&hash_bytes);
+    }
+    let needs_promotion = matches!(
+        state.db.get_theorem(&id_arr).ok().flatten().map(|t| t.verified),
+        Some(nasrudin_core::VerificationStatus::Verified { tactic_used, .. })
+            if tactic_used == "chain_replay"
+    );
+    if needs_promotion {
+        if let Some(promotion) = state.lake_promotion.as_ref() {
+            match promotion
+                .await_promotion(id_arr, std::time::Duration::from_secs(60))
+                .await
+            {
+                Ok(Some(nasrudin_core::VerificationStatus::Verified { tactic_used, .. }))
+                    if tactic_used == "lake_build" =>
+                {
+                    // Continue to PG fetch + serve below.
+                }
+                Ok(Some(nasrudin_core::VerificationStatus::Rejected { reason })) => {
+                    return (
+                        StatusCode::GONE,
+                        format!("rejected: {reason}"),
+                    )
+                        .into_response();
+                }
+                _ => {
+                    return (
+                        StatusCode::ACCEPTED,
+                        [(header::RETRY_AFTER, "60".to_string())],
+                        "lake_promotion_in_flight",
+                    )
+                        .into_response();
+                }
+            }
+        }
+    }
+
     match theorems::get_by_canonical_hash(pg, &hash_bytes).await {
         Ok(Some(t)) => {
             let filename = format!("theorem_{}.lean", hex::encode(&t.canonical_hash));

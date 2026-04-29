@@ -312,6 +312,18 @@ async fn main() -> anyhow::Result<()> {
         })
     });
 
+    // Lazy lake-build promotion (P-Task 2). Spawned only when PG is
+    // available since the drain fetches `lean_source` from PG to feed
+    // the lake-builder.
+    let lake_promotion = pg.as_ref().map(|pg_conn| {
+        Arc::new(physics_api::lake_promotion::LakePromotion::new(
+            Arc::clone(&db),
+            pg_conn.clone(),
+            Arc::clone(&lake),
+            reverify_event_tx.clone(),
+        ))
+    });
+
     // Phase 9 Task 4.1: per-worker token-bucket limiter (60 req/min default).
     let worker_rate_limiter = Arc::new(physics_api::rate_limit::WorkerRateLimiter::new(60));
 
@@ -331,6 +343,7 @@ async fn main() -> anyhow::Result<()> {
         embed_path,
         llm_encrypt_key,
         conjecture_event_tx,
+        lake_promotion,
         seed_cache: Arc::new(std::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
@@ -354,6 +367,19 @@ async fn main() -> anyhow::Result<()> {
         let pg = pg.clone();
         tokio::spawn(physics_api::pg_drain::drain_loop(rocks, pg));
         tracing::info!("PG drain loop spawned (RocksDB-primary ingest)");
+    }
+
+    // Lazy lake-build promotion drain + background crawler (P-Task 2).
+    // The drain handles synchronous + seed-triggered + manual-button
+    // promotions; the crawler ensures every ChainVerified row eventually
+    // graduates to LakeVerified or Rejected even without consumption
+    // pressure.
+    if let Some(ref promotion) = state.lake_promotion {
+        let p = Arc::clone(promotion);
+        tokio::spawn(physics_api::lake_promotion::drain_loop(p));
+        let p = Arc::clone(promotion);
+        tokio::spawn(physics_api::lake_promotion::crawler_loop(p));
+        tracing::info!("Lake-promotion drain + crawler spawned");
     }
 
     // CORS configuration

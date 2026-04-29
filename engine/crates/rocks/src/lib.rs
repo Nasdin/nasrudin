@@ -39,6 +39,16 @@ const CF_PG_INSERT_QUEUE: &str = "pg_insert_queue";
 /// so a reverse iter yields most-recent-first. Written atomically
 /// alongside CF_THEOREMS when a theorem transitions to Verified.
 const CF_BY_VERIFIED_AT: &str = "by_verified_at";
+/// Lazy lake-promotion queue (P-Task 2). Holds theorems awaiting
+/// kernel-level verification. Three priority lanes:
+///   0 = manual user trigger / synchronous download
+///   1 = seed-inclusion demand (worker polled /api/seed and we need
+///       this theorem promoted before peers can build on it)
+///   2 = background crawler (eventually-consistent promotion of
+///       every ChainVerified row regardless of usage)
+/// Keys are `[priority_u8, enqueued_at_be_u64, theorem_id_8]`. A
+/// forward iter from `[0u8]` yields highest-priority oldest first.
+const CF_LAKE_PROMOTION_QUEUE: &str = "lake_promotion_queue";
 
 const ALL_CFS: &[&str] = &[
     CF_THEOREMS,
@@ -55,6 +65,7 @@ const ALL_CFS: &[&str] = &[
     CF_TACTIC_PRIORS,
     CF_PG_INSERT_QUEUE,
     CF_BY_VERIFIED_AT,
+    CF_LAKE_PROMOTION_QUEUE,
 ];
 
 /// Database statistics.
@@ -826,6 +837,196 @@ impl TheoremDb {
             .db
             .cf_handle(CF_PG_INSERT_QUEUE)
             .context("Missing pg_insert_queue CF")?;
+        Ok(self.db.iterator_cf(&cf, IteratorMode::Start).count())
+    }
+
+    // ── Cascade Rejection (P-Task 3) ──────────────────────────────────
+
+    /// BFS-walk the lineage graph starting from `root_id` and mark
+    /// every visited theorem as `Rejected`. Used by the lake-promotion
+    /// drain when lake build rejects a theorem — every descendant in
+    /// `CF_LINEAGE` that was built on top of the now-bogus theorem
+    /// must also be invalidated, otherwise the corpus accumulates
+    /// poisoned chains forever.
+    ///
+    /// Returns the full set of invalidated theorem_ids (including
+    /// `root_id`) so the caller can broadcast SSE `TheoremRejected`
+    /// events and propagate to PG via `mark_rejected_batch`.
+    ///
+    /// Bounded scan: in pathological cases (a foundational theorem
+    /// with thousands of descendants) this can take seconds. Callers
+    /// should run it in `tokio::task::spawn_blocking` to keep the
+    /// async runtime responsive.
+    pub fn cascade_reject(
+        &self,
+        root_id: TheoremId,
+        reason: &str,
+    ) -> Result<Vec<TheoremId>> {
+        use std::collections::{HashSet, VecDeque};
+        let mut visited: HashSet<TheoremId> = HashSet::new();
+        let mut queue: VecDeque<TheoremId> = VecDeque::new();
+        let mut invalidated: Vec<TheoremId> = Vec::new();
+        queue.push_back(root_id);
+        visited.insert(root_id);
+
+        while let Some(node) = queue.pop_front() {
+            // Mutate the theorem's status. For the root, use the
+            // caller-provided reason verbatim. For descendants, use
+            // a uniform "ancestor_rejected: <root_hex>" reason.
+            let local_reason = if node == root_id {
+                reason.to_string()
+            } else {
+                format!("ancestor_rejected: {}", hex::encode(root_id))
+            };
+            if let Some(mut theorem) = self.get_theorem(&node)? {
+                theorem.verified = nasrudin_core::VerificationStatus::Rejected {
+                    reason: local_reason,
+                };
+                // put_theorem atomically updates CF_THEOREMS + every
+                // secondary index (including CF_BY_VERIFIED_AT, which
+                // entry should already be absent for a Rejected row,
+                // but put_theorem only writes the index when status
+                // matches Verified — see the existing impl).
+                self.put_theorem(&theorem).ok();
+            }
+            invalidated.push(node);
+
+            // Enqueue children from CF_LINEAGE.
+            if let Ok(Some(lineage)) = self.get_lineage(&node) {
+                for child in lineage.children {
+                    if visited.insert(child) {
+                        queue.push_back(child);
+                    }
+                }
+            }
+
+            // Bounded progress logging — every 500 nodes — so a runaway
+            // cascade is observable.
+            if invalidated.len() % 500 == 0 {
+                tracing::info!(
+                    cascade_root = %hex::encode(root_id),
+                    invalidated_so_far = invalidated.len(),
+                    "cascade_reject: progress"
+                );
+            }
+        }
+
+        if invalidated.len() > 1 {
+            tracing::warn!(
+                cascade_root = %hex::encode(root_id),
+                total_invalidated = invalidated.len(),
+                descendants = invalidated.len() - 1,
+                "cascade_reject: complete"
+            );
+        }
+
+        Ok(invalidated)
+    }
+
+    // ── Lake-Promotion Queue (P-Task 2) ───────────────────────────────
+
+    /// Enqueue a theorem for asynchronous lake-build promotion. Priority
+    /// lanes: 0 = manual/sync, 1 = seed-inclusion demand, 2 = background
+    /// crawler. Idempotent: re-enqueueing the same theorem at the same
+    /// priority is a no-op (overwrites with the same key); re-enqueueing
+    /// at a *higher* priority adds a new row that will be drained first.
+    /// On promotion success/failure the drain calls
+    /// [`Self::ack_lake_promotion`] for every queued row keyed by this
+    /// theorem_id (across all priorities).
+    pub fn enqueue_lake_promotion(
+        &self,
+        theorem_id: &TheoremId,
+        priority: u8,
+    ) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_LAKE_PROMOTION_QUEUE)
+            .context("Missing lake_promotion_queue CF")?;
+        let now_micros = chrono::Utc::now().timestamp_micros() as u64;
+        let mut key = Vec::with_capacity(17);
+        key.push(priority);
+        key.extend_from_slice(&now_micros.to_be_bytes());
+        key.extend_from_slice(theorem_id);
+        // Empty value — the key contains everything.
+        self.db
+            .put_cf(&cf, &key, &[])
+            .context("enqueue lake_promotion")?;
+        Ok(())
+    }
+
+    /// Drain up to `batch_size` queued lake-promotion entries in
+    /// priority-then-FIFO order. Returns the queue keys (so callers can
+    /// ack them precisely) and the theorem_ids extracted from each.
+    pub fn drain_lake_promotion_batch(
+        &self,
+        batch_size: usize,
+    ) -> Result<Vec<(Vec<u8>, TheoremId)>> {
+        let cf = self
+            .db
+            .cf_handle(CF_LAKE_PROMOTION_QUEUE)
+            .context("Missing lake_promotion_queue CF")?;
+        let mut out = Vec::new();
+        for item in self.db.iterator_cf(&cf, IteratorMode::Start) {
+            let (k, _v) = item.context("iter lake_promotion_queue")?;
+            if k.len() != 17 {
+                continue;
+            }
+            let mut id = [0u8; 8];
+            id.copy_from_slice(&k[9..17]);
+            out.push((k.to_vec(), id));
+            if out.len() >= batch_size {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Acknowledge a single queue entry by its raw key. The drain calls
+    /// this on both lake-success and lake-failure outcomes so the queue
+    /// drains in finite time even if the underlying theorem can't be
+    /// promoted (in which case the cascade-reject machinery flips it
+    /// to Rejected and we don't re-attempt).
+    pub fn ack_lake_promotion(&self, key: &[u8]) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_LAKE_PROMOTION_QUEUE)
+            .context("Missing lake_promotion_queue CF")?;
+        self.db
+            .delete_cf(&cf, key)
+            .context("ack lake_promotion")?;
+        Ok(())
+    }
+
+    /// Ack every queued entry for a given theorem_id (across all
+    /// priority lanes). Used after a definitive outcome so a manual
+    /// trigger (priority 0) doesn't re-fire if the same theorem also
+    /// had a pending priority-1 or priority-2 entry.
+    pub fn ack_lake_promotion_all(&self, theorem_id: &TheoremId) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_LAKE_PROMOTION_QUEUE)
+            .context("Missing lake_promotion_queue CF")?;
+        let mut to_delete = Vec::new();
+        for item in self.db.iterator_cf(&cf, IteratorMode::Start) {
+            let (k, _) = item.context("iter lake_promotion_queue")?;
+            if k.len() == 17 && &k[9..17] == theorem_id {
+                to_delete.push(k.to_vec());
+            }
+        }
+        for k in to_delete {
+            self.db.delete_cf(&cf, &k).ok();
+        }
+        Ok(())
+    }
+
+    /// Total queue depth across all priority lanes. Exposed for
+    /// `/api/health` and `/api/stats` so operators can see the
+    /// lake-promotion backlog.
+    pub fn lake_promotion_queue_depth(&self) -> Result<usize> {
+        let cf = self
+            .db
+            .cf_handle(CF_LAKE_PROMOTION_QUEUE)
+            .context("Missing lake_promotion_queue CF")?;
         Ok(self.db.iterator_cf(&cf, IteratorMode::Start).count())
     }
 

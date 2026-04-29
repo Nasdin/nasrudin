@@ -140,32 +140,33 @@ impl ReverifyQueue {
         let theorem_id_hex = hex::encode(row.id.as_slice());
 
         // 2. Replay the chain server-side over our trusted AxiomStore.
+        //
+        // **Production architecture (P-Task 1):** chain replay IS verification.
+        // The Rust rule library (`engine/crates/derive/src/rules.rs`) is sound
+        // by construction — every rule is a proof primitive that only
+        // produces mathematically valid transformations. The AxiomStore is
+        // audited at boot via `no_cheat_audit::audit_or_panic`. So if a chain
+        // composes valid rules over audited axioms and yields the canonical
+        // the worker claims, the theorem is verified.
+        //
+        // We tag this verification path with `tactic_used = "chain_replay"`
+        // and call it `ChainVerified`. Lake-build is the *kernel-level final
+        // arbiter* but it's deferred to the lake_promotion drain (P-Task 2)
+        // and only fires when a theorem is actually consumed (downloaded,
+        // included as a peer-axiom in /api/seed, manually validated, or
+        // picked up by the background crawler).
+        //
+        // This collapses ingest-time verification cost from ~5-30s
+        // (lake build) to ~µs (chain replay), turning the central server
+        // from "lake-build limited" to "Postgres-write limited" — roughly
+        // 30× ingest throughput headroom for thousands of distributed workers.
         match self.check_chain(&row) {
-            ChainCheck::Regenerated(regen) => {
-                let verify_outcome = self
-                    .verify_cached_or_direct(&row, &regen.lean_source, &theorem_id_hex)
+            ChainCheck::Regenerated(_regen) => {
+                // Chain replay succeeded → ChainVerified. No lake call.
+                self.flip_verified(&row, "A_chain_replay", "chain_replay", 0)
                     .await?;
-                match verify_outcome {
-                    VerifyOutcome::Verified {
-                        tactic,
-                        duration_ms,
-                    } => {
-                        self.flip_verified(&row, "A", &tactic, duration_ms).await?;
-                        self.rocks.dequeue_reverify(&job.theorem_id).ok();
-                        return Ok(());
-                    }
-                    VerifyOutcome::Rejected { reason, .. } => {
-                        // Chain validates but server-emitted Lean fails to
-                        // build — emitter has a bug for this shape. The math
-                        // is real, fall through to B-path on the worker's
-                        // submitted Lean.
-                        tracing::warn!(
-                            theorem_id = %theorem_id_hex,
-                            reason = %reason,
-                            "server_emitter_drift: chain valid but server-regen Lean failed lake build"
-                        );
-                    }
-                }
+                self.rocks.dequeue_reverify(&job.theorem_id).ok();
+                return Ok(());
             }
             ChainCheck::Invalid(reason) => {
                 // Hostile / buggy worker: chain doesn't replay. Reject without
@@ -231,15 +232,21 @@ impl ReverifyQueue {
             ));
         }
 
-        let cfg = LeanEmitConfig {
-            namespace: "PhysicsGenerator.Derived".into(),
-            theorem_name: format!("auto_{}", hex::encode(&row.id)),
-            use_mathlib: true,
+        // Chain replay succeeded and the canonical matches the worker's
+        // claim. P-Task 1: this IS verification — no lake build needed
+        // here. The `RegeneratedLean { lean_source }` payload is no
+        // longer used by A-path (reverify::process_one). Lake-promotion
+        // (P-Task 2) fetches `lean_source` directly from PG when it
+        // later promotes a ChainVerified theorem. So we skip the
+        // emit_lean_file work entirely on the chain-replay hot path.
+        let _ = (ctx, server_canonical);
+        let _ = LeanEmitConfig {
+            namespace: String::new(),
+            theorem_name: String::new(),
+            use_mathlib: false,
         };
-        let lean_source = emit_lean_file(&ctx, &cfg);
-
-        let _ = server_canonical;
-        ChainCheck::Regenerated(RegeneratedLean { lean_source })
+        let _ = emit_lean_file;
+        ChainCheck::Regenerated(RegeneratedLean)
     }
 
     /// B-path fallback: verify the worker-submitted `lean_source` directly via
@@ -499,11 +506,11 @@ impl ReverifyQueue {
     }
 }
 
-/// Server-regenerated Lean source for the A-path lake-build. Produced by
-/// [`ReverifyQueue::check_chain`] only after the chain has been replayed
-/// against the server's [`AxiomStore`] and verified to produce the row's
-/// canonical statement, so the lean source here is server-emitted from a
-/// validated derivation — not the worker's submission.
-struct RegeneratedLean {
-    lean_source: String,
-}
+/// Marker for "chain replay succeeded and canonical matches." P-Task 1
+/// inverted the A-path: chain replay is verification (sound by
+/// construction over the trusted Rust rule library + audited
+/// AxiomStore). Lake-build is deferred to the lake-promotion drain
+/// and happens only on consumption. So this no longer carries any
+/// payload — the chain replay's success is the entire signal.
+#[allow(dead_code)]
+struct RegeneratedLean;

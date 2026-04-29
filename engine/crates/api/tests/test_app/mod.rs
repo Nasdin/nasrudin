@@ -140,6 +140,7 @@ pub async fn build() -> Option<TestApp> {
         embed_path: None,
         llm_encrypt_key: Some([7u8; 32]),
         conjecture_event_tx,
+        lake_promotion: None,
         seed_cache: Arc::new(std::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
