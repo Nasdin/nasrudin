@@ -20,6 +20,7 @@
 //! ```
 
 pub mod axiom_store;
+pub mod cache_config;
 pub mod chain;
 pub mod context;
 pub mod derivation;
@@ -34,6 +35,7 @@ pub mod rules;
 pub mod strategies;
 
 pub use axiom_store::{Axiom, AxiomStore};
+pub use cache_config::{CacheConfig, CacheStats};
 pub use chain::{Chain, RuleStep};
 pub use context::{DerivationContext, DerivationStep};
 pub use derivation::{DerivationEngine, DerivationResult};
