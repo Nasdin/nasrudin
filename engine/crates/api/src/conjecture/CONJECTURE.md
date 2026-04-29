@@ -71,3 +71,66 @@ cargo test -p physics-api --test conjecture_handler
 
 The full end-to-end E=mc² nightly (`e2e_conjecture_emc2`) lands once Phase E
 ships the worker side.
+
+## Phase E (worker side)
+
+Phase E adds the dequeue half. Workers run with `--research-mode`
+(or `NASRUDIN_RESEARCH_MODE=1`) and call:
+
+| Verb   | Path                                  | Purpose |
+|--------|---------------------------------------|---------|
+| `POST` | `/api/conjecture/claim`               | Atomic dequeue (`FOR UPDATE SKIP LOCKED`). 5-min lease. |
+| `POST` | `/api/conjecture/{id}/heartbeat`      | Extend lease + report progress. |
+| `POST` | `/api/conjecture/{id}/submit`         | One verified theorem (delegates to ingest path). |
+| `POST` | `/api/conjecture/{id}/complete`       | Final transition (Verified / NoResult / TimedOut / Cancelled). |
+
+All four require `Authorization: Bearer nsk_worker_…` (`WorkerAuth`)
+and pass through the per-worker rate limiter.
+
+### Lease + reaper
+
+- Each claim sets `lease_expires_at = NOW() + 5 minutes`.
+- Heartbeat extends the lease another 5 minutes.
+- The `ConjectureLeaseReaper` background task ticks every 30 s,
+  requeues `state='Running' AND lease_expires_at < NOW()` rows,
+  and emits `progress {worker_lost: true}` for SSE subscribers.
+
+### Seed-driven GA
+
+When a worker claims a job, `run_seed_driven_chunk`:
+
+1. Parses the `seed: serde_json::Value` into an `LlmSuggestion`.
+2. Builds a *filtered* `AxiomStore`:
+   - Always layers `classical_mechanics_postulates` as a kinematic baseline.
+   - Adds each named axiom from `axiom_set` (warns on unknown names).
+   - Registers each parseable string in `initial_population` as a
+     `seed_<idx>` synthetic axiom so `IntroduceAxiom` picks it up.
+3. Translates `mutation_priors` (operator → weight) into
+   `DiscoveryConfig.mutation_priors`; `chain_ga::mutate_chain_weighted`
+   then samples operators by the LLM's bias rather than uniform 1/6.
+4. Runs in chunked iterations (≤30 s + 25 generations each) until
+   the budget's `wall_seconds` or `max_candidates` is exhausted.
+   Between chunks: heartbeat + submit each verified theorem to
+   `/api/conjecture/{id}/submit`.
+5. Calls `complete` with `outcome=Verified` (≥1 submitted) or
+   `outcome=NoResult`, with a reason payload carrying the counters.
+
+### Manual smoke
+
+```bash
+NASRUDIN_RESEARCH_MODE=1 \
+NASRUDIN_API_URL=http://localhost:8080 \
+NASRUDIN_WORKER_KEY=nsk_worker_… \
+NASRUDIN_WORKER_ID=research-1 \
+cargo run -p nasrudin-ga --bin worker -- --verify ../prover
+```
+
+The worker prints `claimed conjecture <uuid>` for every dequeued job
+and `conjecture <uuid> → Verified|NoResult …` after the lease completes.
+
+### Tests
+
+```bash
+cargo test -p nasrudin-pg --test conjecture_jobs_query  # 8 lifecycle tests
+cargo test -p physics-api --test conjecture_worker      # 4 auth-gate smokes
+```
