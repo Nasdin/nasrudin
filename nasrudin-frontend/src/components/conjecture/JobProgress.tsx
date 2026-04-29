@@ -32,6 +32,31 @@ export function JobProgress({
           </div>
         </div>
       </div>
+
+      {view.claimed_by && (
+        <div
+          style={{
+            marginTop: 16,
+            color: 'var(--ink-500)',
+            fontSize: 13,
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          claimed by <strong>{view.claimed_by}</strong>
+          {view.last_heartbeat_at && (
+            <>
+              {' · last heartbeat '}
+              {new Date(view.last_heartbeat_at).toLocaleTimeString()}
+            </>
+          )}
+          {view.lease_expires_at && (
+            <>
+              {' · lease until '}
+              {new Date(view.lease_expires_at).toLocaleTimeString()}
+            </>
+          )}
+        </div>
+      )}
       <div style={{ marginTop: 24 }}>
         <div style={{ color: 'var(--ink-500)', fontSize: 12, marginBottom: 8 }}>event log</div>
         {events.length === 0 ? (

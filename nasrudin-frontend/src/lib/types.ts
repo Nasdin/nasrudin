@@ -276,6 +276,10 @@ export interface ConjectureView {
   candidates_verified: number;
   /** Hex-encoded 8-byte theorem IDs. */
   verified_theorem_ids: string[];
+  /** Phase E: worker handle while a job is `Running`. */
+  claimed_by: string | null;
+  last_heartbeat_at: string | null;
+  lease_expires_at: string | null;
   created_at: string;
   completed_at: string | null;
 }
