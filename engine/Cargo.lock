@@ -1786,7 +1786,10 @@ dependencies = [
  "hex",
  "nasrudin-core",
  "nasrudin-rocks",
+ "serde",
+ "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 
