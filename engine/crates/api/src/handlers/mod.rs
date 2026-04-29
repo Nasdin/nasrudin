@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod api_keys;
 pub mod billing;
+pub mod concept_search;
 pub mod conjecture;
 pub mod embed;
 pub mod events;

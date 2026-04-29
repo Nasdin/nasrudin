@@ -495,6 +495,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/axioms", get(list_axioms))
         .route("/api/seed", get(handlers::seed::seed))
         .route("/api/search", post(handlers::search::search))
+        .route(
+            "/api/search/concept",
+            get(handlers::concept_search::concept_search),
+        )
         .layer(GovernorLayer::new(rate_limit::api_standard()));
 
     // Health-relaxed: monitoring & liveness (120 req/min, burst 30)
