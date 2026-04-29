@@ -18,6 +18,7 @@
 pub mod export;
 pub mod ffi;
 pub mod lean_syntax;
+pub mod persistent;
 pub mod persistent_protocol;
 pub mod process;
 pub mod tactic;
@@ -25,6 +26,7 @@ pub mod tactic;
 use anyhow::Result;
 use nasrudin_core::{Expr, Theorem};
 
+pub use persistent::{PersistentElaborator, PersistentElaboratorConfig};
 pub use process::{ProcessVerifier, ProcessVerifyConfig};
 
 /// Result of a Lean4 verification attempt.
