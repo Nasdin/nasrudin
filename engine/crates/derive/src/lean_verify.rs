@@ -3,6 +3,8 @@
 //! Writes a `.lean` file and runs `lake build` to verify the proof.
 //! Upgradeable to FFI-based verification later.
 
+use chrono::Duration;
+use nasrudin_rocks::attempts_cache::{AttemptOutcome, AttemptRecord, AttemptsCache};
 use std::path::PathBuf;
 use std::process::Command;
 

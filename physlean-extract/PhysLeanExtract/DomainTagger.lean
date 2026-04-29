@@ -92,6 +92,12 @@ def tagDomain (name : Name) : PhysDomain :=
     .PureMath
   else if str.startsWith "PhysLean.Units" then
     .PureMath
+  -- Mathlib namespaces — when extracted via `--whitelist`, all of
+  -- these are pure-math identities (algebra, analysis, real
+  -- arithmetic). Without this branch they all fall through to
+  -- `.Unknown` and the JsonEmitter silently drops them.
+  else if str.startsWith "Mathlib." || str.startsWith "Real." then
+    .PureMath
   -- Infrastructure / meta / too specialized → Unknown
   else if str.startsWith "PhysLean." then
     .Unknown
