@@ -45,13 +45,12 @@ pub struct TacticPriorRecord {
 
 /// RocksDB wrapper for the `tactic_priors` column family.
 pub struct TacticPriorsCache {
-    db: DB,
+    db: std::sync::Arc<DB>,
 }
 
 impl TacticPriorsCache {
     /// Open a standalone RocksDB at `path` containing only the
-    /// `tactic_priors` CF. (Production reuses the engine's main DB; that
-    /// integration is in Phase A.5.)
+    /// `tactic_priors` CF. Used by tests.
     pub fn open(path: &str) -> Result<Self> {
         use rocksdb::{ColumnFamilyDescriptor, Options};
         let mut opts = Options::default();
@@ -60,6 +59,22 @@ impl TacticPriorsCache {
         let cf = ColumnFamilyDescriptor::new(CF_TACTIC_PRIORS, Options::default());
         let db = DB::open_cf_descriptors(&opts, path, vec![cf])
             .context("open tactic_priors db")?;
+        Ok(Self {
+            db: std::sync::Arc::new(db),
+        })
+    }
+
+    /// Construct a `TacticPriorsCache` backed by an existing RocksDB
+    /// instance — typically the engine's main `TheoremDb`. The caller
+    /// must already have the `tactic_priors` CF registered (it's in
+    /// [`crate::ALL_CFS`]); we just take a borrowed clone of the
+    /// shared handle.
+    pub fn on_existing_db(db: std::sync::Arc<DB>) -> Result<Self> {
+        if db.cf_handle(CF_TACTIC_PRIORS).is_none() {
+            anyhow::bail!(
+                "tactic_priors CF missing on shared DB; did you open via TheoremDb::new?"
+            );
+        }
         Ok(Self { db })
     }
 
@@ -206,5 +221,20 @@ mod tests {
         let (cache, _dir) = fresh_cache();
         let key = [0xa6; 16];
         assert!(cache.top(&key, 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn on_existing_db_shares_storage_with_main_db() {
+        use crate::TheoremDb;
+        let dir = tempdir().unwrap();
+        let main = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+        let cache = TacticPriorsCache::on_existing_db(main.shared_db()).unwrap();
+        let key = [0xb7; 16];
+        cache.record_success(&key, "ring", 5).unwrap();
+        let cache2 = TacticPriorsCache::on_existing_db(main.shared_db()).unwrap();
+        let top = cache2.top(&key, 5).unwrap();
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].tactic_chain, "ring");
+        assert_eq!(top[0].hits, 1);
     }
 }
