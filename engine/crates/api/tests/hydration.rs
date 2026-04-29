@@ -25,7 +25,10 @@ static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// SQL drop statement matching the rest of the suite (theorems, auth, sessions,
 /// preferences, saved searches, users, migrations metadata).
-const RESET_SQL: &str = "DROP TABLE IF EXISTS theorems CASCADE; \
+const RESET_SQL: &str = "DROP TABLE IF EXISTS conjecture_events CASCADE; \
+     DROP TABLE IF EXISTS conjecture_jobs CASCADE; \
+     DROP TABLE IF EXISTS user_llm_keys CASCADE; \
+     DROP TABLE IF EXISTS theorems CASCADE; \
      DROP TABLE IF EXISTS workers CASCADE; \
      DROP TABLE IF EXISTS api_keys CASCADE; \
      DROP TABLE IF EXISTS sessions CASCADE; \

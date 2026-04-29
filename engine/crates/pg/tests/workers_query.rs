@@ -25,7 +25,10 @@ async fn fresh_db() -> Option<(DatabaseConnection, MutexGuard<'static, ()>)> {
     });
     let db = connect_simple(&url).await.ok()?;
     db.execute_unprepared(
-        "DROP TABLE IF EXISTS theorems CASCADE; \
+        "DROP TABLE IF EXISTS conjecture_events CASCADE; \
+         DROP TABLE IF EXISTS conjecture_jobs CASCADE; \
+         DROP TABLE IF EXISTS user_llm_keys CASCADE; \
+         DROP TABLE IF EXISTS theorems CASCADE; \
          DROP TABLE IF EXISTS api_keys CASCADE; \
          DROP TABLE IF EXISTS workers CASCADE; \
          DROP TABLE IF EXISTS sessions CASCADE; \

@@ -49,7 +49,10 @@ async fn fresh_test_state() -> Option<(
     });
     let pg = nasrudin_pg::connect_simple(&url).await.ok()?;
     pg.execute_unprepared(
-        "DROP TABLE IF EXISTS theorems CASCADE; \
+        "DROP TABLE IF EXISTS conjecture_events CASCADE; \
+         DROP TABLE IF EXISTS conjecture_jobs CASCADE; \
+         DROP TABLE IF EXISTS user_llm_keys CASCADE; \
+         DROP TABLE IF EXISTS theorems CASCADE; \
          DROP TABLE IF EXISTS api_keys CASCADE; \
          DROP TABLE IF EXISTS workers CASCADE; \
          DROP TABLE IF EXISTS sessions CASCADE; \
