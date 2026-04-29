@@ -206,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
     // Shutdown signal
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    // In-process GA. Phase 9 distributed mode: workers run discover_emc2
+    // In-process GA. Phase 9 distributed mode: workers run worker
     // externally and POST to /api/ingest, so the API daemon is a pure
     // membrane by default. Set NASRUDIN_API_RUN_INPROC_GA=1 to also run a
     // GA thread inside the API process (legacy single-node mode; contends
@@ -354,7 +354,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/theorems", get(handlers::theorems::list))
         // Negative-result memo: list of canonical_hash bytes for every
         // Rejected theorem. Workers pull this to skip pre-rejected
-        // chains during fitness eval — see discover_emc2's
+        // chains during fitness eval — see worker's
         // RejectedSet on startup. Closes the "every worker re-tries
         // the same losing chains independently" gap.
         .route(

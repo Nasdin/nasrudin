@@ -201,12 +201,12 @@ discover-physics gens="100" pop="64" max-lake="12":
     @echo "═══════════════════════════════════════════════════════"
     @echo "  Nasrudin — Spontaneous physics discovery via GA"
     @echo "═══════════════════════════════════════════════════════"
-    cd engine && cargo build -p nasrudin-ga --bin discover_emc2 --release 2>&1 | grep -E "(Compiling|Finished|error)" || true
-    cd engine && PATH="$HOME/.elan/bin:$PATH" ./target/release/discover_emc2 \
+    cd engine && cargo build -p nasrudin-ga --bin worker --release 2>&1 | grep -E "(Compiling|Finished|error)" || true
+    cd engine && PATH="$HOME/.elan/bin:$PATH" ./target/release/worker \
         --gens {{gens}} --pop {{pop}} --max-len 14 --max-lake {{max-lake}} \
         --verify ../prover
 
-# Spawn N parallel discover_emc2 workers, each with a unique worker_id,
+# Spawn N parallel worker workers, each with a unique worker_id,
 # all submitting to the same NASRUDIN_API_URL. Each worker has its own
 # log file under logs/pool/. Ctrl+C tears them all down via trap.
 #
@@ -222,7 +222,7 @@ discover-pool n="4" gens="200" pop="64" max-lake="4":
       exit 1
     fi
     export NASRUDIN_API_URL="${NASRUDIN_API_URL:-http://localhost:3001}"
-    cd engine && cargo build -p nasrudin-ga --bin discover_emc2 --release 2>&1 | grep -E "(Compiling|Finished|error)" || true
+    cd engine && cargo build -p nasrudin-ga --bin worker --release 2>&1 | grep -E "(Compiling|Finished|error)" || true
     cd ..
     mkdir -p logs/pool
     pids=()
@@ -232,7 +232,7 @@ discover-pool n="4" gens="200" pop="64" max-lake="4":
       LOG="logs/pool/worker-${i}.log"
       PATH="$HOME/.elan/bin:$PATH" \
         NASRUDIN_WORKER_ID="pool-worker-${i}" \
-        ./engine/target/release/discover_emc2 \
+        ./engine/target/release/worker \
           --domain sr --target sr_rest_energy \
           --gens {{gens}} --pop {{pop}} --max-len 12 --max-lake {{max-lake}} \
           --verify ./prover \
@@ -258,10 +258,10 @@ build-worker:
     PKG="nasrudin-worker-${TAG}"
     OUT="dist/${PKG}"
     echo "[worker] building release binary for ${TAG}..."
-    (cd engine && cargo build --release -p nasrudin-ga --bin discover_emc2)
+    (cd engine && cargo build --release -p nasrudin-ga --bin worker)
     rm -rf "$OUT"
     mkdir -p "$OUT/prover"
-    cp engine/target/release/discover_emc2 "$OUT/nasrudin-worker"
+    cp engine/target/release/worker "$OUT/nasrudin-worker"
     cp -R prover/PhysicsGenerator "$OUT/prover/"
     cp prover/PhysicsGenerator.lean prover/lakefile.lean prover/lake-manifest.json prover/lean-toolchain "$OUT/prover/"
     cp deploy/worker-bundle/README.md "$OUT/README.md"

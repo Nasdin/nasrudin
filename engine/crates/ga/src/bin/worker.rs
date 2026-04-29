@@ -1,15 +1,24 @@
-//! Spontaneous E=mc² discovery driver — Phase 6.
+//! Generic theorem-discovery worker.
 //!
-//! Runs the chain-based GA over the truly upstream SR axiom set with no
-//! `DeriveRestEnergy*` strategy registered. The GA seeds populations
-//! with random `[IntroduceAxiom(name)]` chains, evolves via mutation +
-//! crossover + tournament selection, and (optionally) lake-verifies
-//! the top novel candidate(s) per generation.
+//! Pulls axioms + peer-verified theorems from `/api/seed`, runs the
+//! chain-based GA over them, lake-verifies promising chains, and POSTs
+//! verified results to `/api/ingest`. Multiple workers compound off
+//! each other via the platform — every verified theorem becomes a new
+//! `IntroduceAxiom`-able building block on the next chunk's seed-sync.
+//!
+//! No headline result is privileged: the GA evolves chains under a
+//! composite fitness (novelty + depth + connectivity) with no target
+//! direction by default. If E=mc², photon dispersion, or any other
+//! famous identity ever falls out of a chain, the canonical-form
+//! audit catches it server-side and Lake verifies it like any other
+//! discovery. (Legacy: this binary was previously named `discover_emc2`
+//! when the project's first POC was a hand-targeted SR run.)
 //!
 //! Usage:
-//!   discover_emc2                            # dry run (no lake)
-//!   discover_emc2 --verify <prover_root>     # lake-verify top candidates
-//!   discover_emc2 --gens N --pop M           # tune scale
+//!   worker --domain pure-math                  # patient compute, all axioms
+//!   worker --domain sr                         # SR upstream postulates only
+//!   worker --verify <prover_root>              # lake-verify top candidates
+//!   worker --gens N --pop M                    # tune scale
 //!
 //! The driver is designed for *long-horizon* runs. With max_lake_verifications
 //! at single digits per run, a fresh invocation usually finishes in seconds
@@ -108,8 +117,24 @@ async fn main() {
             // post-derivation results leaked in.
             "photon_energy_momentum_relation"
         }
+        // "Patient compute" mode: load every domain's postulates and
+        // pull the full Mathlib corpus from /api/seed. No target. The
+        // GA explores the full axiom + theorem space; if E=mc² (or
+        // any other headline) ever falls out of a chain, the canonical
+        // audit catches it server-side and Lake verifies it. Nothing
+        // is "directed" — composite fitness = novelty + depth +
+        // connectivity only (target_shape and ladder_progress are
+        // zero without a TargetSpec).
+        "pure-math" | "mixed" | "all" => {
+            store.load_special_relativity_upstream();
+            store.load_electromagnetism_upstream();
+            // forbidden-axiom-by-name is moot here since we register
+            // multiple domains; the canonical audit (audit_or_panic)
+            // is the load-bearing check below.
+            ""
+        }
         other => {
-            eprintln!("✗ unknown domain `{other}` (try `sr` or `em`)");
+            eprintln!("✗ unknown domain `{other}` (try `sr`, `em`, or `pure-math`)");
             std::process::exit(2);
         }
     };
@@ -120,11 +145,13 @@ async fn main() {
     }
     println!();
 
-    if store.get(forbidden_axiom).is_some() {
-        eprintln!("✗ FAIL: {forbidden_axiom} leaked into the store. Cheating.");
-        std::process::exit(2);
+    if !forbidden_axiom.is_empty() {
+        if store.get(forbidden_axiom).is_some() {
+            eprintln!("✗ FAIL: {forbidden_axiom} leaked into the store. Cheating.");
+            std::process::exit(2);
+        }
+        println!("  ✓ {forbidden_axiom} is NOT in the store. No cheating.");
     }
-    println!("  ✓ {forbidden_axiom} is NOT in the store. No cheating.");
 
     // Canonical-form audit: even if the forbidden name doesn't appear,
     // a smuggler could register E=mc² under a different name. Hash-match
@@ -145,6 +172,9 @@ async fn main() {
         let domain_param = match domain.as_str() {
             "sr" => "SpecialRelativity",
             "em" => "Electromagnetism",
+            // pure-math/mixed/all: empty filter → /api/seed returns
+            // axioms from every domain, so the worker's GA can compose
+            // SR + EM + classical + Mathlib lemmas in a single chain.
             _ => "",
         };
         match fetch_and_extend_store(&api_url, domain_param, &mut store).await {
@@ -160,7 +190,7 @@ async fn main() {
                 // audit is the load-bearing one — it catches a peer
                 // theorem registered as `peer_<hash>` whose statement
                 // happens to be E=mc².
-                if store.get(forbidden_axiom).is_some() {
+                if !forbidden_axiom.is_empty() && store.get(forbidden_axiom).is_some() {
                     eprintln!(
                         "✗ FAIL: peer-fed `{forbidden_axiom}` after seed-sync. Refusing."
                     );
