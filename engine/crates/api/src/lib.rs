@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod cache;
+pub mod conjecture;
 pub mod embed_cron;
 pub mod handlers;
 pub mod hydration;
