@@ -624,6 +624,14 @@ async fn main() -> anyhow::Result<()> {
                 "/api/conjecture/{id}/sse",
                 get(handlers::conjecture::sse),
             )
+            .route(
+                "/api/conjecture/{id}/paper",
+                post(handlers::conjecture::start_paper_draft),
+            )
+            .route(
+                "/api/conjecture/{id}/paper.md",
+                get(handlers::conjecture::get_paper),
+            )
             .route("/api/me/conjectures", get(handlers::conjecture::list_mine))
             .route("/api/billing/checkout", post(handlers::billing::checkout))
             .route("/api/billing/portal", post(handlers::billing::portal))

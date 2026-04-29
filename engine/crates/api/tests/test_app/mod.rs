@@ -230,6 +230,14 @@ pub async fn build() -> Option<TestApp> {
             axum::routing::get(handlers::conjecture::sse),
         )
         .route(
+            "/api/conjecture/{id}/paper",
+            axum::routing::post(handlers::conjecture::start_paper_draft),
+        )
+        .route(
+            "/api/conjecture/{id}/paper.md",
+            axum::routing::get(handlers::conjecture::get_paper),
+        )
+        .route(
             "/api/me/conjectures",
             axum::routing::get(handlers::conjecture::list_mine),
         )

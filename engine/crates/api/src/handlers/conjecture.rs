@@ -667,6 +667,278 @@ pub async fn submit(
     (StatusCode::OK, Json(result)).into_response()
 }
 
+// ===========================================================================
+// Phase F: paper draft generation (LLM streaming + persisted markdown)
+// ===========================================================================
+
+#[derive(serde::Serialize)]
+pub struct StartPaperResponse {
+    pub job_id: Uuid,
+    pub state: &'static str,
+}
+
+const PAPER_SYSTEM_PROMPT: &str = "You are a scientific writer drafting a 1-2 page \
+research-paper-style summary of a freshly discovered theorem. The reader is a \
+researcher who proposed the original conjecture. Output Markdown with sections: \
+Title, Abstract, Introduction (motivate the conjecture from the original hunch), \
+Statement (with LaTeX), Proof outline (translate the Lean proof into prose; do not \
+copy-paste Lean), Implications, References (cite corpus theorems by id). Be \
+concise and rigorous. Do not invent citations.";
+
+fn build_paper_user_prompt(view: &ConjectureView) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    writeln!(out, "# Original conjecture\n\n{}\n", view.hunch).ok();
+    if let Some(d) = &view.domain_hint {
+        writeln!(out, "Domain hint: {d}\n").ok();
+    }
+    if let Some(suggestions) = &view.suggestions {
+        if let Some(idx) = view.chosen_index {
+            if let Some(s) = suggestions.get(idx as usize) {
+                writeln!(out, "## LLM-supplied derivation seed\n\n{}\n", s.rationale).ok();
+                if let Some(target) = &s.target_shape {
+                    writeln!(out, "Target shape: `{target}`").ok();
+                }
+                writeln!(out, "Axiom subset: {:?}\n", s.axiom_set).ok();
+            }
+        }
+    }
+    writeln!(
+        out,
+        "## Verified theorems from this run\n\n{} theorem(s) verified:",
+        view.verified_theorem_ids.len()
+    )
+    .ok();
+    for id in &view.verified_theorem_ids {
+        writeln!(out, "- `{id}`").ok();
+    }
+    writeln!(
+        out,
+        "\n## Run metadata\n\nProvider: {} / {}\nCandidates attempted: {}\nVerified: {}",
+        view.provider, view.model, view.candidates_attempted, view.candidates_verified,
+    )
+    .ok();
+    out
+}
+
+/// `POST /api/conjecture/{id}/paper` — kick off async LLM streaming. The
+/// handler returns 202 immediately; the actual draft generation runs as
+/// a background task that appends each chunk to `paper_draft` and emits
+/// `paper_chunk` events on the conjecture SSE channel.
+pub async fn start_paper_draft(
+    State(state): State<Arc<AppState>>,
+    auth: AuthOrApiKey,
+    auth_sess: AuthSess,
+    Path(id): Path<Uuid>,
+) -> Response {
+    if state.llm_encrypt_key.is_none() {
+        return err(StatusCode::SERVICE_UNAVAILABLE, "key_encrypt_unset");
+    }
+    let pg = &auth_sess.backend.db;
+    let user_id = auth.user.id;
+
+    let row = match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "not_found"),
+        Err(e) => {
+            tracing::warn!("get conjecture failed: {e}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        }
+    };
+    if row.owner_id != user_id {
+        return err(StatusCode::NOT_FOUND, "not_found");
+    }
+    if row.state != "Complete" {
+        return err(StatusCode::CONFLICT, "not_complete");
+    }
+    if row.outcome.as_deref() != Some("Verified") {
+        return err(StatusCode::CONFLICT, "no_verified_theorems");
+    }
+
+    // Reset the column so the SSE stream sees only fresh chunks.
+    let _ = nasrudin_pg::query::conjecture_jobs::clear_paper_draft(pg, id).await;
+
+    let view = view_from_row(&row);
+    let provider = row.provider.clone();
+    let model = row.model.clone();
+    let state_arc = Arc::clone(&state);
+    let pg_arc = pg.clone();
+
+    tokio::spawn(async move {
+        if let Err(e) = run_paper_stream(state_arc, pg_arc, id, user_id, view, provider, model)
+            .await
+        {
+            tracing::warn!("paper stream for {id} failed: {e}");
+        }
+    });
+
+    (
+        StatusCode::ACCEPTED,
+        Json(StartPaperResponse {
+            job_id: id,
+            state: "PaperGenerating",
+        }),
+    )
+        .into_response()
+}
+
+/// Background driver: decrypts the user's LLM key, opens a streaming
+/// connection, and forwards each chunk to PG + the SSE channel.
+async fn run_paper_stream(
+    state: Arc<AppState>,
+    pg: nasrudin_pg::sea_orm::DatabaseConnection,
+    job_id: Uuid,
+    user_id: Uuid,
+    view: ConjectureView,
+    provider: String,
+    model: String,
+) -> Result<(), String> {
+    use futures::StreamExt;
+    use nasrudin_llm::{
+        encryption::{decrypt, EncryptedKey},
+        AnthropicProvider, CompletionRequest, LlmProvider, OllamaProvider, OpenAiProvider,
+        ResponseFormat,
+    };
+
+    let encrypt_key = state
+        .llm_encrypt_key
+        .as_ref()
+        .ok_or_else(|| "key_encrypt_unset".to_string())?;
+    let cipher = nasrudin_pg::query::user_llm_keys::get_ciphertext(&pg, user_id, &provider)
+        .await
+        .map_err(|e| format!("db: {e}"))?
+        .ok_or_else(|| "no_provider_key".to_string())?;
+    let api_key = decrypt(&EncryptedKey(cipher), encrypt_key)
+        .map_err(|_| "decrypt_failed".to_string())?;
+
+    let req = CompletionRequest {
+        model: model.clone(),
+        system_prompt: PAPER_SYSTEM_PROMPT.to_string(),
+        user_prompt: build_paper_user_prompt(&view),
+        max_tokens: 4096,
+        temperature: 0.5,
+        stop_sequences: vec![],
+        response_format: ResponseFormat::Free,
+    };
+
+    // The Registry doesn't expose stream() yet (paper draft is the only
+    // caller and Anthropic is the only provider with a real impl), so
+    // build the provider directly here. Keep the provider owned in scope
+    // for the lifetime of the stream — `stream<'a>(&'a self, …)` borrows
+    // from self.
+    let provider_box: Box<dyn LlmProvider> = match provider.as_str() {
+        "anthropic" => Box::new(AnthropicProvider::new(api_key)),
+        "openai" => Box::new(OpenAiProvider::new(api_key)),
+        "ollama" => Box::new(OllamaProvider::new()),
+        _ => return Err(format!("unknown_provider: {provider}")),
+    };
+    let mut stream_box = provider_box
+        .stream(req)
+        .await
+        .map_err(|e| format!("stream: {e}"))?;
+
+    while let Some(item) = stream_box.next().await {
+        match item {
+            Ok(chunk) => {
+                if !chunk.text.is_empty() {
+                    let _ = nasrudin_pg::query::conjecture_jobs::append_paper_chunk(
+                        &pg, job_id, &chunk.text,
+                    )
+                    .await;
+                    let payload = serde_json::json!({"text": chunk.text});
+                    if let Ok(event_id) = nasrudin_pg::query::conjecture_jobs::insert_event(
+                        &pg,
+                        job_id,
+                        "paper_chunk",
+                        payload.clone(),
+                    )
+                    .await
+                    {
+                        let _ = state.conjecture_event_tx.send(crate::conjecture::ConjectureEvent {
+                            id: event_id,
+                            job_id,
+                            kind: "paper_chunk".into(),
+                            payload,
+                            at: chrono::Utc::now(),
+                        });
+                    }
+                }
+                if chunk.finish_reason.is_some() {
+                    let payload = serde_json::json!({"final": true});
+                    if let Ok(event_id) = nasrudin_pg::query::conjecture_jobs::insert_event(
+                        &pg,
+                        job_id,
+                        "paper_done",
+                        payload.clone(),
+                    )
+                    .await
+                    {
+                        let _ = state.conjecture_event_tx.send(crate::conjecture::ConjectureEvent {
+                            id: event_id,
+                            job_id,
+                            kind: "paper_done".into(),
+                            payload,
+                            at: chrono::Utc::now(),
+                        });
+                    }
+                    break;
+                }
+            }
+            Err(e) => {
+                let payload = serde_json::json!({"error": e.to_string()});
+                let _ = nasrudin_pg::query::conjecture_jobs::insert_event(
+                    &pg,
+                    job_id,
+                    "paper_error",
+                    payload.clone(),
+                )
+                .await;
+                let _ = state.conjecture_event_tx.send(crate::conjecture::ConjectureEvent {
+                    id: 0,
+                    job_id,
+                    kind: "paper_error".into(),
+                    payload,
+                    at: chrono::Utc::now(),
+                });
+                return Err(e.to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `GET /api/conjecture/{id}/paper.md` — returns the persisted draft as
+/// `text/markdown`. 404 when no draft has been generated yet.
+pub async fn get_paper(
+    State(_state): State<Arc<AppState>>,
+    auth: AuthOrApiKey,
+    auth_sess: AuthSess,
+    Path(id): Path<Uuid>,
+) -> Response {
+    let pg = &auth_sess.backend.db;
+    let user_id = auth.user.id;
+    let row = match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "not_found"),
+        Err(e) => {
+            tracing::warn!("get conjecture failed: {e}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        }
+    };
+    if row.owner_id != user_id {
+        return err(StatusCode::NOT_FOUND, "not_found");
+    }
+    let Some(draft) = row.paper_draft else {
+        return err(StatusCode::NOT_FOUND, "no_paper_draft");
+    };
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        draft,
+    )
+        .into_response()
+}
+
 #[derive(serde::Deserialize)]
 pub struct CompleteBody {
     /// One of: "Verified" | "NoResult" | "TimedOut" | "Cancelled".
