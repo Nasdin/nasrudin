@@ -9,6 +9,7 @@ members = [
     "crates/api",
     "crates/mcp",
     "crates/importer",
+    "crates/embed",
 ]
 resolver = "2"
 
@@ -83,3 +84,8 @@ dotenvy = "0.15"
 # Protobuf
 prost = "0.14"
 bytes = "1.11"
+
+# Embeddings (Phase B)
+fastembed = "4"
+instant-distance = "0.6"
+memmap2 = "0.9"
