@@ -59,6 +59,10 @@ pub struct ReverifyQueue {
     pub lake: Arc<LakeBuilder>,
     pub axiom_store: crate::state::SharedAxiomStore,
     pub discovery_tx: broadcast::Sender<DiscoveryEvent>,
+    /// Server-side cache bundle (Phase A.5 wiring). When `Some` and
+    /// `cache_ctx.config.attempts_enabled`, the reverify path goes
+    /// through `LakeBuilder::verify_cached` instead of `verify`.
+    pub cache_ctx: Option<Arc<crate::cache::CacheCtx>>,
 }
 
 /// SSE event variants broadcast as the reverify queue progresses through a
@@ -138,7 +142,10 @@ impl ReverifyQueue {
         // 2. Replay the chain server-side over our trusted AxiomStore.
         match self.check_chain(&row) {
             ChainCheck::Regenerated(regen) => {
-                match self.lake.verify(&regen.lean_source, &theorem_id_hex).await? {
+                let verify_outcome = self
+                    .verify_cached_or_direct(&row, &regen.lean_source, &theorem_id_hex)
+                    .await?;
+                match verify_outcome {
                     VerifyOutcome::Verified {
                         tactic,
                         duration_ms,
@@ -254,7 +261,10 @@ impl ReverifyQueue {
     ) -> Result<()> {
         let theorem_id_hex = hex::encode(&row.id);
 
-        match self.lake.verify(&row.lean_source, &theorem_id_hex).await? {
+        match self
+            .verify_cached_or_direct(row, &row.lean_source, &theorem_id_hex)
+            .await?
+        {
             VerifyOutcome::Verified {
                 tactic,
                 duration_ms,
@@ -343,6 +353,78 @@ impl ReverifyQueue {
         Ok(())
     }
 
+    /// Cache-aware lake-build dispatch.
+    ///
+    /// When `cache_ctx` is wired and `attempts_enabled`, routes through
+    /// [`LakeBuilder::verify_cached`] (skip on hit, write on miss).
+    /// Otherwise falls through to direct [`LakeBuilder::verify`].
+    async fn verify_cached_or_direct(
+        &self,
+        row: &nasrudin_pg::entity::theorems::Model,
+        lean_source: &str,
+        theorem_id_hex: &str,
+    ) -> Result<VerifyOutcome> {
+        if let Some(c) = self
+            .cache_ctx
+            .as_ref()
+            .filter(|c| c.config.attempts_enabled)
+        {
+            // Build the 16-byte cache key: canonical_hash || axiom_set_hash.
+            let mut canon8 = [0u8; 8];
+            canon8.copy_from_slice(&row.canonical_hash[..8]);
+            let axiom_hash = self.axiom_hash_for_row(row);
+            let cache_key = nasrudin_rocks::AttemptsCache::make_key(&canon8, &axiom_hash);
+            self.lake
+                .verify_cached(
+                    &c.bundle.attempts,
+                    &cache_key,
+                    &c.bundle.lean_version,
+                    &c.bundle.worker_id,
+                    c.bundle.ttl_days,
+                    lean_source,
+                    theorem_id_hex,
+                )
+                .await
+        } else {
+            self.lake.verify(lean_source, theorem_id_hex).await
+        }
+    }
+
+    /// Compute the 8-byte axiom-set hash for a theorems row by walking
+    /// the row's `chain_json` (the same source `check_chain` parses)
+    /// and collecting axiom names from `IntroduceAxiom` /
+    /// `IntroduceTheorem` steps. Falls back to all-zeros when the row
+    /// has no chain (imported / backfilled theorems with empty
+    /// `chain_json`) — meaning two cache entries for the same canonical
+    /// statement but different axiom sets stay distinguished as long as
+    /// chains are present.
+    fn axiom_hash_for_row(&self, row: &nasrudin_pg::entity::theorems::Model) -> [u8; 8] {
+        use nasrudin_core::{axiom_id_from_name, axiom_set_hash};
+        use std::collections::BTreeSet;
+
+        let steps_value = match &row.chain_json {
+            v if v.is_null() => return [0u8; 8],
+            serde_json::Value::Array(arr) if arr.is_empty() => return [0u8; 8],
+            v => v,
+        };
+        let steps: Vec<RuleStep> = match serde_json::from_value(steps_value.clone()) {
+            Ok(s) => s,
+            Err(_) => return [0u8; 8],
+        };
+        let mut ids: BTreeSet<[u8; 8]> = BTreeSet::new();
+        for step in &steps {
+            match step {
+                RuleStep::IntroduceAxiom { axiom_name } => {
+                    ids.insert(axiom_id_from_name(axiom_name));
+                }
+                RuleStep::IntroduceTheorem { theorem_name } => {
+                    ids.insert(axiom_id_from_name(theorem_name));
+                }
+                _ => {}
+            }
+        }
+        axiom_set_hash(&ids)
+    }
 }
 
 /// Outcome of replaying a worker-submitted chain over the server's

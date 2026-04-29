@@ -67,4 +67,10 @@ pub struct AppState {
     /// Set via `ADMIN_TOKEN` env var. When `None`, admin endpoints are
     /// disabled (return 503).
     pub admin_token: Option<String>,
+    /// Server-side cache bundle (Phase A.5 wiring). `None` during early
+    /// boot if [`crate::cache::CacheCtx::build`] fails — the GA / reverify
+    /// paths fall back to direct verification. Populated unconditionally
+    /// in production; the per-flag gating happens at the call site via
+    /// `cache_ctx.config.attempts_enabled` etc.
+    pub cache_ctx: Option<Arc<crate::cache::CacheCtx>>,
 }

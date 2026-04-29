@@ -2,6 +2,7 @@
 //! and integration tests.
 
 pub mod auth;
+pub mod cache;
 pub mod handlers;
 pub mod hydration;
 pub mod keygen;

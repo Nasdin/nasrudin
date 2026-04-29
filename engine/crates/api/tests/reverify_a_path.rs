@@ -139,6 +139,7 @@ async fn b_path_verified_flips_status_and_increments_contributor() {
         lake,
         axiom_store,
         discovery_tx: tx,
+        cache_ctx: None,
     });
 
     let job = rocks

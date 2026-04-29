@@ -139,6 +139,24 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("ADMIN_TOKEN unset — /api/admin/* endpoints disabled");
     }
 
+    // Cache layer (Phase A.5). Constructed unconditionally; per-flag
+    // gating (NASRUDIN_CACHE_ATTEMPTS=1, etc.) happens at the call sites.
+    let cache_ctx = match physics_api::cache::CacheCtx::build(&db) {
+        Ok(c) => {
+            tracing::info!(
+                "cache layer built (attempts={}, tactic_priors={}, persistent_lean={})",
+                c.config.attempts_enabled,
+                c.config.tactic_priors_enabled,
+                c.config.persistent_lean_enabled,
+            );
+            Some(Arc::new(c))
+        }
+        Err(e) => {
+            tracing::warn!("cache layer init failed ({e}); continuing without caches");
+            None
+        }
+    };
+
     // Channels
     let (candidates_tx, candidates_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();
     let (verified_tx, verified_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();
@@ -222,6 +240,7 @@ async fn main() -> anyhow::Result<()> {
             lake: Arc::clone(&lake),
             axiom_store: axiom_store.clone(),
             discovery_tx: reverify_event_tx.clone(),
+            cache_ctx: cache_ctx.clone(),
         })
     });
 
@@ -239,6 +258,7 @@ async fn main() -> anyhow::Result<()> {
         reverify,
         worker_rate_limiter,
         admin_token,
+        cache_ctx: cache_ctx.clone(),
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
