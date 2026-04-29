@@ -6,6 +6,7 @@ mod m20260501_000003_theorems;
 mod m20260501_000004_workers_extend;
 mod m20260601_000005_search_indexes;
 mod m20260710_000006_user_llm_keys;
+mod m20260801_000007_conjecture_jobs;
 
 pub struct Migrator;
 
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260501_000004_workers_extend::Migration),
             Box::new(m20260601_000005_search_indexes::Migration),
             Box::new(m20260710_000006_user_llm_keys::Migration),
+            Box::new(m20260801_000007_conjecture_jobs::Migration),
         ]
     }
 }
