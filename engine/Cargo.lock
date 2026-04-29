@@ -1816,6 +1816,7 @@ name = "nasrudin-rocks"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "hex",
  "nasrudin-core",
  "rocksdb",
