@@ -436,3 +436,45 @@ impl AxiomStore {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Round-trip the universal-translator wire shapes (App / Pi / Lam /
+    /// Implies / new BinOps + UnOps) through `serde_json::from_value`.
+    /// If this breaks the on-disk catalog stops loading silently.
+    #[test]
+    fn deserializes_universal_wire_shapes() {
+        let cases = [
+            // Var, Const, Lit
+            r#"{"Var":"x"}"#,
+            r#"{"Const":"SpeedOfLight"}"#,
+            r#"{"Lit":[2,1]}"#,
+            // App-chain
+            r#"{"App":[{"Var":"Real.exp"},{"Var":"x"}]}"#,
+            // Pi binder (forall x : Real, body)
+            r#"{"Pi":["x",{"Var":"Real"},{"BinOp":["Eq",{"Var":"x"},{"Var":"x"}]}]}"#,
+            // Lam binder
+            r#"{"Lam":["x",{"Var":"Real"},{"Var":"x"}]}"#,
+            // New BinOps
+            r#"{"BinOp":["Le",{"Var":"a"},{"Var":"b"}]}"#,
+            r#"{"BinOp":["Lt",{"Var":"a"},{"Var":"b"}]}"#,
+            r#"{"BinOp":["Implies",{"Var":"p"},{"Var":"q"}]}"#,
+            r#"{"BinOp":["Iff",{"Var":"p"},{"Var":"q"}]}"#,
+            r#"{"BinOp":["Ne",{"Var":"a"},{"Var":"b"}]}"#,
+            // New UnOps
+            r#"{"UnOp":["Sin",{"Var":"x"}]}"#,
+            r#"{"UnOp":["Cos",{"Var":"x"}]}"#,
+            r#"{"UnOp":["Exp",{"Var":"x"}]}"#,
+            r#"{"UnOp":["Log",{"Var":"x"}]}"#,
+            // Nested mix
+            r#"{"BinOp":["Eq",{"BinOp":["Add",{"Var":"a"},{"Var":"b"}]},{"BinOp":["Add",{"Var":"b"},{"Var":"a"}]}]}"#,
+        ];
+        for src in cases {
+            let v: serde_json::Value = serde_json::from_str(src).expect("valid json");
+            let parsed: Result<Expr, _> = serde_json::from_value(v);
+            assert!(parsed.is_ok(), "failed to deserialise: {src}");
+        }
+    }
+}
