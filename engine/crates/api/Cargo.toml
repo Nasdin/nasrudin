@@ -23,6 +23,10 @@ path = "src/bin/cache_stats.rs"
 name = "embed_build"
 path = "src/bin/embed_build.rs"
 
+[[bin]]
+name = "issue_worker_key"
+path = "src/bin/issue_worker_key.rs"
+
 [dependencies]
 nasrudin-core = { path = "../core" }
 nasrudin-rocks = { path = "../rocks" }

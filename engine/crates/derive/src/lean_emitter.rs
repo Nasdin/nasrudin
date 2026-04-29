@@ -332,7 +332,7 @@ fn emit_chain_theorem(out: &mut String, ctx: &DerivationContext, config: &LeanEm
 /// Convert an `Expr` to Lean4 term syntax.
 pub fn expr_to_lean(expr: &Expr) -> String {
     match expr {
-        Expr::Var(name) => name.clone(),
+        Expr::Var(name) => sanitize_lean_ident(name),
         Expr::Const(c) => const_to_lean(c),
         Expr::Lit(n, d) => {
             if *d == 1 {
@@ -355,10 +355,15 @@ pub fn expr_to_lean(expr: &Expr) -> String {
                 BinOp::Div => format!("({ls} / {rs})"),
                 BinOp::Pow => format!("({ls} ^ {rs})"),
                 BinOp::Eq => format!("{ls} = {rs}"),
+                BinOp::Ne => format!("{ls} ≠ {rs}"),
                 BinOp::Le => format!("{ls} ≤ {rs}"),
                 BinOp::Lt => format!("{ls} < {rs}"),
                 BinOp::Ge => format!("{ls} ≥ {rs}"),
                 BinOp::Gt => format!("{ls} > {rs}"),
+                BinOp::And => format!("({ls} ∧ {rs})"),
+                BinOp::Or => format!("({ls} ∨ {rs})"),
+                BinOp::Implies => format!("({ls} → {rs})"),
+                BinOp::Iff => format!("({ls} ↔ {rs})"),
                 _ => format!("({ls} «{op:?}» {rs})"),
             }
         }
@@ -368,10 +373,73 @@ pub fn expr_to_lean(expr: &Expr) -> String {
                 UnOp::Neg => format!("(-{es})"),
                 UnOp::Sqrt => format!("Real.sqrt {es}"),
                 UnOp::Abs => format!("|{es}|"),
+                UnOp::Sin => format!("Real.sin {es}"),
+                UnOp::Cos => format!("Real.cos {es}"),
+                UnOp::Tan => format!("Real.tan {es}"),
+                UnOp::Exp => format!("Real.exp {es}"),
+                UnOp::Log => format!("Real.log {es}"),
+                UnOp::Ln => format!("Real.log {es}"),
                 _ => format!("«{op:?}» {es}"),
             }
         }
+        // Curried application chain: nasrudin's `App` is binary, so a
+        // multi-arg call ends up as `App(App(App(f, x), y), z)`. Lean's
+        // function application is juxtaposition `f x y z`, parenthesised.
+        Expr::App(f, x) => {
+            let fs = expr_to_lean(f);
+            let xs = expr_to_lean(x);
+            format!("({fs} {xs})")
+        }
+        // Dependent forall. The translator emits `Pi(_, Prop, body)`
+        // for hypothesis-shaped foralls (handled via BinOp::Implies),
+        // and `Pi(name, T, body)` for genuinely dependent or non-Prop
+        // binders. Use Lean's `∀ (name : T), body` syntax.
+        Expr::Pi(name, ty, body) => {
+            let n = sanitize_lean_ident(name);
+            let ts = expr_to_lean(ty);
+            let bs = expr_to_lean(body);
+            format!("(∀ ({n} : {ts}), {bs})")
+        }
+        Expr::Lam(name, ty, body) => {
+            let n = sanitize_lean_ident(name);
+            let ts = expr_to_lean(ty);
+            let bs = expr_to_lean(body);
+            format!("(fun ({n} : {ts}) => {bs})")
+        }
         _ => format!("sorry /- {expr:?} -/"),
+    }
+}
+
+/// Sanitise a name into something Lean's parser will accept as an
+/// identifier. The translator emits names like `Real.sqrt`, `<sort>`,
+/// `inst._@.PhysLean...`, `_b3`, etc. — most are valid Lean tokens
+/// already, but a handful (`<sort>`, anonymous binders that start with
+/// `_b`) need wrapping or substitution. Conservative passthrough: if
+/// it contains a character Lean can't parse, replace with `_`.
+fn sanitize_lean_ident(name: &str) -> String {
+    if name.is_empty() {
+        return "_anon".into();
+    }
+    // `<sort>` and `?m.123` placeholder vars: substitute a fresh _.
+    if name.starts_with('<') || name.starts_with('?') {
+        return "_anon".into();
+    }
+    // Lean allows dots in qualified names, but bare names with weird
+    // chars need scrubbing. Common ones we keep: A-Za-z0-9._' and α-ω.
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '_' || c == '\'' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.chars().next().map_or(true, |c| c.is_ascii_digit()) {
+        format!("_{cleaned}")
+    } else {
+        cleaned
     }
 }
 
