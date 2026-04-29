@@ -17,6 +17,38 @@ pub fn collect_axiom_ids(tree: &ProofTree) -> BTreeSet<TheoremId> {
     out
 }
 
+/// 8-byte BLAKE3 prefix over the sorted axiom IDs in `set`.
+///
+/// Used as the second half of the 16-byte cache key for both the
+/// `attempts` and `tactic_priors` column families. `BTreeSet` ordering
+/// guarantees the hash is stable across calls regardless of insertion
+/// order; calling with the same membership always yields the same prefix.
+pub fn axiom_set_hash(set: &BTreeSet<TheoremId>) -> [u8; 8] {
+    let mut hasher = blake3::Hasher::new();
+    for id in set {
+        hasher.update(id);
+    }
+    let full = hasher.finalize();
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&full.as_bytes()[..8]);
+    out
+}
+
+/// Synthetic 8-byte ID derived from a free-form axiom name.
+///
+/// `nasrudin_derive::AxiomStore` keys axioms by `String` name (no
+/// `TheoremId` field on the `Axiom` struct). Cache code wants
+/// `BTreeSet<TheoremId>` to feed into [`axiom_set_hash`], so this
+/// helper provides a stable name-to-ID mapping. Same name always
+/// yields the same 8 bytes; different names diverge with overwhelming
+/// probability (BLAKE3, no truncation collisions in practice).
+pub fn axiom_id_from_name(name: &str) -> TheoremId {
+    let full = blake3::hash(name.as_bytes());
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&full.as_bytes()[..8]);
+    out
+}
+
 fn walk(tree: &ProofTree, out: &mut BTreeSet<TheoremId>) {
     match tree {
         ProofTree::Axiom(id) => {
@@ -155,5 +187,56 @@ mod tests {
             proof_term: vec![],
         };
         assert_eq!(collect_axiom_ids(&t), BTreeSet::new());
+    }
+
+    #[test]
+    fn axiom_set_hash_is_deterministic() {
+        let ids = BTreeSet::from([id(1), id(2), id(3)]);
+        let h1 = axiom_set_hash(&ids);
+        let h2 = axiom_set_hash(&ids);
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 8);
+    }
+
+    #[test]
+    fn axiom_set_hash_order_independent() {
+        let mut a = BTreeSet::new();
+        a.insert(id(2));
+        a.insert(id(1));
+        a.insert(id(3));
+        let mut b = BTreeSet::new();
+        b.insert(id(3));
+        b.insert(id(1));
+        b.insert(id(2));
+        assert_eq!(axiom_set_hash(&a), axiom_set_hash(&b));
+    }
+
+    #[test]
+    fn axiom_set_hash_empty_set_distinct_from_single_element() {
+        let empty = BTreeSet::new();
+        let one = BTreeSet::from([id(1)]);
+        assert_ne!(axiom_set_hash(&empty), axiom_set_hash(&one));
+    }
+
+    #[test]
+    fn axiom_set_hash_different_members_diverge() {
+        let a = BTreeSet::from([id(1), id(2)]);
+        let b = BTreeSet::from([id(1), id(3)]);
+        assert_ne!(axiom_set_hash(&a), axiom_set_hash(&b));
+    }
+
+    #[test]
+    fn axiom_id_from_name_is_deterministic() {
+        let a = axiom_id_from_name("rest_frame_psq_zero");
+        let b = axiom_id_from_name("rest_frame_psq_zero");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 8);
+    }
+
+    #[test]
+    fn axiom_id_from_name_diverges_for_different_names() {
+        let a = axiom_id_from_name("rest_frame_psq_zero");
+        let b = axiom_id_from_name("photon_dispersion");
+        assert_ne!(a, b);
     }
 }

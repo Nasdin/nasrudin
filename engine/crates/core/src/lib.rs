@@ -7,7 +7,7 @@ pub mod parse;
 pub mod skeleton;
 pub mod theorem;
 
-pub use axiom_set::collect_axiom_ids;
+pub use axiom_set::{axiom_id_from_name, axiom_set_hash, collect_axiom_ids};
 pub use canonical_ac::{canonical_ac_hash, canonical_ac_string, to_canonical_ac};
 pub use dimension::Dimension;
 pub use expr::{BinOp, Expr, PhysConst, Symbol, UnOp};
