@@ -18,6 +18,7 @@
 pub mod export;
 pub mod ffi;
 pub mod lean_syntax;
+pub mod persistent_protocol;
 pub mod process;
 pub mod tactic;
 
