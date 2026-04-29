@@ -280,8 +280,26 @@ async fn main() -> anyhow::Result<()> {
         2,
     ));
 
+    // Warm the prover's `.lake/build/` so the first verification doesn't
+    // pay the multi-minute cold-cache cost. Spawned in the background —
+    // we don't block the listener on `lake build`. Workers may submit
+    // before warmup finishes; their first verifications will pay full
+    // build cost, subsequent ones reuse the warm cache.
+    {
+        let lake = Arc::clone(&lake);
+        tokio::spawn(async move {
+            if let Err(e) = lake.warmup().await {
+                tracing::warn!("lake warmup failed: {e}");
+            }
+        });
+    }
+
     let (reverify_event_tx, _reverify_event_rx) =
         tokio::sync::broadcast::channel::<physics_api::reverify::DiscoveryEvent>(256);
+
+    let (conjecture_event_tx, _conjecture_event_rx) = tokio::sync::broadcast::channel::<
+        physics_api::conjecture::ConjectureEvent,
+    >(256);
 
     let reverify = pg.as_ref().map(|pg_conn| {
         Arc::new(physics_api::reverify::ReverifyQueue {
@@ -312,6 +330,7 @@ async fn main() -> anyhow::Result<()> {
         embed,
         embed_path,
         llm_encrypt_key,
+        conjecture_event_tx,
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
@@ -320,6 +339,18 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Reverify drain loop spawned");
     } else {
         tracing::info!("Reverify drain loop disabled (no PostgreSQL)");
+    }
+
+    // RocksDB-primary ingest write-behind: spawn the PG drain loop iff
+    // Postgres is wired. The hot ingest path persists to RocksDB +
+    // pg_insert_queue synchronously; this task drains the queue every
+    // 500ms and batch-inserts into PG. On API restart, the queue is
+    // walked at boot so anything not yet flushed gets a fresh attempt.
+    if let Some(ref pg) = state.pg {
+        let rocks = Arc::clone(&state.db);
+        let pg = pg.clone();
+        tokio::spawn(physics_api::pg_drain::drain_loop(rocks, pg));
+        tracing::info!("PG drain loop spawned (RocksDB-primary ingest)");
     }
 
     // CORS configuration

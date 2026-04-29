@@ -84,4 +84,11 @@ pub struct AppState {
     /// `/api/me/llm-keys` endpoints all return 503 with
     /// `key_encrypt_unset` — production deployments must set this.
     pub llm_encrypt_key: Option<[u8; 32]>,
+    /// Phase D conjecture-loop event channel. Senders: handlers that
+    /// transition `conjecture_jobs` rows + (Phase E) worker progress
+    /// callbacks. Receivers: per-job `/api/conjecture/{id}/sse`
+    /// subscribers, filtered by `job_id`. Persisted twin lives in
+    /// `conjecture_events` for replay.
+    pub conjecture_event_tx:
+        tokio::sync::broadcast::Sender<crate::conjecture::ConjectureEvent>,
 }

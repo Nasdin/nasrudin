@@ -110,6 +110,9 @@ pub async fn build() -> Option<TestApp> {
     let (ga_discovery_tx, _) = tokio::sync::broadcast::channel::<GaDiscoveryEvent>(16);
     let (reverify_event_tx, _) = tokio::sync::broadcast::channel::<ReverifyDiscoveryEvent>(16);
     let reverify_event_tx_for_test = reverify_event_tx.clone();
+    let (conjecture_event_tx, _) = tokio::sync::broadcast::channel::<
+        physics_api::conjecture::ConjectureEvent,
+    >(16);
 
     let lake = Arc::new(LakeBuilder::new(
         std::env::temp_dir(),
@@ -133,6 +136,7 @@ pub async fn build() -> Option<TestApp> {
         embed: None,
         embed_path: None,
         llm_encrypt_key: Some([7u8; 32]),
+        conjecture_event_tx,
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the
