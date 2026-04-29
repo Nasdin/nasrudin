@@ -184,6 +184,18 @@ pub async fn build() -> Option<TestApp> {
             "/api/me/stats",
             axum::routing::get(handlers::me::stats),
         )
+        .route(
+            "/api/me/llm-keys",
+            axum::routing::get(handlers::llm_keys::list),
+        )
+        .route(
+            "/api/me/llm-keys",
+            axum::routing::post(handlers::llm_keys::set_key),
+        )
+        .route(
+            "/api/me/llm-keys/{provider}",
+            axum::routing::delete(handlers::llm_keys::revoke),
+        )
         .layer(auth_layer)
         .with_state(state);
 
