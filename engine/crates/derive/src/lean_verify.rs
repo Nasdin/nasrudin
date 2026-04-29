@@ -117,9 +117,6 @@ impl LeanVerifier {
     }
 }
 
-use chrono::Duration;
-use nasrudin_rocks::attempts_cache::{AttemptOutcome, AttemptsCache};
-
 /// Cache-backed wrapper around [`LeanVerifier::verify_file`].
 ///
 /// On cache hit (within TTL), returns the cached outcome translated back
@@ -132,6 +129,11 @@ use nasrudin_rocks::attempts_cache::{AttemptOutcome, AttemptsCache};
 /// `ttl_days` controls how long a cached outcome is considered fresh. Records
 /// older than this are treated as cache misses (the underlying verifier runs
 /// again and overwrites the row).
+///
+/// **Note**: when a cached `Verified` outcome is returned, the underlying
+/// `theorem_id` field is filled with zeros (we don't know it at this layer).
+/// Callers that need the canonical hash of the verified theorem must
+/// recompute it from the source.
 pub fn verify_with_cache(
     verifier: &LeanVerifier,
     cache: &AttemptsCache,
@@ -143,45 +145,77 @@ pub fn verify_with_cache(
     ttl_days: i64,
 ) -> LeanVerifyResult {
     let max_age = Duration::days(ttl_days);
-    let result = cache.lookup_or_compute(cache_key, max_age, worker_id, lean_version, || {
-        match verifier.verify_file(lean_content, module_path) {
-            LeanVerifyResult::Success => AttemptOutcome::Verified {
-                // The caller doesn't pass canonical_hash separately; downstream
-                // tasks that need the theorem id can recompute it from the
-                // verified statement. Leave zeros here as a sentinel.
-                theorem_id: [0u8; 8],
-                tactic: String::new(),
-            },
-            LeanVerifyResult::Failed { stderr } => AttemptOutcome::RejectedTypeError {
-                msg: truncate(&stderr, 256),
-            },
-            LeanVerifyResult::ProcessError { message } => AttemptOutcome::RejectedTypeError {
-                msg: truncate(&message, 256),
-            },
-        }
-    });
 
-    match result {
-        Ok(record) => match record.outcome {
-            AttemptOutcome::Verified { .. } => LeanVerifyResult::Success,
-            AttemptOutcome::RejectedTypeError { msg } => LeanVerifyResult::Failed { stderr: msg },
-            AttemptOutcome::RejectedTimeout => LeanVerifyResult::Failed {
-                stderr: "timeout".into(),
-            },
-            AttemptOutcome::RejectedTrivial { reason } => LeanVerifyResult::Failed {
-                stderr: reason,
-            },
-            AttemptOutcome::Pending => LeanVerifyResult::ProcessError {
-                message: "pending".into(),
-            },
-        },
-        Err(e) => LeanVerifyResult::ProcessError {
-            message: format!("cache: {e}"),
-        },
+    // Cache hit fast-path: if there's a fresh record, translate it back.
+    match cache.get_with_ttl(cache_key, max_age) {
+        Ok(Some(record)) => {
+            return match record.outcome {
+                AttemptOutcome::Verified { .. } => LeanVerifyResult::Success,
+                AttemptOutcome::RejectedTypeError { msg } => {
+                    LeanVerifyResult::Failed { stderr: msg }
+                }
+                AttemptOutcome::RejectedTimeout => LeanVerifyResult::Failed {
+                    stderr: "timeout".into(),
+                },
+                AttemptOutcome::RejectedTrivial { reason } => {
+                    LeanVerifyResult::Failed { stderr: reason }
+                }
+                AttemptOutcome::Pending => {
+                    // Pending records are written by other code paths (lease-TTL
+                    // mid-attempt). Treat as a cache miss and re-run the verifier
+                    // without persisting (Phase A.5 will own the lease semantics).
+                    verifier.verify_file(lean_content, module_path)
+                }
+            };
+        }
+        Ok(None) => {} // miss — fall through and run the verifier
+        Err(e) => {
+            // Cache read failure is not a verification result; log and run
+            // the verifier directly without trying to persist.
+            tracing::warn!("attempts cache get failed: {e}");
+            return verifier.verify_file(lean_content, module_path);
+        }
     }
+
+    // Miss: run the verifier.
+    let started = std::time::Instant::now();
+    let raw = verifier.verify_file(lean_content, module_path);
+    let elapsed_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+
+    // Map the result to a cacheable outcome — but ONLY if it's a stable
+    // signal. Process errors are transient (different machine might
+    // succeed) so we skip the cache write and return the raw result.
+    let outcome = match &raw {
+        LeanVerifyResult::Success => AttemptOutcome::Verified {
+            theorem_id: [0u8; 8],
+            tactic: String::new(),
+        },
+        LeanVerifyResult::Failed { stderr } => AttemptOutcome::RejectedTypeError {
+            msg: truncate(stderr, 256),
+        },
+        LeanVerifyResult::ProcessError { .. } => {
+            // Transient — do not persist.
+            return raw;
+        }
+    };
+
+    let record = AttemptRecord {
+        outcome,
+        lean_version: lean_version.to_string(),
+        timestamp: chrono::Utc::now(),
+        attempted_by: worker_id.to_string(),
+        elapsed_ms,
+    };
+    if let Err(e) = cache.put(cache_key, &record) {
+        tracing::warn!("attempts cache put failed: {e}");
+    }
+    raw
 }
 
 fn truncate(s: &str, n: usize) -> String {
+    if n == 0 {
+        return String::new();
+    }
     if s.len() <= n {
         s.to_string()
     } else {
