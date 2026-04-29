@@ -204,8 +204,14 @@ def ppTypeExpr (e : Expr) : MetaM String := do
 /-- Walk the environment and extract all theorems matching the
     namespace whitelist. The `exprAst` field is always populated thanks
     to the universal translator; the Rust loader is responsible for
-    filtering rows whose tree the Rust `Expr` enum can't deserialise. -/
-def walkTheoremsWithWhitelist (whitelist : List String := []) : MetaM (Array ExtractedTheorem) := do
+    filtering rows whose tree the Rust `Expr` enum can't deserialise.
+
+    Disables the global `maxHeartbeats` limit (default 200k) for the
+    duration of the walk — iterating 400k+ Mathlib constants alone
+    burns through that, before the translator even runs. Per-theorem
+    work is still bounded to 50k heartbeats inside the loop. -/
+def walkTheoremsWithWhitelist (whitelist : List String := []) : MetaM (Array ExtractedTheorem) :=
+  withTheReader Core.Context (fun ctx => { ctx with maxHeartbeats := 0 }) do
   let env ← getEnv
   let mut results := #[]
   for (name, ci) in env.constants.map₁.toList do
