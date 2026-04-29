@@ -25,8 +25,16 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use crate::state::AppState;
+use crate::state::{AppState, SeedCacheKey};
+
+/// How long a serialised /api/seed response stays valid in cache. The
+/// AxiomStore only changes via /api/admin/reload_corpus (which busts
+/// the cache) and the verified-recent index ticks roughly every chunk
+/// (60s). 30s is a safe middle ground: workers polling at 60s cadence
+/// hit fresh data on alternating polls.
+const SEED_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Deserialize)]
 pub struct SeedQuery {
@@ -50,6 +58,29 @@ pub async fn seed(
         }
     };
     let top = q.top.unwrap_or(50).min(500);
+
+    // ── Cache hit fast path ───────────────────────────────────────────
+    // Most workers re-poll /api/seed at chunk boundaries with the same
+    // (domain, top). Skip the entire axiom-store iteration + verified-
+    // recent fetch + JSON serialise if we have a fresh cached body.
+    // Cache invalidation: /api/admin/reload_corpus clears the map after
+    // hot-reloading the AxiomStore.
+    let cache_key = SeedCacheKey {
+        domain: q.domain.clone(),
+        top,
+    };
+    if let Ok(map) = state.seed_cache.lock() {
+        if let Some((generated_at, body)) = map.get(&cache_key) {
+            if generated_at.elapsed() < SEED_CACHE_TTL {
+                return (
+                    StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    body.as_bytes().to_vec(),
+                )
+                    .into_response();
+            }
+        }
+    }
 
     // Axioms from the in-memory AxiomStore. Domain filter accepts either the
     // Display form ("special_relativity") or the Rust enum name
@@ -81,35 +112,75 @@ pub async fn seed(
         })
         .collect();
 
-    // Seed theorems: top-N Verified for the given domain (newest-first; the
-    // pg query layer doesn't expose a fitness sort yet, so newest-first is
-    // the closest stable proxy and matches `/api/theorems` semantics).
-    let seed_theorems = match nasrudin_pg::query::theorems::list_verified(
-        pg,
-        None,
-        top,
-        q.domain.clone(),
-    )
-    .await
-    {
-        Ok(page) => page.items,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("seed_query_failed: {e}")
-                })),
-            )
-                .into_response();
+    // Seed theorems: top-N Verified, newest-first. RocksDB-primary
+    // (Task 4): the verified-at index is populated by `flip_verified`
+    // every time a theorem flips to Verified, so this returns the same
+    // data PG would but ~10× faster (RocksDB indexed scan vs. PG row
+    // fetch). Falls back to PG when the RocksDB index is empty so
+    // legacy data still surfaces during the rollout window.
+    let _ = pg; // PG kept for the legacy fallback below.
+    let mut seed_theorems: Vec<serde_json::Value> = Vec::new();
+    if let Ok(ids) = state.db.list_verified_recent_ids(top as usize) {
+        for id in ids {
+            if let Ok(Some(theorem)) = state.db.get_theorem(&id) {
+                if let Some(ref d) = q.domain {
+                    let dom_disp = format!("{}", theorem.domain);
+                    let dom_dbg = format!("{:?}", theorem.domain);
+                    if dom_disp != *d && dom_dbg != *d {
+                        continue;
+                    }
+                }
+                seed_theorems.push(
+                    serde_json::to_value(&theorem)
+                        .unwrap_or_else(|_| serde_json::Value::Null),
+                );
+            }
         }
-    };
+    }
+    if seed_theorems.is_empty() {
+        match nasrudin_pg::query::theorems::list_verified(
+            pg,
+            None,
+            top,
+            q.domain.clone(),
+        )
+        .await
+        {
+            Ok(page) => {
+                seed_theorems = page
+                    .items
+                    .into_iter()
+                    .map(|m| {
+                        serde_json::to_value(&m).unwrap_or_else(|_| serde_json::Value::Null)
+                    })
+                    .collect();
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": format!("seed_query_failed: {e}")
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
 
+    let body = serde_json::json!({
+        "axioms": axioms,
+        "seed_theorems": seed_theorems,
+    });
+    let body_str = serde_json::to_string(&body)
+        .unwrap_or_else(|_| r#"{"error":"serialise_failed"}"#.to_string());
+    let body_arc = Arc::new(body_str);
+    if let Ok(mut map) = state.seed_cache.lock() {
+        map.insert(cache_key, (Instant::now(), Arc::clone(&body_arc)));
+    }
     (
         StatusCode::OK,
-        Json(serde_json::json!({
-            "axioms": axioms,
-            "seed_theorems": seed_theorems,
-        })),
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body_arc.as_bytes().to_vec(),
     )
         .into_response()
 }

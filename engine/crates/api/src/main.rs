@@ -331,6 +331,9 @@ async fn main() -> anyhow::Result<()> {
         embed_path,
         llm_encrypt_key,
         conjecture_event_tx,
+        seed_cache: Arc::new(std::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
@@ -515,6 +518,20 @@ async fn main() -> anyhow::Result<()> {
                 "/api/me/llm-keys/{provider}",
                 delete(handlers::llm_keys::revoke),
             )
+            .route("/api/conjecture", post(handlers::conjecture::create))
+            .route(
+                "/api/conjecture/{id}",
+                get(handlers::conjecture::get_one),
+            )
+            .route(
+                "/api/conjecture/{id}/start",
+                post(handlers::conjecture::start),
+            )
+            .route(
+                "/api/conjecture/{id}/sse",
+                get(handlers::conjecture::sse),
+            )
+            .route("/api/me/conjectures", get(handlers::conjecture::list_mine))
             .layer(GovernorLayer::new(rate_limit::platform_user()));
 
         // Platform-worker: worker registration + heartbeat + ingest. Bearer nsk_worker_.

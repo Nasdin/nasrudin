@@ -110,6 +110,11 @@ pub async fn reload_corpus(
     };
 
     state.axiom_store.replace(new_store);
+    // Bust the seed-response cache so workers see the freshly-loaded
+    // axioms on their next poll instead of waiting for TTL.
+    if let Ok(mut map) = state.seed_cache.lock() {
+        map.clear();
+    }
     tracing::info!("Hot-reloaded AxiomStore: {total} axioms ({math_count} math-corpus entries)");
 
     (

@@ -259,6 +259,32 @@ async fn main() {
             std::sync::Arc::new(std::collections::HashSet::new())
         }
     };
+
+    // Bloom-filter pre-check over the rejected set. The bloom is sized
+    // for ~100k entries with FPR 0.001. CPU-cache-friendly compared to
+    // the HashSet probe, so even when the set is small the check is
+    // faster. Only built when there's something to prepopulate; an
+    // empty bloom would always-miss and regress to the HashSet path
+    // anyway. Sized = max(rejected.len() * 4, 4096) so workers in
+    // early-cluster days don't have a near-saturated filter.
+    let novelty_bloom: Option<std::sync::Arc<bloomfilter::Bloom<[u8]>>> = {
+        if rejected_canonicals.is_empty() {
+            None
+        } else {
+            let n = std::cmp::max(rejected_canonicals.len() * 4, 4096);
+            // `bloomfilter::Bloom::new_for_fp_rate` returns the Bloom
+            // directly (no Result) in the version this workspace uses.
+            let mut b = bloomfilter::Bloom::new_for_fp_rate(n, 0.001);
+            for h in rejected_canonicals.iter() {
+                b.set(h.as_slice());
+            }
+            println!(
+                "▶ Novelty bloom: {} entries pre-loaded (capacity {n}, FPR ~0.1%)",
+                rejected_canonicals.len()
+            );
+            Some(std::sync::Arc::new(b))
+        }
+    };
     println!();
 
     let config = DiscoveryConfig {
@@ -272,6 +298,7 @@ async fn main() {
         max_lake_verifications: if prover_root.is_some() { max_lake } else { 0 },
         target: target_spec,
         rejected_canonicals: rejected_canonicals.clone(),
+        novelty_bloom: novelty_bloom.clone(),
         cache_ctx: None,
     };
 

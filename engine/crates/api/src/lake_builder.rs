@@ -9,7 +9,7 @@
 //! "double verification": pre-flight strips fake-via-axiom proofs, then
 //! `lake build` checks the real Lean kernel succeeds on the trusted prover
 //! template.
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -43,10 +43,26 @@ pub enum VerifyOutcome {
     },
 }
 
-/// Tokio task pool that spawns `lake build` in throwaway tmpdir copies of the
-/// trusted `prover/` template. Concurrency is capped by a semaphore.
+/// Tokio task pool that runs `lake build` against the trusted `prover/`
+/// directory directly, sharing the persistent `.lake/build/` cache across
+/// every verification. Each verification writes a uniquely-named submission
+/// file (`PhysicsGenerator/Derived/Submission_<theorem_id_hex>.lean`),
+/// runs `lake build` (which only re-elaborates the new submission against
+/// the already-cached PhysicsGenerator + Mathlib oleans), and cleans up
+/// the source + olean afterwards.
+///
+/// The previous design copied the entire prover tree into a tmpdir per
+/// verification, which forced lake to re-load 7,500+ Mathlib oleans into
+/// elaborator scope each time. Direct-mode reuses the warm cache, cutting
+/// per-verification cost from ~60s to ~5s (and far less with the
+/// `LeafImports` module — Task 2).
+///
+/// `workspace_root` is preserved as a field for backwards compat with
+/// callers that pass it; it's no longer used.
 pub struct LakeBuilder {
+    /// Prover root directory — the actual `prover/` tree, not a copy.
     prover_template: PathBuf,
+    #[allow(dead_code)]
     workspace_root: PathBuf,
     semaphore: Arc<Semaphore>,
 }
@@ -60,9 +76,46 @@ impl LakeBuilder {
         }
     }
 
-    /// Pre-flight checks (`axiom` / `sorry`), then runs `lake build` on a
-    /// tmpdir copy of `prover_template` with the submission written to
-    /// `PhysicsGenerator/Derived/Submission_<theorem_id_hex>.lean`.
+    /// One-shot warmup: run `lake build PhysicsGenerator` against the
+    /// prover tree at API boot to ensure all base oleans (PhysicsGenerator
+    /// + LeafImports + transitive Mathlib) are populated before workers
+    /// start hitting verify(). Idempotent — if the cache is already warm,
+    /// lake exits in seconds.
+    ///
+    /// Errors are logged but non-fatal: if `lake` isn't on PATH the API
+    /// boots anyway and individual verifications fall back to per-call
+    /// build. Callers should `tokio::spawn` this so it doesn't block boot.
+    pub async fn warmup(&self) -> Result<()> {
+        let prover_root = self.prover_template.clone();
+        let join = tokio::task::spawn_blocking(move || -> Result<std::process::Output> {
+            std::process::Command::new("lake")
+                .arg("build")
+                .arg("PhysicsGenerator")
+                .current_dir(&prover_root)
+                .output()
+                .context("lake warmup spawn")
+        })
+        .await
+        .context("spawn_blocking join error")??;
+
+        if !join.status.success() {
+            tracing::warn!(
+                "lake warmup non-zero exit ({}): {}",
+                join.status,
+                String::from_utf8_lossy(&join.stderr)
+            );
+        } else {
+            tracing::info!("lake warmup complete (PhysicsGenerator oleans cached)");
+        }
+        Ok(())
+    }
+
+    /// Pre-flight checks (`axiom` / `sorry`), then runs `lake build` against
+    /// the prover tree with the submission written directly to
+    /// `prover/PhysicsGenerator/Derived/Submission_<theorem_id_hex>.lean`.
+    /// The submission file is removed after verification regardless of
+    /// outcome (the `.olean` artifact lingers in `.lake/build/` — cheap
+    /// disk, helpful if the same chain ever re-verifies).
     pub async fn verify(
         &self,
         lean_source: &str,
@@ -77,52 +130,69 @@ impl LakeBuilder {
         }
 
         // 2. Acquire a permit (caps concurrent lake-build invocations).
+        // Lake serialises internally on `.lake/lock` for cross-process
+        // builds against the same project, so concurrent verify() calls
+        // are safe but may queue at the lake-manifest level. Permit count
+        // is the user-tunable parallelism.
         let _permit = self
             .semaphore
             .acquire()
             .await
             .context("lake-builder semaphore closed")?;
 
-        // 3. Allocate an isolated tmpdir under `workspace_root`.
-        let workspace_root = self.workspace_root.clone();
-        let prover_template = self.prover_template.clone();
+        // 3. Write the submission file directly into the prover tree. The
+        // submission filename is namespaced by theorem_id_hex so concurrent
+        // verifications don't collide. We delete the .lean source after
+        // the build completes (success or failure) so the prover tree
+        // doesn't accumulate stale Submission_*.lean files.
+        let prover_root = self.prover_template.clone();
         let lean_source = lean_source.to_string();
         let theorem_id_hex = theorem_id_hex.to_string();
+        let submission_relative = format!(
+            "PhysicsGenerator/Derived/Submission_{theorem_id_hex}.lean"
+        );
+        let submission_path = prover_root.join(&submission_relative);
 
-        let join = tokio::task::spawn_blocking(move || -> Result<tempfile::TempDir> {
-            std::fs::create_dir_all(&workspace_root).ok();
-            let tmp = tempfile::tempdir_in(&workspace_root)
-                .context("create lake-builder tmpdir")?;
-            mirror_tree(&prover_template, tmp.path())
-                .context("mirror prover template into tmpdir")?;
-            // Write submission.
-            let submission_dir = tmp.path().join("PhysicsGenerator").join("Derived");
-            std::fs::create_dir_all(&submission_dir)
-                .context("create Derived submission dir")?;
-            let submission_path =
-                submission_dir.join(format!("Submission_{theorem_id_hex}.lean"));
-            std::fs::write(&submission_path, lean_source.as_bytes())
-                .context("write submission lean source")?;
-            Ok(tmp)
-        })
-        .await
-        .context("spawn_blocking join error")?;
-
-        let tmp = match join {
-            Ok(t) => t,
-            Err(e) => {
-                return Ok(VerifyOutcome::Rejected {
-                    reason: "toolchain_error".into(),
-                    stderr_tail: e.to_string(),
-                });
-            }
+        let write_result = {
+            let submission_path = submission_path.clone();
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                if let Some(parent) = submission_path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                std::fs::write(&submission_path, lean_source.as_bytes())
+                    .context("write submission lean source")
+            })
+            .await
+            .context("spawn_blocking join error")?
         };
 
-        // 4. Run `lake build` with a 300s wall-clock timeout.
+        if let Err(e) = write_result {
+            return Ok(VerifyOutcome::Rejected {
+                reason: "toolchain_error".into(),
+                stderr_tail: e.to_string(),
+            });
+        }
+
+        // 4. RAII guard: ensure the submission .lean file is removed even
+        // on early return / panic.
+        let _cleanup = SubmissionCleanup {
+            path: submission_path.clone(),
+            theorem_id_hex: theorem_id_hex.clone(),
+            prover_root: prover_root.clone(),
+        };
+
+        // 5. Run `lake build <Module>` with a 300s wall-clock timeout.
+        // Targeting the specific module (not bare `lake build`) tells lake
+        // to only build this one submission + its transitive deps; the
+        // prebuilt PhysicsGenerator.LeafImports oleans satisfy the deps.
+        let module_target = format!(
+            "PhysicsGenerator.Derived.Submission_{theorem_id_hex}"
+        );
         let start = std::time::Instant::now();
         let mut cmd = Command::new("lake");
         cmd.arg("build")
-            .current_dir(tmp.path())
+            .arg(&module_target)
+            .current_dir(&prover_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -319,37 +389,33 @@ fn strip_comments(src: &str) -> (String, bool) {
     (out, unterminated)
 }
 
-/// Mirror `src` into `dst` using hardlinks where possible, falling back to copy.
-fn mirror_tree(src: &Path, dst: &Path) -> Result<()> {
-    for entry in walkdir::WalkDir::new(src).follow_links(true) {
-        let entry = entry.with_context(|| format!("walkdir {}", src.display()))?;
-        let rel = entry
-            .path()
-            .strip_prefix(src)
-            .context("strip_prefix in mirror_tree")?;
-        let target = dst.join(rel);
-        if entry.file_type().is_dir() {
-            std::fs::create_dir_all(&target)
-                .with_context(|| format!("mkdir {}", target.display()))?;
-        } else if entry.file_type().is_file() {
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            // Try hardlink first, fall back to copy on any error (cross-device,
-            // permission, etc.).
-            if std::fs::hard_link(entry.path(), &target).is_err() {
-                std::fs::copy(entry.path(), &target).with_context(|| {
-                    format!(
-                        "copy {} -> {}",
-                        entry.path().display(),
-                        target.display()
-                    )
-                })?;
-            }
-        }
-        // Symlinks: followed (target contents are copied/hardlinked).
+/// RAII guard that deletes a submission `.lean` file (and its `.olean` if
+/// present) when dropped. The `.lean` is removed unconditionally so the
+/// prover tree never accumulates stale per-verification submissions; the
+/// `.olean` is best-effort cleanup since lake might already have written
+/// it to `.lake/build/lib/lean/PhysicsGenerator/Derived/`.
+struct SubmissionCleanup {
+    path: PathBuf,
+    theorem_id_hex: String,
+    prover_root: PathBuf,
+}
+
+impl Drop for SubmissionCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        let olean_rel = format!(
+            ".lake/build/lib/lean/PhysicsGenerator/Derived/Submission_{}.olean",
+            self.theorem_id_hex
+        );
+        let _ = std::fs::remove_file(self.prover_root.join(&olean_rel));
+        // Other build artifacts (.ilean, .c) co-located alongside .olean —
+        // ignore failures, they're cheap to leave.
+        let ilean_rel = format!(
+            ".lake/build/lib/lean/PhysicsGenerator/Derived/Submission_{}.ilean",
+            self.theorem_id_hex
+        );
+        let _ = std::fs::remove_file(self.prover_root.join(&ilean_rel));
     }
-    Ok(())
 }
 
 /// Return the last `n` lines of `s` joined with '\n'.

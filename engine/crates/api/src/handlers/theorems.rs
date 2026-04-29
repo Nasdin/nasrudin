@@ -172,21 +172,17 @@ pub async fn lean_download(
 pub async fn rejected_hashes(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let pg = match &state.pg {
-        Some(p) => p,
-        None => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({ "error": "pg_unavailable" })),
-            )
-                .into_response();
-        }
-    };
-    // Cap at 100k. Each hash is 8 bytes, so the wire response stays
-    // under 1 MB even at the cap. If we ever blow past this, the
-    // worker's bloom-filter approach scales further.
-    match theorems::list_rejected_canonical_hashes(pg, 100_000).await {
-        Ok(hashes) => {
+    // RocksDB-primary (Task 4): scan CF_THEOREMS for `Rejected` /
+    // `Timeout` rows. Cap at 100k. Each hash is 8 bytes, so the wire
+    // response stays under 1 MB even at the cap. PG is no longer
+    // queried — the RocksDB Theorem rows are the source of truth for
+    // negative-result memory now that ingest is RocksDB-primary.
+    match state.db.list_rejected_canonical_hashes(100_000) {
+        Ok(ids) => {
+            // Wire shape: list of 8-byte arrays. Each TheoremId already
+            // == canonical_hash in Phase 9 (theorem_id_from_canonical),
+            // so the bytes ARE the canonical hash.
+            let hashes: Vec<Vec<u8>> = ids.into_iter().map(|id| id.to_vec()).collect();
             let count = hashes.len();
             (
                 StatusCode::OK,

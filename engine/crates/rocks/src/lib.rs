@@ -27,6 +27,18 @@ const CF_STATS: &str = "stats";
 const CF_REVERIFY_QUEUE: &str = "reverify_queue";
 const CF_ATTEMPTS: &str = "attempts";
 const CF_TACTIC_PRIORS: &str = "tactic_priors";
+/// Pending PG-insert queue. Populated by `/api/ingest` on the hot path
+/// (RocksDB-primary write-behind), drained by the background `pg_drain`
+/// task. Keys are theorem_ids, values are bincode-serialised
+/// `PgInsertQueueEntry` payloads. On boot, the API scans this CF and
+/// re-enqueues anything that wasn't yet persisted to PG before the
+/// previous shutdown — so an API crash never loses a verified theorem.
+const CF_PG_INSERT_QUEUE: &str = "pg_insert_queue";
+/// Newest-first index over verified theorems for `/api/seed` and
+/// `/api/theorems/recent`. Keyed by `(verified_at_be_micros, theorem_id)`
+/// so a reverse iter yields most-recent-first. Written atomically
+/// alongside CF_THEOREMS when a theorem transitions to Verified.
+const CF_BY_VERIFIED_AT: &str = "by_verified_at";
 
 const ALL_CFS: &[&str] = &[
     CF_THEOREMS,
@@ -41,6 +53,8 @@ const ALL_CFS: &[&str] = &[
     CF_REVERIFY_QUEUE,
     CF_ATTEMPTS,
     CF_TACTIC_PRIORS,
+    CF_PG_INSERT_QUEUE,
+    CF_BY_VERIFIED_AT,
 ];
 
 /// Database statistics.
@@ -743,6 +757,165 @@ impl TheoremDb {
             .cf_handle(CF_REVERIFY_QUEUE)
             .context("Missing reverify_queue CF")?;
         Ok(self.db.iterator_cf(&cf, IteratorMode::Start).count())
+    }
+
+    // ── PG-insert Queue (write-behind) ────────────────────────────────
+
+    /// Enqueue a payload (typically a bincode-serialised
+    /// `nasrudin_pg::query::theorems::NewTheorem`) for asynchronous
+    /// PG insertion. Keyed by theorem_id. Idempotent — re-enqueueing
+    /// the same id overwrites the existing payload (which is fine,
+    /// since PG insert is itself idempotent on the `(canonical_hash)`
+    /// unique constraint).
+    pub fn enqueue_pg_insert(&self, theorem_id: &TheoremId, payload: &[u8]) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_PG_INSERT_QUEUE)
+            .context("Missing pg_insert_queue CF")?;
+        self.db
+            .put_cf(&cf, theorem_id, payload)
+            .context("enqueue pg_insert")?;
+        Ok(())
+    }
+
+    /// Drain up to `batch_size` pending PG-insert payloads. Returns
+    /// `(theorem_id, payload)` pairs in iterator order. Caller is
+    /// expected to insert each into PG, then call
+    /// [`Self::ack_pg_insert`] on success. On insert failure the row
+    /// stays in the queue and is retried on the next drain tick.
+    pub fn drain_pg_insert_queue(
+        &self,
+        batch_size: usize,
+    ) -> Result<Vec<(TheoremId, Vec<u8>)>> {
+        let cf = self
+            .db
+            .cf_handle(CF_PG_INSERT_QUEUE)
+            .context("Missing pg_insert_queue CF")?;
+        let mut out = Vec::new();
+        for item in self.db.iterator_cf(&cf, IteratorMode::Start) {
+            let (k, v) = item.context("iter pg_insert_queue")?;
+            if k.len() != 8 {
+                continue;
+            }
+            let mut id = [0u8; 8];
+            id.copy_from_slice(&k);
+            out.push((id, v.to_vec()));
+            if out.len() >= batch_size {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Acknowledge a PG insert succeeded — removes the payload from the
+    /// queue. Subsequent boots won't re-attempt it.
+    pub fn ack_pg_insert(&self, theorem_id: &TheoremId) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_PG_INSERT_QUEUE)
+            .context("Missing pg_insert_queue CF")?;
+        self.db
+            .delete_cf(&cf, theorem_id)
+            .context("ack pg_insert")?;
+        Ok(())
+    }
+
+    /// Number of theorems queued for PG insertion. Exposed for `/api/health`.
+    pub fn pg_insert_queue_depth(&self) -> Result<usize> {
+        let cf = self
+            .db
+            .cf_handle(CF_PG_INSERT_QUEUE)
+            .context("Missing pg_insert_queue CF")?;
+        Ok(self.db.iterator_cf(&cf, IteratorMode::Start).count())
+    }
+
+    // ── Verified-At Index ─────────────────────────────────────────────
+
+    /// Mark a theorem's verification timestamp in the recency index.
+    /// Used by `/api/seed` and `/api/theorems/recent` to serve newest-
+    /// first results without hitting Postgres. Atomically writes the
+    /// `(timestamp_be_micros, theorem_id)` index row.
+    pub fn mark_verified_at(
+        &self,
+        theorem_id: &TheoremId,
+        verified_at_micros: i64,
+    ) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_BY_VERIFIED_AT)
+            .context("Missing by_verified_at CF")?;
+        // Big-endian micros so lex order = chronological. Append theorem_id
+        // for uniqueness on identical timestamps (rare but possible).
+        let mut key = Vec::with_capacity(16);
+        key.extend_from_slice(&verified_at_micros.to_be_bytes());
+        key.extend_from_slice(theorem_id);
+        self.db
+            .put_cf(&cf, &key, theorem_id)
+            .context("write verified_at index")?;
+        Ok(())
+    }
+
+    /// Walk `CF_THEOREMS` and return the canonical hashes of every
+    /// theorem currently in `Rejected` (or `Timeout`) status. Used by
+    /// `/api/rejected_hashes` so peer workers can short-circuit chains
+    /// that the cluster has already lake-rejected. `limit = 0` means
+    /// unbounded.
+    pub fn list_rejected_canonical_hashes(&self, limit: usize) -> Result<Vec<TheoremId>> {
+        let cf = self
+            .db
+            .cf_handle(CF_THEOREMS)
+            .context("Missing theorems CF")?;
+        let mut out = Vec::new();
+        for item in self.db.iterator_cf(&cf, IteratorMode::Start) {
+            let (k, v) = item.context("iter theorems")?;
+            if k.len() != 8 {
+                continue;
+            }
+            let theorem: Theorem = match serde_json::from_slice(&v) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let rejected = matches!(
+                theorem.verified,
+                nasrudin_core::VerificationStatus::Rejected { .. }
+                    | nasrudin_core::VerificationStatus::Timeout
+            );
+            if rejected {
+                let mut id = [0u8; 8];
+                id.copy_from_slice(&k);
+                out.push(id);
+                if limit > 0 && out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Iterate the verified-at index in newest-first order, returning
+    /// up to `top` theorem_ids. Optionally filtered by domain (the
+    /// caller looks up each Theorem and rejects if the domain doesn't
+    /// match — cheaper than maintaining a per-domain index for the
+    /// modest seed-query top sizes).
+    pub fn list_verified_recent_ids(&self, top: usize) -> Result<Vec<TheoremId>> {
+        let cf = self
+            .db
+            .cf_handle(CF_BY_VERIFIED_AT)
+            .context("Missing by_verified_at CF")?;
+        let mut out = Vec::new();
+        for item in self.db.iterator_cf(&cf, IteratorMode::End) {
+            let (_, v) = item.context("iter by_verified_at")?;
+            if v.len() != 8 {
+                continue;
+            }
+            let mut id = [0u8; 8];
+            id.copy_from_slice(&v);
+            out.push(id);
+            if out.len() >= top {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     // ── Dump (for debugging) ──────────────────────────────────────────

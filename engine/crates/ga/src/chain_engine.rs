@@ -60,6 +60,13 @@ pub struct DiscoveryConfig {
     /// (Arc-backed) so `DiscoveryConfig` keeps its existing `Clone`
     /// derive without lifetime gymnastics.
     pub cache_ctx: Option<crate::cache_bundle::CacheBundle>,
+    /// Bloom filter pre-check over `rejected_canonicals`. When set,
+    /// `pick_top_for_verify` queries this before the full HashSet
+    /// lookup — a Bloom miss means definitely-novel (skip the
+    /// HashSet probe), a Bloom hit falls through to the real check.
+    /// Sized for ~100k entries with FPR 0.001. Built once at worker
+    /// startup from the same source as `rejected_canonicals`.
+    pub novelty_bloom: Option<std::sync::Arc<bloomfilter::Bloom<[u8]>>>,
 }
 
 impl Default for DiscoveryConfig {
@@ -76,6 +83,7 @@ impl Default for DiscoveryConfig {
             target: None,
             rejected_canonicals: std::sync::Arc::new(HashSet::new()),
             cache_ctx: None,
+            novelty_bloom: None,
         }
     }
 }
@@ -223,6 +231,7 @@ pub fn run_discovery(
                     &offspring,
                     &verified_canonicals,
                     &config.rejected_canonicals,
+                    config.novelty_bloom.as_deref(),
                     store,
                 ) {
                     report.lake_attempts += 1;
@@ -376,6 +385,7 @@ fn pick_top_for_verify<'a>(
     offspring: &'a [ChainIndividual],
     seen: &HashSet<String>,
     rejected: &HashSet<Vec<u8>>,
+    bloom: Option<&bloomfilter::Bloom<[u8]>>,
     store: &AxiomStore,
 ) -> Option<&'a ChainIndividual> {
     for ind in offspring {
@@ -386,10 +396,17 @@ fn pick_top_for_verify<'a>(
             let canon = expr.to_canonical();
             // Skip canonicals we've verified this run, AND canonicals
             // any peer worker has already rejected via lake build.
-            // Both sets are local to this process; the rejected set
-            // was populated at startup from `/api/rejected_hashes`.
+            // Bloom pre-check: when present, a bloom miss means
+            // definitely-novel and we skip the HashSet probe entirely.
+            // A bloom hit (which includes both true-positives and the
+            // ~0.1% false-positive rate) falls through to the real
+            // HashSet membership check.
             let canon_hash = nasrudin_core::canonical_hash(&canon);
-            if !seen.contains(&canon) && !rejected.contains(&canon_hash) {
+            let in_rejected = match bloom {
+                Some(b) if !b.check(canon_hash.as_slice()) => false,
+                _ => rejected.contains(&canon_hash),
+            };
+            if !seen.contains(&canon) && !in_rejected {
                 return Some(ind);
             }
         }
@@ -422,6 +439,7 @@ mod tests {
             target: None,
             rejected_canonicals: std::sync::Arc::new(HashSet::new()),
             cache_ctx: None,
+            novelty_bloom: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -447,6 +465,7 @@ mod tests {
             target: None,
             rejected_canonicals: std::sync::Arc::new(HashSet::new()),
             cache_ctx: None,
+            novelty_bloom: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);

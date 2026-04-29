@@ -343,6 +343,27 @@ impl ReverifyQueue {
         worker_q::increment_contribution(&txn, &row.contributor_id).await?;
         txn.commit().await?;
 
+        // RocksDB-primary read path (Task 4): update the Theorem's status
+        // and append to the verified-at index so `/api/seed` and
+        // `/api/theorems/recent` can serve newest-first verified rows
+        // without hitting Postgres. Best-effort — if the row isn't in
+        // RocksDB (legacy / hydrated-only data) the Postgres update
+        // above is still authoritative for query consumers that haven't
+        // migrated yet.
+        let mut id_arr = [0u8; 8];
+        if row.id.len() == 8 {
+            id_arr.copy_from_slice(&row.id);
+            let now_micros = chrono::Utc::now().timestamp_micros();
+            if let Ok(Some(mut theorem)) = self.rocks.get_theorem(&id_arr) {
+                theorem.verified = nasrudin_core::VerificationStatus::Verified {
+                    proof_term: Vec::new(),
+                    tactic_used: tactic.to_string(),
+                };
+                let _ = self.rocks.put_theorem(&theorem);
+            }
+            let _ = self.rocks.mark_verified_at(&id_arr, now_micros);
+        }
+
         // Best-effort broadcast: a closed channel (no live subscribers) is
         // fine and shouldn't fail the verification flip.
         let _ = self.discovery_tx.send(DiscoveryEvent::TheoremVerified {

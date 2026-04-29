@@ -91,4 +91,28 @@ pub struct AppState {
     /// `conjecture_events` for replay.
     pub conjecture_event_tx:
         tokio::sync::broadcast::Sender<crate::conjecture::ConjectureEvent>,
+    /// In-memory `/api/seed` response cache, keyed by `(domain, top)`.
+    /// Each entry holds `(generated_at, response_body_arc)`. TTL is
+    /// applied at read time; the cache is invalidated wholesale by
+    /// `/api/admin/reload_corpus` so a freshly-loaded AxiomStore is
+    /// reflected immediately. With 4 workers polling /api/seed every
+    /// chunk boundary (~60s), this saves ~13MB/min of redundant JSON
+    /// serialisation work.
+    pub seed_cache: Arc<
+        Mutex<
+            std::collections::HashMap<
+                SeedCacheKey,
+                (std::time::Instant, Arc<String>),
+            >,
+        >,
+    >,
+}
+
+/// Cache key for the `/api/seed` JSON response cache. Distinct
+/// `(domain, top)` requests produce distinct response bodies, so each
+/// gets its own cached entry. `None` domain == "no domain filter".
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SeedCacheKey {
+    pub domain: Option<String>,
+    pub top: u64,
 }

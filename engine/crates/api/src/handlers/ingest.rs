@@ -203,25 +203,46 @@ pub async fn ingest(
                 .ok()
                 .map(|e| nasrudin_core::canonical_ac_hash(&e).to_vec());
 
-        // ── Dedup against Postgres ────────────────────────────────────────
-        match theorems::get_by_canonical_hash(pg, &canonical_hash).await {
-            Ok(Some(existing)) => {
+        // ── Dedup against RocksDB (canonical_hash == theorem_id) ──────────
+        // Was: PG SELECT round-trip (~10ms). Now: RocksDB key probe (~µs).
+        // RocksDB is the durable source of truth in the new write-behind
+        // architecture; if a theorem exists in RocksDB it's either already
+        // in PG or queued for the next pg_drain tick. Either way, dedup
+        // is correct.
+        let id_bytes_arr: [u8; 8] = {
+            let mut a = [0u8; 8];
+            if theorem_id.len() == 8 {
+                a.copy_from_slice(&theorem_id);
+            }
+            a
+        };
+        match state.db.theorem_exists(&id_bytes_arr) {
+            Ok(true) => {
+                let existing_status =
+                    match state.db.get_theorem(&id_bytes_arr) {
+                        Ok(Some(t)) => match t.verified {
+                            nasrudin_core::VerificationStatus::Verified { .. } => "Verified",
+                            nasrudin_core::VerificationStatus::Pending => "Pending",
+                            nasrudin_core::VerificationStatus::Rejected { .. } => "Rejected",
+                            nasrudin_core::VerificationStatus::Timeout => "Rejected",
+                        }
+                        .to_string(),
+                        _ => "Unknown".to_string(),
+                    };
                 results.push(IngestResultItem {
-                    theorem_id: hex::encode(&existing.id),
-                    canonical_hash: hex::encode(&existing.canonical_hash),
-                    status: IngestStatus::Duplicate {
-                        existing_status: existing.status,
-                    },
+                    theorem_id: id_hex.clone(),
+                    canonical_hash: hash_hex.clone(),
+                    status: IngestStatus::Duplicate { existing_status },
                 });
                 continue;
             }
-            Ok(None) => {}
+            Ok(false) => {}
             Err(e) => {
                 results.push(IngestResultItem {
                     theorem_id: id_hex.clone(),
                     canonical_hash: hash_hex.clone(),
                     status: IngestStatus::Rejected {
-                        reason: format!("dedup_db_error: {e}"),
+                        reason: format!("dedup_rocks_error: {e}"),
                     },
                 });
                 continue;
@@ -272,44 +293,94 @@ pub async fn ingest(
             contributor_id: batch.worker_id.clone(),
         };
 
-        // ── INSERT(Pending) + best-effort enqueue + SSE broadcast ─────────
-        match theorems::insert_pending(pg, new_row).await {
-            Ok(id_bytes) => {
-                let mut id_arr = [0u8; 8];
-                if id_bytes.len() == 8 {
-                    id_arr.copy_from_slice(&id_bytes);
-                }
-                // Best-effort: enqueue failure shouldn't fail the whole result.
-                // The drain loop won't pick it up but the row is still in PG;
-                // an operator can re-enqueue manually.
-                let _ = state.db.enqueue_reverify(&ReverifyJob {
-                    theorem_id: id_arr,
-                    attempts: 0,
-                    enqueued_at_micros: chrono::Utc::now().timestamp_micros(),
-                });
-                let _ = state
-                    .reverify_event_tx
-                    .send(crate::reverify::DiscoveryEvent::TheoremPending {
-                        theorem_id: id_hex.clone(),
-                        canonical: t.canonical_statement.clone(),
-                        contributor_id: batch.worker_id.clone(),
-                    });
-                results.push(IngestResultItem {
-                    theorem_id: id_hex,
-                    canonical_hash: hash_hex,
-                    status: IngestStatus::Pending,
-                });
+        // ── RocksDB-primary write + write-behind PG enqueue ───────────────
+        // 1. Build the in-memory Theorem (matches `nasrudin_core::Theorem`)
+        //    with status=Pending and persist atomically (CF_THEOREMS +
+        //    secondary indexes).
+        // 2. Serialise the same submission as a PG `NewTheorem` and enqueue
+        //    it in CF_PG_INSERT_QUEUE. The background pg_drain task batches
+        //    these into PG every 500ms.
+        // 3. SSE broadcast immediately — workers/UI clients see the new
+        //    pending theorem the instant it's durable in RocksDB, without
+        //    waiting on PG.
+        // 4. enqueue_reverify so the reverify worker pool picks it up.
+        // 5. Return Pending.
+        let id_arr = id_bytes_arr;
+        // Best-effort parse of canonical_statement → Expr. Failure is fine
+        // here — the Theorem still lands in RocksDB with a placeholder
+        // expression, the canonical_statement string is what dedup and
+        // /api/seed actually use. A peer worker that later wants to
+        // IntroduceAxiom this theorem as a building block will re-parse
+        // from the canonical string itself, not from this Expr field.
+        let parsed_statement = nasrudin_core::parse::parse_sexpr(&t.canonical_statement)
+            .unwrap_or_else(|_| nasrudin_core::Expr::Var("placeholder".into()));
+        let theorem_for_rocks = nasrudin_core::Theorem {
+            id: id_arr,
+            statement: parsed_statement,
+            canonical: t.canonical_statement.clone(),
+            latex: t.latex.clone().unwrap_or_default(),
+            proof: nasrudin_core::ProofTree::Axiom(id_arr),
+            depth: t.depth.unwrap_or(0) as u32,
+            complexity: t.complexity.unwrap_or(0) as u32,
+            domain: parse_domain_or_default(&t.domain),
+            dimension: None,
+            parents: vec![],
+            children: vec![],
+            verified: nasrudin_core::VerificationStatus::Pending,
+            fitness: nasrudin_core::FitnessScore::default(),
+            generation: t.generation.unwrap_or(0) as u64,
+            created_at: chrono::Utc::now().timestamp() as u64,
+            origin: nasrudin_core::TheoremOrigin::Axiom,
+        };
+
+        let put_result = state.db.put_theorem(&theorem_for_rocks);
+        if let Err(e) = put_result {
+            results.push(IngestResultItem {
+                theorem_id: id_hex.clone(),
+                canonical_hash: hash_hex.clone(),
+                status: IngestStatus::Rejected {
+                    reason: format!("rocks_put_error: {e}"),
+                },
+            });
+            continue;
+        }
+
+        // Enqueue for PG insertion. Best-effort: if RocksDB is healthy
+        // this never fails. If it does, the row is in CF_THEOREMS but
+        // not queued — operator can run a one-shot re-enqueue script.
+        match serde_json::to_vec(&new_row) {
+            Ok(payload) => {
+                let _ = state.db.enqueue_pg_insert(&id_arr, &payload);
             }
             Err(e) => {
-                results.push(IngestResultItem {
-                    theorem_id: id_hex,
-                    canonical_hash: hash_hex,
-                    status: IngestStatus::Rejected {
-                        reason: format!("insert_db_error: {e}"),
-                    },
-                });
+                tracing::warn!(
+                    theorem_id = %id_hex,
+                    "ingest: NewTheorem serialise failed; row in RocksDB but not queued for PG: {e}"
+                );
             }
         }
+
+        // Best-effort reverify enqueue + SSE broadcast.
+        let _ = state.db.enqueue_reverify(&ReverifyJob {
+            theorem_id: id_arr,
+            attempts: 0,
+            enqueued_at_micros: chrono::Utc::now().timestamp_micros(),
+        });
+        let _ = state
+            .reverify_event_tx
+            .send(crate::reverify::DiscoveryEvent::TheoremPending {
+                theorem_id: id_hex.clone(),
+                canonical: t.canonical_statement.clone(),
+                contributor_id: batch.worker_id.clone(),
+            });
+        results.push(IngestResultItem {
+            theorem_id: id_hex.clone(),
+            canonical_hash: hash_hex.clone(),
+            status: IngestStatus::Pending,
+        });
+
+        // PG is no longer touched on the hot path — pg_drain handles it.
+        let _ = pg;
     }
 
     (StatusCode::ACCEPTED, Json(IngestResponse { results })).into_response()
@@ -335,4 +406,24 @@ fn extract_fitness(fitness: &Option<serde_json::Value>, key: &str) -> Option<f32
         .and_then(|f| f.get(key))
         .and_then(|v| v.as_f64())
         .map(|x| x as f32)
+}
+
+/// Convert the worker-supplied domain string to a `nasrudin_core::Domain`,
+/// defaulting to `PureMath` for any unknown / empty value. Mirrors the
+/// permissive parsing in `axiom_store::load_from_catalog`.
+fn parse_domain_or_default(s: &str) -> nasrudin_core::Domain {
+    use nasrudin_core::Domain;
+    match s.to_lowercase().replace('-', "_").as_str() {
+        "classical_mechanics" | "classicalmechanics" => Domain::ClassicalMechanics,
+        "electromagnetism" => Domain::Electromagnetism,
+        "special_relativity" | "specialrelativity" => Domain::SpecialRelativity,
+        "general_relativity" | "generalrelativity" => Domain::GeneralRelativity,
+        "quantum_mechanics" | "quantummechanics" => Domain::QuantumMechanics,
+        "quantum_field_theory" | "quantumfieldtheory" => Domain::QuantumFieldTheory,
+        "statistical_mechanics" | "statisticalmechanics" => Domain::StatisticalMechanics,
+        "thermodynamics" => Domain::Thermodynamics,
+        "optics" => Domain::Optics,
+        "fluid_dynamics" | "fluiddynamics" => Domain::FluidDynamics,
+        _ => Domain::PureMath,
+    }
 }

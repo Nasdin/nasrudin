@@ -30,7 +30,7 @@ use crate::entity::theorems;
 /// empty JSON array. `origin_kind` defaults to `"Axiom"` because the column
 /// is `NOT NULL TEXT` in PostgreSQL — callers should set it to a meaningful
 /// value (`"Axiom"`, `"Derived"`, `"Imported"`, etc.) before insert.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NewTheorem {
     pub id: Vec<u8>,
     pub canonical_hash: Vec<u8>,

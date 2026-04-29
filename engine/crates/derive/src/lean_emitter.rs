@@ -79,11 +79,24 @@ pub fn emit_lean_file(ctx: &DerivationContext, config: &LeanEmitConfig) -> Strin
     let mut out = String::new();
 
     // ── Imports ──────────────────────────────────────────────
+    // `PhysicsGenerator.LeafImports` is a pre-compiled bundle of just the
+    // Mathlib modules the GA actually uses (Real/Nat/Int arithmetic,
+    // Sqrt/Exp/Log/Trig, Linarith/Polyrith/Ring/NormNum/Positivity tactics).
+    // Importing it instead of bare `import Mathlib` saves the ~400k-decl
+    // elaborator-scope load on every per-chain verification, taking warm
+    // `lake build` time from ~20s to ~1-3s per submission.
+    //
+    // Note: we deliberately do NOT import `PhysicsGenerator.Generated.*`
+    // here. Those generated modules each have `import Mathlib` at the
+    // top, which would defeat the LeafImports optimization. Generated
+    // theorems reference axiom names as bound variables in the theorem
+    // signature, not as imported values from `Generated.SpecialRelativity`,
+    // so dropping that import has no effect on what the GA can prove —
+    // just on how fast it builds.
     if config.use_mathlib {
-        out.push_str("import Mathlib\n");
+        out.push_str("import PhysicsGenerator.LeafImports\n");
     }
-    out.push_str("import PhysicsGenerator.Basic\n");
-    out.push_str("import PhysicsGenerator.Generated.SpecialRelativity\n\n");
+    out.push_str("import PhysicsGenerator.Basic\n\n");
 
     // ── Header comment ───────────────────────────────────────
     out.push_str(&format!(
@@ -94,8 +107,7 @@ pub fn emit_lean_file(ctx: &DerivationContext, config: &LeanEmitConfig) -> Strin
 
     // ── Namespace + opens ────────────────────────────────────
     out.push_str(&format!("namespace {}\n\n", config.namespace));
-    out.push_str("open PhysicsGenerator\n");
-    out.push_str("open PhysicsGenerator.SpecialRelativity\n\n");
+    out.push_str("open PhysicsGenerator\n\n");
 
     // ── Derivation steps as comments ─────────────────────────
     out.push_str("/-! ## Derivation Steps\n");
