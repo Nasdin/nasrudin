@@ -56,6 +56,10 @@ async fn main() {
     let pop: usize = arg_value(&args, "--pop").unwrap_or(32);
     let max_chain_len: usize = arg_value(&args, "--max-len").unwrap_or(12);
     let max_lake: usize = arg_value(&args, "--max-lake").unwrap_or(3);
+    let research_mode: bool = args.iter().any(|a| a == "--research-mode")
+        || std::env::var("NASRUDIN_RESEARCH_MODE")
+            .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
     let prover_root: Option<PathBuf> = args
         .iter()
         .position(|a| a == "--verify")
@@ -71,6 +75,9 @@ async fn main() {
     println!("  Nasrudin Spontaneous Physics Discovery — domain={domain}");
     println!("  No headline-result strategies. No headline axioms.");
     println!("  Pure combinatorics + GA over upstream postulates.");
+    if research_mode {
+        println!("  ▶ research-mode ON — will poll /api/conjecture/claim");
+    }
     println!("═══════════════════════════════════════════════════════");
     println!();
 
@@ -300,6 +307,7 @@ async fn main() {
         rejected_canonicals: rejected_canonicals.clone(),
         novelty_bloom: novelty_bloom.clone(),
         cache_ctx: None,
+        mutation_priors: None,
     };
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
@@ -339,7 +347,65 @@ async fn main() {
     let mut total_unique = 0usize;
     let mut current_rejected = rejected_canonicals.clone();
 
+    // Phase E: when research-mode is on, build the HTTP client once.
+    let research_client = if research_mode {
+        api_cfg.as_ref().map(|cfg| {
+            nasrudin_ga::research_client::ResearchClient::new(
+                cfg.api_url.clone(),
+                cfg.worker_key.clone(),
+            )
+        })
+    } else {
+        None
+    };
+
     for chunk_i in 0..chunks {
+        // ── Phase E: research-mode dequeue ────────────────────────────────
+        // Try to claim a conjecture before falling through to background
+        // corpus-fill. If a job is claimed, run it to completion (or budget
+        // exhaustion) under its own constrained AxiomStore + LLM-supplied
+        // mutation priors. Submissions go to /api/conjecture/{id}/submit
+        // so they're accounted to the conjecture, not the global queue.
+        if let (Some(client), Some(cfg)) = (research_client.as_ref(), api_cfg.as_ref()) {
+            match client.claim().await {
+                Ok(Some(job)) => {
+                    println!(
+                        "▶ chunk {} claimed conjecture {} (hunch: {})",
+                        chunk_i + 1,
+                        job.job_id,
+                        job.hunch.chars().take(80).collect::<String>()
+                    );
+                    if let Err(e) = run_seed_driven_chunk(
+                        client,
+                        cfg,
+                        &domain,
+                        &store,
+                        &job,
+                        max_chain_len,
+                        prover_root.as_deref(),
+                        max_lake,
+                        current_rejected.clone(),
+                        novelty_bloom.clone(),
+                        &mut rng,
+                    )
+                    .await
+                    {
+                        eprintln!("  ! conjecture {} failed: {e}", job.job_id);
+                    }
+                    // Skip the regular background chunk on a research-mode
+                    // claim: the worker has spent its slot on the conjecture.
+                    continue;
+                }
+                Ok(None) => {
+                    tracing::debug!("research-mode claim: queue empty");
+                }
+                Err(e) => {
+                    tracing::warn!("research-mode claim failed: {e}; falling through to background");
+                }
+            }
+        }
+
+
         // Periodic embed-index refresh. Cheap when index is current
         // (one HTTP HEAD-equivalent call per chunk). Off by default;
         // flip on with NASRUDIN_EMBED_AUTOPULL=1.
@@ -500,6 +566,241 @@ async fn main() {
         }
     }
     println!();
+}
+
+/// Phase E: run one claimed conjecture against an LLM-suggested seed.
+///
+/// 1. Parse `seed: serde_json::Value` into an `LlmSuggestion`.
+/// 2. Build a *filtered* `AxiomStore` containing only the axioms named in
+///    `axiom_set`. Anything not present in the worker's full store is
+///    skipped with a warning. Classical-mechanics postulates are always
+///    layered in as a kinematic baseline (matches non-research-mode).
+/// 3. Run a series of small chunks (≤30s each) until the budget exhausts.
+///    Between chunks, heartbeat with current counters and submit each
+///    verified theorem to `/api/conjecture/{id}/submit`.
+/// 4. Complete with `Verified` (≥1 theorem submitted) or `NoResult`.
+#[allow(clippy::too_many_arguments)]
+async fn run_seed_driven_chunk(
+    client: &nasrudin_ga::research_client::ResearchClient,
+    cfg: &ApiSubmitConfig,
+    domain: &str,
+    full_store: &AxiomStore,
+    job: &nasrudin_ga::research_client::ClaimedJob,
+    max_chain_len: usize,
+    prover_root: Option<&Path>,
+    max_lake: usize,
+    rejected_canonicals: std::sync::Arc<std::collections::HashSet<Vec<u8>>>,
+    novelty_bloom: Option<std::sync::Arc<bloomfilter::Bloom<[u8]>>>,
+    rng: &mut impl rand::Rng,
+) -> anyhow::Result<()> {
+    use nasrudin_ga::chain_engine::{run_discovery, DiscoveryConfig};
+    use nasrudin_ga::research_client::*;
+
+    // 1. Parse the seed.
+    let suggestion: SeedSuggestion = match serde_json::from_value(job.seed.clone()) {
+        Ok(s) => s,
+        Err(e) => {
+            // Non-conformant seed JSON: fail the job with NoResult so the
+            // researcher can resubmit. Avoid stalling the lease.
+            client
+                .complete(
+                    job.job_id,
+                    &CompleteBody {
+                        outcome: "NoResult".into(),
+                        reason: Some(format!("seed_parse_error: {e}")),
+                    },
+                )
+                .await?;
+            anyhow::bail!("seed parse failed: {e}");
+        }
+    };
+
+    // 2. Filter the AxiomStore to the LLM-supplied subset.
+    let mut filtered = AxiomStore::new();
+    filtered.load_classical_mechanics_postulates();
+    let mut missing = Vec::<String>::new();
+    for name in &suggestion.axiom_set {
+        if let Some(a) = full_store.get(name) {
+            filtered.register(a.clone());
+        } else {
+            missing.push(name.clone());
+        }
+    }
+    if !missing.is_empty() {
+        eprintln!(
+            "  ! conjecture {} references {} unknown axiom(s); ignored: {:?}",
+            job.job_id,
+            missing.len(),
+            missing,
+        );
+    }
+
+    // 2a. Layer the LLM's initial_population as synthetic seed axioms so
+    // the GA can introduce them via `IntroduceAxiom`. Each parseable
+    // s-expression becomes a `seed_<idx>` axiom; unparseable strings are
+    // logged and skipped.
+    for (idx, src) in suggestion.initial_population.iter().enumerate() {
+        match nasrudin_core::parse::parse_sexpr(src) {
+            Ok(expr) => {
+                filtered.register(nasrudin_derive::axiom_store::Axiom {
+                    name: format!("seed_{idx}"),
+                    domain: nasrudin_core::Domain::PureMath,
+                    statement: expr,
+                    description: format!("LLM-suggested seed: {src}"),
+                });
+            }
+            Err(e) => {
+                tracing::debug!("conjecture seed[{idx}] parse failed ({e}): {src}");
+            }
+        }
+    }
+
+    if filtered.is_empty() {
+        client
+            .complete(
+                job.job_id,
+                &CompleteBody {
+                    outcome: "NoResult".into(),
+                    reason: Some("no_axioms_resolvable_from_seed".into()),
+                },
+            )
+            .await?;
+        return Ok(());
+    }
+
+    // 3. Build the constrained DiscoveryConfig.
+    let wall_seconds = job
+        .budget
+        .get("wall_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(600);
+    let max_candidates = job
+        .budget
+        .get("max_candidates")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(100_000);
+    let mutation_priors = if suggestion.mutation_priors.is_empty() {
+        None
+    } else {
+        Some(suggestion.mutation_priors.clone())
+    };
+
+    let chunk_seconds: u64 = 30; // bounded heartbeat cadence
+    let chunk_gens: usize = 25; // small enough that one chunk runs in ~chunk_seconds
+
+    let started = std::time::Instant::now();
+    let mut total_attempted: u64 = 0;
+    let mut total_verified: u32 = 0;
+    let mut submitted_any = false;
+
+    while started.elapsed().as_secs() < wall_seconds && total_attempted < max_candidates {
+        let chunk_config = DiscoveryConfig {
+            population_size: 32,
+            generations: chunk_gens,
+            crossover_rate: 0.6,
+            mutation_rate: 0.7,
+            tournament_size: 3,
+            max_chain_len,
+            prover_root: prover_root.map(|p| p.to_path_buf()),
+            max_lake_verifications: if prover_root.is_some() { max_lake } else { 0 },
+            target: None,
+            rejected_canonicals: rejected_canonicals.clone(),
+            cache_ctx: None,
+            novelty_bloom: novelty_bloom.clone(),
+            mutation_priors: mutation_priors.clone(),
+        };
+        let report = run_discovery(&filtered, &chunk_config, rng);
+        total_attempted += report.total_candidates as u64;
+
+        // Submit each verified theorem to the conjecture's submit endpoint.
+        for d in &report.verified {
+            let body = SubmitBody {
+                engine_git_sha: "unknown".into(),
+                lean_version: "4.27.0".into(),
+                theorem: SubmitTheorem {
+                    canonical_statement: d.canonical.clone(),
+                    domain: domain.to_string(),
+                    lean_source: d.lean_source.clone(),
+                    chain: chain_to_json(&d.chain),
+                    axioms_used: axioms_used(&d.chain),
+                    depth: Some(d.chain.len() as u32),
+                    generation: Some(d.generation as u64),
+                },
+            };
+            match client.submit(job.job_id, &body).await {
+                Ok(r) => {
+                    println!("    ✓ conjecture submit: {}", r.theorem_id);
+                    total_verified += 1;
+                    submitted_any = true;
+                }
+                Err(e) => {
+                    eprintln!("    ! conjecture submit failed: {e}");
+                }
+            }
+        }
+
+        // Heartbeat extends the lease and surfaces progress to the SSE feed.
+        let elapsed_s = started.elapsed().as_secs() as u32;
+        let _ = client
+            .heartbeat(
+                job.job_id,
+                &HeartbeatBody {
+                    candidates_attempted: total_attempted.min(i32::MAX as u64) as i32,
+                    candidates_verified: total_verified as i32,
+                    time_elapsed_s: elapsed_s,
+                },
+            )
+            .await;
+
+        // Bail early if this chunk took the full slice but produced nothing
+        // executable — likely a degenerate axiom subset.
+        if started.elapsed().as_secs() >= wall_seconds {
+            break;
+        }
+        if started.elapsed().as_secs() < chunk_seconds {
+            // small breather so heartbeats don't pile up at machine speed
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
+    let outcome = if submitted_any { "Verified" } else { "NoResult" };
+    let reason = format!(
+        "candidates_attempted={total_attempted} verified={total_verified} elapsed_s={}",
+        started.elapsed().as_secs()
+    );
+    client
+        .complete(
+            job.job_id,
+            &CompleteBody {
+                outcome: outcome.into(),
+                reason: Some(reason),
+            },
+        )
+        .await?;
+    println!(
+        "▶ conjecture {} → {outcome} ({} verified, {} attempted)",
+        job.job_id, total_verified, total_attempted
+    );
+    let _ = cfg; // worker_id is implicit in the bearer
+    Ok(())
+}
+
+/// Local mirror of physics-api's LlmSuggestion. Workers don't depend on
+/// the api crate, so we keep a structurally-identical type here. Round-trips
+/// through the seed JSON the API stored from the LLM call.
+#[derive(serde::Deserialize)]
+#[allow(dead_code)] // target_shape and rationale are reserved for future heuristics
+struct SeedSuggestion {
+    #[serde(default)]
+    axiom_set: Vec<String>,
+    #[serde(default)]
+    initial_population: Vec<String>,
+    #[serde(default)]
+    mutation_priors: std::collections::HashMap<String, f32>,
+    #[serde(default)]
+    target_shape: Option<String>,
+    #[serde(default)]
+    rationale: String,
 }
 
 fn arg_value<T: std::str::FromStr>(args: &[String], flag: &str) -> Option<T> {

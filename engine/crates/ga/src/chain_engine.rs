@@ -15,7 +15,7 @@
 //! verified candidate.
 
 use crate::chain_ga::{
-    ChainIndividual, ChainVerifyOutcome, mutate_chain, splice_chains,
+    ChainIndividual, ChainVerifyOutcome, splice_chains,
     verify_chain_cached,
 };
 use nasrudin_core::Expr;
@@ -67,6 +67,12 @@ pub struct DiscoveryConfig {
     /// Sized for ~100k entries with FPR 0.001. Built once at worker
     /// startup from the same source as `rejected_canonicals`.
     pub novelty_bloom: Option<std::sync::Arc<bloomfilter::Bloom<[u8]>>>,
+    /// Phase E: per-operator weights for mutation selection. Keys are
+    /// the names in [`crate::chain_ga::MUTATION_OPS`]; missing keys
+    /// inherit the uniform fallback. `None` is the legacy
+    /// uniform-1/6 distribution. Threaded in via the LLM-supplied
+    /// LlmSuggestion seed.
+    pub mutation_priors: Option<std::collections::HashMap<String, f32>>,
 }
 
 impl Default for DiscoveryConfig {
@@ -84,6 +90,7 @@ impl Default for DiscoveryConfig {
             rejected_canonicals: std::sync::Arc::new(HashSet::new()),
             cache_ctx: None,
             novelty_bloom: None,
+            mutation_priors: None,
         }
     }
 }
@@ -158,10 +165,20 @@ pub fn run_discovery(
                 (p1.chain.clone(), p2.chain.clone())
             };
             if rng.random_bool(config.mutation_rate) {
-                mutate_chain(&mut c1, store, rng);
+                crate::chain_ga::mutate_chain_weighted(
+                    &mut c1,
+                    store,
+                    rng,
+                    config.mutation_priors.as_ref(),
+                );
             }
             if rng.random_bool(config.mutation_rate) {
-                mutate_chain(&mut c2, store, rng);
+                crate::chain_ga::mutate_chain_weighted(
+                    &mut c2,
+                    store,
+                    rng,
+                    config.mutation_priors.as_ref(),
+                );
             }
             for child in [c1, c2] {
                 if child.is_empty() || child.len() > config.max_chain_len {
@@ -440,6 +457,7 @@ mod tests {
             rejected_canonicals: std::sync::Arc::new(HashSet::new()),
             cache_ctx: None,
             novelty_bloom: None,
+            mutation_priors: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -466,6 +484,7 @@ mod tests {
             rejected_canonicals: std::sync::Arc::new(HashSet::new()),
             cache_ctx: None,
             novelty_bloom: None,
+            mutation_priors: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
