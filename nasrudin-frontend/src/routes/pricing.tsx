@@ -8,11 +8,16 @@ export const Route = createFileRoute('/pricing')({ component: PricingPage });
 interface Tier {
   name: string;
   tagline: string;
-  price: string;
+  monthlyPrice: string;
+  annualPrice: string;
   period: string;
-  sub: string;
+  monthlySub: string;
+  annualSub: string;
   cta: string;
   ctaClass: string;
+  /** Phase 1 sells Researcher self-serve. Other tiers route to the
+   *  sales-contact flow until org subscriptions ship. */
+  priceKey: 'researcher_monthly' | 'researcher_annual' | null;
   featured?: boolean;
   popular?: boolean;
   features: string[];
@@ -21,74 +26,103 @@ interface Tier {
 const TIERS: Tier[] = [
   {
     name: 'Free',
-    tagline: 'For curious academics, students, and the merely intrigued.',
-    price: '$0',
+    tagline: 'For citing, browsing, and re-verifying. No card.',
+    monthlyPrice: '$0',
+    annualPrice: '$0',
     period: 'forever',
-    sub: 'no card required',
+    monthlySub: 'no card required',
+    annualSub: 'no card required',
     cta: 'Sign up',
     ctaClass: 'btn-secondary',
+    priceKey: null,
     features: [
-      'Browse all 247,118 verified theorems',
+      'Browse the full verified theorem corpus',
       'Read full Lean 4 proofs',
       'Download any .lean file & re-verify locally',
-      'Save up to 50 theorems to your library',
+      'Save up to 50 theorems',
       'Cite & share via permalinks',
-      'Community discussion threads',
+      '1,000 API requests / day',
     ],
   },
   {
     name: 'Researcher',
-    tagline: 'For working academics with active conjectures.',
-    price: '$19',
+    tagline: 'For builders pointing compute at hard problems.',
+    monthlyPrice: '$19',
+    annualPrice: '$15.20',
     period: '/ month',
-    sub: 'billed annually · $228/yr',
-    cta: 'Start 14-day trial',
+    monthlySub: 'billed monthly',
+    annualSub: 'billed annually · $182.40/yr (−20%)',
+    cta: 'Start subscription',
     ctaClass: 'btn-primary',
     featured: true,
     popular: true,
+    priceKey: 'researcher_monthly',
     features: [
       'Everything in Free',
       '10 targeted searches / month',
       'Point the GA at your own conjecture',
-      'API access · 10K requests / day',
-      'Unlimited library, folders & private notes',
+      '10,000 API requests / day',
+      'Unlimited library, folders, private notes',
       'Email digest of new theorems in your domains',
-      'Priority re-verification queue',
     ],
   },
   {
-    name: 'Lab',
-    tagline: 'For research groups, departments, and small institutes.',
-    price: '$249',
+    name: 'Team',
+    tagline: 'For research groups: pooled searches, shared library.',
+    monthlyPrice: '$57',
+    annualPrice: '$45.60',
     period: '/ month',
-    sub: 'up to 10 seats · billed annually',
+    monthlySub: '3 seats included · +$19/seat · billed monthly',
+    annualSub: '3 seats included · +$15.20/seat · billed annually',
     cta: 'Talk to us',
     ctaClass: 'btn-secondary',
+    priceKey: null,
     features: [
-      'Everything in Researcher, for 10 seats',
-      '100 targeted searches / month (pooled)',
-      'API · 250K requests / day',
-      'Shared lab library & citation graphs',
-      'Bulk .lean exports for your codebase',
-      'SSO via institution',
-      'Quarterly office hours with the team',
+      'Everything in Researcher, per seat',
+      '50 targeted searches / month (pooled)',
+      '50,000 API requests / day (pooled)',
+      'Shared library & citation graphs',
+      'Google / Microsoft sign-in',
+      'Bulk .lean exports',
+    ],
+  },
+  {
+    name: 'Institution',
+    tagline: 'For departments and institutes with compliance needs.',
+    monthlyPrice: '$990',
+    annualPrice: '$792',
+    period: '/ month',
+    monthlySub: '10 seats included · +$99/seat · billed monthly',
+    annualSub: '10 seats included · +$79.20/seat · billed annually',
+    cta: 'Contact sales',
+    ctaClass: 'btn-secondary',
+    priceKey: null,
+    features: [
+      'Everything in Team, per seat',
+      '200 targeted searches / month (pooled)',
+      '250,000 API requests / day (pooled)',
+      'SAML SSO',
+      'Audit logs & compliance reporting',
+      'Dedicated targeted-search compute pool',
+      'Quarterly office hours',
     ],
   },
   {
     name: 'Enterprise',
     tagline: 'For institutions running their own Nasrudin nodes.',
-    price: 'Custom',
+    monthlyPrice: 'Custom',
+    annualPrice: 'Custom',
     period: '',
-    sub: 'annual · invoiced',
+    monthlySub: 'annual · invoiced',
+    annualSub: 'annual · invoiced',
     cta: 'Contact sales',
     ctaClass: 'btn-secondary',
+    priceKey: null,
     features: [
-      'Everything in Lab, unlimited seats',
-      'Dedicated targeted-search compute pool',
+      'Everything in Institution, unlimited seats',
       'On-prem worker cluster deployment',
       'Private corpus extension (your own axioms)',
-      'Service-level agreement · 99.9%',
-      'Audit logs & compliance reporting',
+      'SLA · 99.9%',
       'Direct line to engineering',
     ],
   },
@@ -97,23 +131,23 @@ const TIERS: Tier[] = [
 const FAQ: Array<[string, string]> = [
   [
     'Is the underlying corpus really free?',
-    'Yes. All 247,118 verified theorems are browseable, downloadable as .lean files, and re-verifiable on your own machine without a paid plan.',
+    'Yes. Every verified theorem is browseable, downloadable as a .lean file, and re-verifiable on your own machine without a paid plan. The corpus is built by volunteer worker compute and stays free by design.',
   ],
   [
     'What is a "targeted search"?',
-    'You provide a conjecture in Lean syntax (or natural-language we transcribe). We dedicate a slice of the GA cluster to evolve toward it for up to 24 hours.',
+    'You provide a conjecture in Lean syntax (or natural language we transcribe). We dedicate a slice of the GA cluster to evolve toward it for up to 24 hours. Paid tiers buy targeted compute aimed at *your* conjecture — the open corpus is never gated.',
   ],
   [
     'Can I cancel anytime?',
-    'Yes. Researcher and Lab tiers cancel at the end of the current billing period.',
+    'Yes. Self-serve cancel from the billing portal — your plan stays active through the end of the current period.',
   ],
   [
     'Are workers paid?',
-    'No. Worker contributions are volunteer compute. Workers earn status (leaderboard rank, attribution on every theorem they verify) but no money.',
+    "No cash. Workers earn (1) attribution on every theorem they verify, (2) leaderboard rank, and (3) — coming soon — a free Researcher tier when contributing ≥10 hours of verification time per month. Compute donated by workers builds the open corpus; paid tiers buy targeted GA slices pointed at the buyer's own conjecture.",
   ],
   [
-    'Educational discount?',
-    'Researcher tier is free for verified students. Email proof from a .edu / .ac.* address.',
+    'Are you a tool for academics specifically?',
+    'No — Nasrudin is for anyone pointing compute at hard problems. Independent researchers, industry R&D, quant teams, and academics with budget all use it the same way. Verified academic email gets 50% off Researcher.',
   ],
 ];
 
@@ -135,6 +169,29 @@ function Check() {
   );
 }
 
+async function startCheckout(tier: Tier, annual: boolean) {
+  if (!tier.priceKey) return;
+  const key = annual
+    ? (tier.priceKey.replace('_monthly', '_annual') as 'researcher_annual')
+    : tier.priceKey;
+  const res = await fetch('/api/billing/checkout', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ price_key: key }),
+  });
+  if (res.status === 401) {
+    window.location.href = `/signin?next=${encodeURIComponent('/pricing')}`;
+    return;
+  }
+  if (!res.ok) {
+    alert('Checkout unavailable right now. Try again or contact support.');
+    return;
+  }
+  const { url } = (await res.json()) as { url: string };
+  window.location.href = url;
+}
+
 function PricingPage() {
   const [annual, setAnnual] = useState(true);
   return (
@@ -147,9 +204,9 @@ function PricingPage() {
             Free to <em>read.</em> Paid to <em>aim.</em>
           </h1>
           <p className="lede">
-            The corpus is open by principle. What we charge for is compute — the slices of GA
-            cluster you point at your own conjectures, and the API that lets you build on top of
-            Nasrudin.
+            The corpus is open by principle — built by volunteer compute and free forever. What we
+            charge for is targeted compute: the slices of GA cluster you point at your own
+            conjecture, plus the API that lets you build on top of Nasrudin.
           </p>
           <div
             style={{
@@ -208,11 +265,15 @@ function PricingPage() {
               <div className="tier-name">{t.name}</div>
               <div className="tier-tagline">{t.tagline}</div>
               <div className="tier-price">
-                <span className="tier-price-num">{t.price}</span>
+                <span className="tier-price-num">{annual ? t.annualPrice : t.monthlyPrice}</span>
                 <span className="tier-price-period">{t.period}</span>
               </div>
-              <div className="tier-price-sub">{t.sub}</div>
-              <button type="button" className={`btn ${t.ctaClass}`}>
+              <div className="tier-price-sub">{annual ? t.annualSub : t.monthlySub}</div>
+              <button
+                type="button"
+                className={`btn ${t.ctaClass}`}
+                onClick={() => startCheckout(t, annual)}
+              >
                 {t.cta}
               </button>
               <ul className="tier-features">

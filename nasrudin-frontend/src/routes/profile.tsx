@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
@@ -13,6 +14,68 @@ import {
 } from '~/lib/queries';
 
 export const Route = createFileRoute('/profile')({ component: ProfilePage });
+
+interface BillingMe {
+  plan_tier: 'free' | 'researcher' | 'team' | 'institution' | 'enterprise';
+  current_period_end: string | null;
+  targeted_searches_used: number;
+  targeted_searches_limit: number;
+  api_used_today: number;
+  api_limit_per_day: number;
+}
+
+function BillingCard() {
+  const { data } = useQuery<BillingMe>({
+    queryKey: ['billing', 'me'],
+    queryFn: async () => {
+      const res = await fetch('/api/billing/me', { credentials: 'include' });
+      if (!res.ok) throw new Error(`/api/billing/me: ${res.status}`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+  if (!data) return null;
+  const isPaid = data.plan_tier !== 'free';
+  const onManage = async () => {
+    const res = await fetch('/api/billing/portal', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      alert('Billing portal unavailable. Try again or contact support.');
+      return;
+    }
+    const { url } = (await res.json()) as { url: string };
+    window.location.href = url;
+  };
+  return (
+    <section style={{ margin: '24px 0', padding: 20, border: '1px solid var(--paper-200)', borderRadius: 8 }}>
+      <h3 className="section-h" style={{ marginTop: 0 }}>
+        Plan: {data.plan_tier.charAt(0).toUpperCase() + data.plan_tier.slice(1)}
+      </h3>
+      <p style={{ color: 'var(--ink-500)', margin: '4px 0 16px' }}>
+        {data.targeted_searches_used} / {data.targeted_searches_limit} targeted searches this period
+        {' · '}
+        {data.api_used_today.toLocaleString()} / {data.api_limit_per_day.toLocaleString()} API
+        requests today
+      </p>
+      {data.current_period_end && (
+        <p style={{ color: 'var(--ink-500)', fontSize: 13 }}>
+          Renews {new Date(data.current_period_end).toLocaleDateString()}
+        </p>
+      )}
+      {isPaid ? (
+        <button type="button" className="btn btn-secondary" onClick={onManage}>
+          Manage billing
+        </button>
+      ) : (
+        <Link to="/pricing" className="btn btn-primary">
+          Upgrade
+        </Link>
+      )}
+    </section>
+  );
+}
 
 function ProfilePage() {
   const { data: me, isPending } = useMe();
@@ -107,6 +170,8 @@ function ProfilePage() {
             <div className="delta">across all workers</div>
           </div>
         </div>
+
+        <BillingCard />
 
         <div className="profile-grid">
           <div>
