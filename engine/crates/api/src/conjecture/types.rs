@@ -59,6 +59,10 @@ pub struct ConjectureView {
     pub candidates_attempted: i32,
     pub candidates_verified: i32,
     pub verified_theorem_ids: Vec<String>,
+    /// Worker handle when claimed (`None` while still queued).
+    pub claimed_by: Option<String>,
+    pub last_heartbeat_at: Option<DateTime<Utc>>,
+    pub lease_expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
 }
