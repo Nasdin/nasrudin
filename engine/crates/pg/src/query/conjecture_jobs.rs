@@ -150,3 +150,169 @@ pub async fn events_after(
         .all(db)
         .await
 }
+
+// ---------------------------------------------------------------------------
+// Phase E: dequeue + lease lifecycle
+// ---------------------------------------------------------------------------
+
+/// One claimed conjecture, returned to the worker.
+#[derive(Debug, Clone)]
+pub struct ClaimedJob {
+    pub id: Uuid,
+    pub seed: serde_json::Value,
+    pub budget: serde_json::Value,
+    pub hunch: String,
+    pub provider: String,
+    pub model: String,
+}
+
+/// Atomic dequeue. Marks the row state='Running', sets a 5-minute lease,
+/// stamps `claimed_by` + `claimed_at`, returns the row's seed + budget.
+/// Returns `Ok(None)` when nothing is queued.
+///
+/// Uses `FOR UPDATE SKIP LOCKED` so concurrent workers never block each
+/// other and never see the same row twice.
+pub async fn claim_next(
+    db: &DatabaseConnection,
+    worker_id: &str,
+) -> Result<Option<ClaimedJob>, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        UPDATE conjecture_jobs
+        SET claimed_by = $1,
+            claimed_at = NOW(),
+            lease_expires_at = NOW() + INTERVAL '5 minutes',
+            last_heartbeat_at = NOW(),
+            state = 'Running'
+        WHERE id = (
+            SELECT id FROM conjecture_jobs
+            WHERE state = 'QueuedForWorker' AND claimed_by IS NULL
+            ORDER BY created_at
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id, seed, budget, hunch, provider, model
+        "#,
+        [worker_id.into()],
+    );
+    let Some(row) = db.query_one_raw(stmt).await? else {
+        return Ok(None);
+    };
+    let id: Uuid = row.try_get_by_index(0)?;
+    let seed: serde_json::Value = row.try_get_by_index(1)?;
+    let budget: serde_json::Value = row.try_get_by_index(2)?;
+    let hunch: String = row.try_get_by_index(3)?;
+    let provider: String = row.try_get_by_index(4)?;
+    let model: String = row.try_get_by_index(5)?;
+    Ok(Some(ClaimedJob {
+        id,
+        seed,
+        budget,
+        hunch,
+        provider,
+        model,
+    }))
+}
+
+/// Heartbeat: extends the lease by 5 minutes and sets progress counters.
+/// Returns rows_affected so the caller can detect lease/ownership
+/// violations (0 = wrong worker or not Running).
+pub async fn update_heartbeat_progress(
+    db: &DatabaseConnection,
+    id: Uuid,
+    worker_id: &str,
+    candidates_attempted: i32,
+    candidates_verified: i32,
+) -> Result<u64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        UPDATE conjecture_jobs
+        SET last_heartbeat_at = NOW(),
+            lease_expires_at = NOW() + INTERVAL '5 minutes',
+            candidates_attempted = $3,
+            candidates_verified = $4
+        WHERE id = $1 AND claimed_by = $2 AND state = 'Running'
+        "#,
+        [
+            id.into(),
+            worker_id.into(),
+            candidates_attempted.into(),
+            candidates_verified.into(),
+        ],
+    );
+    let res = db.execute_raw(stmt).await?;
+    Ok(res.rows_affected())
+}
+
+/// Append a theorem id to verified_theorem_ids and bump candidates_verified.
+/// Caller has already re-verified the theorem (we delegate to the same
+/// ingest pipeline used by `/api/ingest`).
+pub async fn append_verified_theorem(
+    db: &DatabaseConnection,
+    id: Uuid,
+    worker_id: &str,
+    theorem_id: Vec<u8>,
+) -> Result<u64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        UPDATE conjecture_jobs
+        SET verified_theorem_ids = COALESCE(verified_theorem_ids, ARRAY[]::BYTEA[]) || ARRAY[$3::BYTEA],
+            candidates_verified = candidates_verified + 1,
+            last_heartbeat_at = NOW(),
+            lease_expires_at = NOW() + INTERVAL '5 minutes'
+        WHERE id = $1 AND claimed_by = $2 AND state = 'Running'
+        "#,
+        [id.into(), worker_id.into(), theorem_id.into()],
+    );
+    let res = db.execute_raw(stmt).await?;
+    Ok(res.rows_affected())
+}
+
+/// Final transition. `outcome` ∈ {"Verified", "NoResult", "TimedOut", "Cancelled"}.
+pub async fn complete(
+    db: &DatabaseConnection,
+    id: Uuid,
+    worker_id: &str,
+    outcome: &str,
+) -> Result<u64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        UPDATE conjecture_jobs
+        SET state = 'Complete',
+            outcome = $3,
+            completed_at = NOW()
+        WHERE id = $1 AND claimed_by = $2 AND state = 'Running'
+        "#,
+        [id.into(), worker_id.into(), outcome.into()],
+    );
+    let res = db.execute_raw(stmt).await?;
+    Ok(res.rows_affected())
+}
+
+/// Lease reaper backbone. Returns the IDs that were requeued so the
+/// caller can emit one `progress {worker_lost: true}` event per row.
+pub async fn requeue_expired_leases(db: &DatabaseConnection) -> Result<Vec<Uuid>, DbErr> {
+    let stmt = Statement::from_string(
+        DatabaseBackend::Postgres,
+        r#"
+        UPDATE conjecture_jobs
+        SET claimed_by = NULL,
+            claimed_at = NULL,
+            lease_expires_at = NULL,
+            state = 'QueuedForWorker'
+        WHERE state = 'Running' AND lease_expires_at < NOW()
+        RETURNING id
+        "#
+        .to_string(),
+    );
+    let rows = db.query_all_raw(stmt).await?;
+    let mut ids = Vec::with_capacity(rows.len());
+    for row in rows {
+        ids.push(row.try_get_by_index::<Uuid>(0)?);
+    }
+    Ok(ids)
+}
