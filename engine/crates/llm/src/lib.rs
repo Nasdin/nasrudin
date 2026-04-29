@@ -13,6 +13,7 @@ pub mod registry;
 
 pub use anthropic::AnthropicProvider;
 pub use encryption::{decrypt, encrypt, key_hint, EncryptedKey};
+pub use openai::OpenAiProvider;
 pub use provider::{
     CompletionRequest, CompletionResponse, LlmError, LlmProvider, ResponseFormat, TokenChunk,
 };
