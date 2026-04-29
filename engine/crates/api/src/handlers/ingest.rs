@@ -170,220 +170,195 @@ pub async fn ingest(
 
     let mut results = Vec::with_capacity(batch.theorems.len());
     for t in &batch.theorems {
-        // ── Per-theorem size guards ───────────────────────────────────────
-        if t.lean_source.len() > MAX_LEAN_SOURCE_BYTES {
-            results.push(reject_item("", "", "too_large"));
-            continue;
-        }
-        if let Some(arr) = t.chain.as_array() {
-            if arr.len() > MAX_CHAIN_STEPS {
-                results.push(reject_item("", "", "too_complex"));
-                continue;
-            }
-        }
-
-        // ── Pre-flight axiom/sorry firewall ───────────────────────────────
-        if let Err(reason) = preflight_axiom_or_sorry(&t.lean_source) {
-            results.push(reject_item("", "", reason));
-            continue;
-        }
-
-        let canonical_hash = nasrudin_core::canonical_hash(&t.canonical_statement);
-        // theorem_id == canonical_hash in Phase 9 (see core::theorem_id_from_canonical).
-        let theorem_id = canonical_hash.clone();
-        let id_hex = hex::encode(&theorem_id);
-        let hash_hex = hex::encode(&canonical_hash);
-
-        // Best-effort AC-canonical hash for the search exact-match tier. If
-        // the canonical_statement fails to round-trip through parse_sexpr (a
-        // legacy or malformed form), record None and let the backfill bin
-        // retry once the parser supports it.
-        let canonical_ac_hash =
-            nasrudin_core::parse::parse_sexpr(&t.canonical_statement)
-                .ok()
-                .map(|e| nasrudin_core::canonical_ac_hash(&e).to_vec());
-
-        // ── Dedup against RocksDB (canonical_hash == theorem_id) ──────────
-        // Was: PG SELECT round-trip (~10ms). Now: RocksDB key probe (~µs).
-        // RocksDB is the durable source of truth in the new write-behind
-        // architecture; if a theorem exists in RocksDB it's either already
-        // in PG or queued for the next pg_drain tick. Either way, dedup
-        // is correct.
-        let id_bytes_arr: [u8; 8] = {
-            let mut a = [0u8; 8];
-            if theorem_id.len() == 8 {
-                a.copy_from_slice(&theorem_id);
-            }
-            a
-        };
-        match state.db.theorem_exists(&id_bytes_arr) {
-            Ok(true) => {
-                let existing_status =
-                    match state.db.get_theorem(&id_bytes_arr) {
-                        Ok(Some(t)) => match t.verified {
-                            nasrudin_core::VerificationStatus::Verified { .. } => "Verified",
-                            nasrudin_core::VerificationStatus::Pending => "Pending",
-                            nasrudin_core::VerificationStatus::Rejected { .. } => "Rejected",
-                            nasrudin_core::VerificationStatus::Timeout => "Rejected",
-                        }
-                        .to_string(),
-                        _ => "Unknown".to_string(),
-                    };
-                results.push(IngestResultItem {
-                    theorem_id: id_hex.clone(),
-                    canonical_hash: hash_hex.clone(),
-                    status: IngestStatus::Duplicate { existing_status },
-                });
-                continue;
-            }
-            Ok(false) => {}
-            Err(e) => {
-                results.push(IngestResultItem {
-                    theorem_id: id_hex.clone(),
-                    canonical_hash: hash_hex.clone(),
-                    status: IngestStatus::Rejected {
-                        reason: format!("dedup_rocks_error: {e}"),
-                    },
-                });
-                continue;
-            }
-        }
-
-        // ── Build NewTheorem ──────────────────────────────────────────────
-        let parents_bytes: Option<Vec<Vec<u8>>> = t.parents.as_ref().map(|ps| {
-            ps.iter()
-                .filter_map(|p| hex::decode(p).ok())
-                .collect()
-        });
-        let origin_kind = t
-            .origin
-            .as_ref()
-            .and_then(|v| v.get("type").and_then(|x| x.as_str()).map(String::from))
-            .unwrap_or_else(|| "Axiom".to_string());
-
-        let new_row = theorems::NewTheorem {
-            id: theorem_id.clone(),
-            canonical_hash: canonical_hash.clone(),
-            canonical_ac_hash: canonical_ac_hash.clone(),
-            canonical_statement: t.canonical_statement.clone(),
-            latex: t.latex.clone(),
-            lean_source: t.lean_source.clone(),
-            domain: t.domain.clone(),
-            axioms_used: t.axioms_used.clone(),
-            chain_json: t.chain.clone(),
-            parents: parents_bytes,
-            origin_kind,
-            origin_payload: t.origin.clone(),
-            depth: t.depth.map(|x| x as i32),
-            complexity: t.complexity.map(|x| x as i32),
-            generation: t.generation.map(|x| x as i64),
-            fitness_novelty: extract_fitness(&t.fitness, "novelty"),
-            fitness_compactness: extract_fitness(&t.fitness, "compactness"),
-            fitness_dimensional_correctness: extract_fitness(
-                &t.fitness,
-                "dimensional_correctness",
-            ),
-            fitness_domain_coverage: extract_fitness(&t.fitness, "domain_coverage"),
-            fitness_axiom_efficiency: extract_fitness(&t.fitness, "axiom_efficiency"),
-            fitness_nasrudin_relevance: extract_fitness(&t.fitness, "nasrudin_relevance"),
-            fitness_depth_score: extract_fitness(&t.fitness, "depth"),
-            dimension: t.dimension.map(|d| d.to_vec()),
-            engine_git_sha: batch.engine_git_sha.clone(),
-            lean_version: batch.lean_version.clone(),
-            contributor_id: batch.worker_id.clone(),
-        };
-
-        // ── RocksDB-primary write + write-behind PG enqueue ───────────────
-        // 1. Build the in-memory Theorem (matches `nasrudin_core::Theorem`)
-        //    with status=Pending and persist atomically (CF_THEOREMS +
-        //    secondary indexes).
-        // 2. Serialise the same submission as a PG `NewTheorem` and enqueue
-        //    it in CF_PG_INSERT_QUEUE. The background pg_drain task batches
-        //    these into PG every 500ms.
-        // 3. SSE broadcast immediately — workers/UI clients see the new
-        //    pending theorem the instant it's durable in RocksDB, without
-        //    waiting on PG.
-        // 4. enqueue_reverify so the reverify worker pool picks it up.
-        // 5. Return Pending.
-        let id_arr = id_bytes_arr;
-        // Best-effort parse of canonical_statement → Expr. Failure is fine
-        // here — the Theorem still lands in RocksDB with a placeholder
-        // expression, the canonical_statement string is what dedup and
-        // /api/seed actually use. A peer worker that later wants to
-        // IntroduceAxiom this theorem as a building block will re-parse
-        // from the canonical string itself, not from this Expr field.
-        let parsed_statement = nasrudin_core::parse::parse_sexpr(&t.canonical_statement)
-            .unwrap_or_else(|_| nasrudin_core::Expr::Var("placeholder".into()));
-        let theorem_for_rocks = nasrudin_core::Theorem {
-            id: id_arr,
-            statement: parsed_statement,
-            canonical: t.canonical_statement.clone(),
-            latex: t.latex.clone().unwrap_or_default(),
-            proof: nasrudin_core::ProofTree::Axiom(id_arr),
-            depth: t.depth.unwrap_or(0) as u32,
-            complexity: t.complexity.unwrap_or(0) as u32,
-            domain: parse_domain_or_default(&t.domain),
-            dimension: None,
-            parents: vec![],
-            children: vec![],
-            verified: nasrudin_core::VerificationStatus::Pending,
-            fitness: nasrudin_core::FitnessScore::default(),
-            generation: t.generation.unwrap_or(0) as u64,
-            created_at: chrono::Utc::now().timestamp() as u64,
-            origin: nasrudin_core::TheoremOrigin::Axiom,
-        };
-
-        let put_result = state.db.put_theorem(&theorem_for_rocks);
-        if let Err(e) = put_result {
-            results.push(IngestResultItem {
-                theorem_id: id_hex.clone(),
-                canonical_hash: hash_hex.clone(),
-                status: IngestStatus::Rejected {
-                    reason: format!("rocks_put_error: {e}"),
-                },
-            });
-            continue;
-        }
-
-        // Enqueue for PG insertion. Best-effort: if RocksDB is healthy
-        // this never fails. If it does, the row is in CF_THEOREMS but
-        // not queued — operator can run a one-shot re-enqueue script.
-        match serde_json::to_vec(&new_row) {
-            Ok(payload) => {
-                let _ = state.db.enqueue_pg_insert(&id_arr, &payload);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    theorem_id = %id_hex,
-                    "ingest: NewTheorem serialise failed; row in RocksDB but not queued for PG: {e}"
-                );
-            }
-        }
-
-        // Best-effort reverify enqueue + SSE broadcast.
-        let _ = state.db.enqueue_reverify(&ReverifyJob {
-            theorem_id: id_arr,
-            attempts: 0,
-            enqueued_at_micros: chrono::Utc::now().timestamp_micros(),
-        });
-        let _ = state
-            .reverify_event_tx
-            .send(crate::reverify::DiscoveryEvent::TheoremPending {
-                theorem_id: id_hex.clone(),
-                canonical: t.canonical_statement.clone(),
-                contributor_id: batch.worker_id.clone(),
-            });
-        results.push(IngestResultItem {
-            theorem_id: id_hex.clone(),
-            canonical_hash: hash_hex.clone(),
-            status: IngestStatus::Pending,
-        });
-
-        // PG is no longer touched on the hot path — pg_drain handles it.
-        let _ = pg;
+        let item = ingest_one_theorem(
+            &state,
+            &batch.worker_id,
+            &batch.engine_git_sha,
+            &batch.lean_version,
+            t,
+        )
+        .await;
+        results.push(item);
     }
 
+    // PG handle is unused on the hot path — write-behind via pg_drain.
+    let _ = pg;
+
     (StatusCode::ACCEPTED, Json(IngestResponse { results })).into_response()
+}
+
+/// Per-theorem pipeline shared by `POST /api/ingest` (batch) and
+/// `POST /api/conjecture/{id}/submit` (one). Runs size guards →
+/// axiom/sorry firewall → RocksDB dedup → primary-write + write-behind
+/// PG enqueue → SSE broadcast → reverify enqueue. Returns the per-item
+/// outcome (Pending / Duplicate / Rejected).
+pub async fn ingest_one_theorem(
+    state: &Arc<AppState>,
+    worker_id: &str,
+    engine_git_sha: &str,
+    lean_version: &str,
+    t: &IngestTheorem,
+) -> IngestResultItem {
+    if t.lean_source.len() > MAX_LEAN_SOURCE_BYTES {
+        return reject_item("", "", "too_large");
+    }
+    if let Some(arr) = t.chain.as_array() {
+        if arr.len() > MAX_CHAIN_STEPS {
+            return reject_item("", "", "too_complex");
+        }
+    }
+
+    if let Err(reason) = preflight_axiom_or_sorry(&t.lean_source) {
+        return reject_item("", "", reason);
+    }
+
+    let canonical_hash = nasrudin_core::canonical_hash(&t.canonical_statement);
+    let theorem_id = canonical_hash.clone();
+    let id_hex = hex::encode(&theorem_id);
+    let hash_hex = hex::encode(&canonical_hash);
+
+    let canonical_ac_hash = nasrudin_core::parse::parse_sexpr(&t.canonical_statement)
+        .ok()
+        .map(|e| nasrudin_core::canonical_ac_hash(&e).to_vec());
+
+    let id_bytes_arr: [u8; 8] = {
+        let mut a = [0u8; 8];
+        if theorem_id.len() == 8 {
+            a.copy_from_slice(&theorem_id);
+        }
+        a
+    };
+    match state.db.theorem_exists(&id_bytes_arr) {
+        Ok(true) => {
+            let existing_status = match state.db.get_theorem(&id_bytes_arr) {
+                Ok(Some(t)) => match t.verified {
+                    nasrudin_core::VerificationStatus::Verified { .. } => "Verified",
+                    nasrudin_core::VerificationStatus::Pending => "Pending",
+                    nasrudin_core::VerificationStatus::Rejected { .. } => "Rejected",
+                    nasrudin_core::VerificationStatus::Timeout => "Rejected",
+                }
+                .to_string(),
+                _ => "Unknown".to_string(),
+            };
+            return IngestResultItem {
+                theorem_id: id_hex,
+                canonical_hash: hash_hex,
+                status: IngestStatus::Duplicate { existing_status },
+            };
+        }
+        Ok(false) => {}
+        Err(e) => {
+            return IngestResultItem {
+                theorem_id: id_hex,
+                canonical_hash: hash_hex,
+                status: IngestStatus::Rejected {
+                    reason: format!("dedup_rocks_error: {e}"),
+                },
+            };
+        }
+    }
+
+    let parents_bytes: Option<Vec<Vec<u8>>> = t.parents.as_ref().map(|ps| {
+        ps.iter()
+            .filter_map(|p| hex::decode(p).ok())
+            .collect()
+    });
+    let origin_kind = t
+        .origin
+        .as_ref()
+        .and_then(|v| v.get("type").and_then(|x| x.as_str()).map(String::from))
+        .unwrap_or_else(|| "Axiom".to_string());
+
+    let new_row = theorems::NewTheorem {
+        id: theorem_id.clone(),
+        canonical_hash: canonical_hash.clone(),
+        canonical_ac_hash: canonical_ac_hash.clone(),
+        canonical_statement: t.canonical_statement.clone(),
+        latex: t.latex.clone(),
+        lean_source: t.lean_source.clone(),
+        domain: t.domain.clone(),
+        axioms_used: t.axioms_used.clone(),
+        chain_json: t.chain.clone(),
+        parents: parents_bytes,
+        origin_kind,
+        origin_payload: t.origin.clone(),
+        depth: t.depth.map(|x| x as i32),
+        complexity: t.complexity.map(|x| x as i32),
+        generation: t.generation.map(|x| x as i64),
+        fitness_novelty: extract_fitness(&t.fitness, "novelty"),
+        fitness_compactness: extract_fitness(&t.fitness, "compactness"),
+        fitness_dimensional_correctness: extract_fitness(&t.fitness, "dimensional_correctness"),
+        fitness_domain_coverage: extract_fitness(&t.fitness, "domain_coverage"),
+        fitness_axiom_efficiency: extract_fitness(&t.fitness, "axiom_efficiency"),
+        fitness_nasrudin_relevance: extract_fitness(&t.fitness, "nasrudin_relevance"),
+        fitness_depth_score: extract_fitness(&t.fitness, "depth"),
+        dimension: t.dimension.map(|d| d.to_vec()),
+        engine_git_sha: engine_git_sha.to_string(),
+        lean_version: lean_version.to_string(),
+        contributor_id: worker_id.to_string(),
+    };
+
+    let id_arr = id_bytes_arr;
+    let parsed_statement = nasrudin_core::parse::parse_sexpr(&t.canonical_statement)
+        .unwrap_or_else(|_| nasrudin_core::Expr::Var("placeholder".into()));
+    let theorem_for_rocks = nasrudin_core::Theorem {
+        id: id_arr,
+        statement: parsed_statement,
+        canonical: t.canonical_statement.clone(),
+        latex: t.latex.clone().unwrap_or_default(),
+        proof: nasrudin_core::ProofTree::Axiom(id_arr),
+        depth: t.depth.unwrap_or(0) as u32,
+        complexity: t.complexity.unwrap_or(0) as u32,
+        domain: parse_domain_or_default(&t.domain),
+        dimension: None,
+        parents: vec![],
+        children: vec![],
+        verified: nasrudin_core::VerificationStatus::Pending,
+        fitness: nasrudin_core::FitnessScore::default(),
+        generation: t.generation.unwrap_or(0) as u64,
+        created_at: chrono::Utc::now().timestamp() as u64,
+        origin: nasrudin_core::TheoremOrigin::Axiom,
+    };
+
+    if let Err(e) = state.db.put_theorem(&theorem_for_rocks) {
+        return IngestResultItem {
+            theorem_id: id_hex,
+            canonical_hash: hash_hex,
+            status: IngestStatus::Rejected {
+                reason: format!("rocks_put_error: {e}"),
+            },
+        };
+    }
+
+    match serde_json::to_vec(&new_row) {
+        Ok(payload) => {
+            let _ = state.db.enqueue_pg_insert(&id_arr, &payload);
+        }
+        Err(e) => {
+            tracing::warn!(
+                theorem_id = %id_hex,
+                "ingest: NewTheorem serialise failed; row in RocksDB but not queued for PG: {e}"
+            );
+        }
+    }
+
+    let _ = state.db.enqueue_reverify(&ReverifyJob {
+        theorem_id: id_arr,
+        attempts: 0,
+        enqueued_at_micros: chrono::Utc::now().timestamp_micros(),
+    });
+    let _ = state
+        .reverify_event_tx
+        .send(crate::reverify::DiscoveryEvent::TheoremPending {
+            theorem_id: id_hex.clone(),
+            canonical: t.canonical_statement.clone(),
+            contributor_id: worker_id.to_string(),
+        });
+    IngestResultItem {
+        theorem_id: id_hex,
+        canonical_hash: hash_hex,
+        status: IngestStatus::Pending,
+    }
 }
 
 /// Build a `Rejected` result item with empty IDs, used for theorems that
