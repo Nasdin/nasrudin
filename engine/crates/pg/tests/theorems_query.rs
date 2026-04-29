@@ -29,6 +29,10 @@ async fn fresh_db()
     db.execute_unprepared(
         "DROP TABLE IF EXISTS conjecture_events CASCADE; \
          DROP TABLE IF EXISTS conjecture_jobs CASCADE; \
+         DROP TABLE IF EXISTS manual_verifications CASCADE; \
+         DROP TABLE IF EXISTS targeted_search_usage CASCADE; \
+         DROP TABLE IF EXISTS api_usage_daily CASCADE; \
+         DROP TABLE IF EXISTS billing_events CASCADE; \
          DROP TABLE IF EXISTS user_llm_keys CASCADE; \
          DROP TABLE IF EXISTS theorems CASCADE; \
          DROP TABLE IF EXISTS api_keys CASCADE; \
