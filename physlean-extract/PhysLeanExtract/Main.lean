@@ -55,10 +55,17 @@ def main (args : List String) : IO Unit := do
 
   IO.println s!"Environment loaded: {env.constants.map₁.size} constants"
 
-  -- Set up Core/Meta context with the loaded environment
+  -- Set up Core/Meta context with the loaded environment.
+  --
+  -- Disable the global `maxHeartbeats` limit (default 200k) for the
+  -- whole walk: iterating 400k+ Mathlib constants plus all the
+  -- per-constant `whnf`/`isProp`/`getFunInfo` calls in the translator
+  -- burns through that many times over. This is a one-shot extraction
+  -- run, not interactive elaboration — there's no reason to bound it.
   let coreCtx : Lean.Core.Context := {
     fileName := "<extract>"
     fileMap := .ofString ""
+    maxHeartbeats := 0
   }
   let coreState : Lean.Core.State := { env }
 
