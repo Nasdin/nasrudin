@@ -4,6 +4,7 @@
 
 pub mod orchestrate;
 pub mod prompt;
+pub mod reaper;
 pub mod types;
 
 pub use types::*;
