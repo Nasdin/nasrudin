@@ -189,6 +189,15 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
+    if embed_enabled {
+        if let Some(p) = embed_path.as_ref() {
+            let cron =
+                Arc::new(physics_api::embed_cron::EmbedCron::new(Arc::clone(&db), p.clone()));
+            tokio::spawn(Arc::clone(&cron).run());
+            tracing::info!("embed_cron spawned (out_path = {p:?})");
+        }
+    }
+
     // Channels
     let (candidates_tx, candidates_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();
     let (verified_tx, verified_rx) = std::sync::mpsc::channel::<Vec<Theorem>>();

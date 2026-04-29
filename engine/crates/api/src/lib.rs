@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod cache;
+pub mod embed_cron;
 pub mod handlers;
 pub mod hydration;
 pub mod keygen;
