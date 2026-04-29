@@ -203,6 +203,26 @@ pub async fn build() -> Option<TestApp> {
             "/api/me/llm-keys/{provider}",
             axum::routing::delete(handlers::llm_keys::revoke),
         )
+        .route(
+            "/api/conjecture",
+            axum::routing::post(handlers::conjecture::create),
+        )
+        .route(
+            "/api/conjecture/{id}",
+            axum::routing::get(handlers::conjecture::get_one),
+        )
+        .route(
+            "/api/conjecture/{id}/start",
+            axum::routing::post(handlers::conjecture::start),
+        )
+        .route(
+            "/api/conjecture/{id}/sse",
+            axum::routing::get(handlers::conjecture::sse),
+        )
+        .route(
+            "/api/me/conjectures",
+            axum::routing::get(handlers::conjecture::list_mine),
+        )
         .layer(auth_layer)
         .with_state(state);
 
