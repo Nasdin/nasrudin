@@ -124,3 +124,46 @@ pub fn render_tactic_with_lemmas(tactic_name: &str, lemmas: &[&str]) -> String {
     let lemma_list = lemmas.join(", ");
     format!("by\n  {tactic_name} [{lemma_list}]\n")
 }
+
+use nasrudin_rocks::tactic_priors::TacticPriorsCache;
+
+/// Return up to `n` cached tactic chains for this goal-skeleton + axiom-set
+/// key, in hit-count order. Empty on cache miss or DB error.
+///
+/// Callers should try these chains BEFORE [`default_cascade`]; only fall
+/// through to the cascade if none succeed.
+pub fn priors_for(cache: &TacticPriorsCache, key: &[u8; 16], n: usize) -> Vec<String> {
+    cache
+        .top(key, n)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.tactic_chain)
+        .collect()
+}
+
+#[cfg(test)]
+mod priors_test {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn priors_for_empty_cache_returns_empty() {
+        let dir = tempdir().unwrap();
+        let cache = TacticPriorsCache::open(dir.path().to_str().unwrap()).unwrap();
+        let key = [0u8; 16];
+        let out = priors_for(&cache, &key, 3);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn priors_for_returns_top_chains() {
+        let dir = tempdir().unwrap();
+        let cache = TacticPriorsCache::open(dir.path().to_str().unwrap()).unwrap();
+        let key = [1u8; 16];
+        cache.record_success(&key, "ring", 10).unwrap();
+        cache.record_success(&key, "ring", 12).unwrap();
+        cache.record_success(&key, "linarith", 30).unwrap();
+        let out = priors_for(&cache, &key, 5);
+        assert_eq!(out, vec!["ring".to_string(), "linarith".to_string()]);
+    }
+}

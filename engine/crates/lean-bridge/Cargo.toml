@@ -9,7 +9,11 @@ lean-ffi = []
 
 [dependencies]
 nasrudin-core = { path = "../core" }
+nasrudin-rocks = { path = "../rocks" }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
