@@ -11,8 +11,9 @@ pub mod openai;
 pub mod provider;
 pub mod registry;
 
+pub use anthropic::AnthropicProvider;
 pub use encryption::{decrypt, encrypt, key_hint, EncryptedKey};
 pub use provider::{
     CompletionRequest, CompletionResponse, LlmError, LlmProvider, ResponseFormat, TokenChunk,
 };
-// Provider impls + Registry are re-exported as their modules land.
+// Remaining provider impls + Registry are re-exported as their modules land.
