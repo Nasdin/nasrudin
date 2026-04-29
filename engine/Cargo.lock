@@ -1785,6 +1785,8 @@ dependencies = [
  "chrono",
  "hex",
  "nasrudin-core",
+ "nasrudin-rocks",
+ "tempfile",
  "tracing",
 ]
 
