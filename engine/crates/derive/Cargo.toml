@@ -16,3 +16,4 @@ hex = { workspace = true }
 
 [dev-dependencies]
 nasrudin-lean-bridge = { path = "../lean-bridge" }
+serial_test = "3"

@@ -36,6 +36,10 @@ fn env_truthy(name: &str) -> bool {
 
 /// Atomic counter sink. Each cache layer increments its counters; the
 /// `cache-stats` binary reads them out for reporting.
+///
+/// Shared across worker threads via `Arc<CacheStats>`. All increments use
+/// `Ordering::Relaxed` — counters are read for reporting, never used to
+/// gate program logic.
 #[derive(Debug, Default)]
 pub struct CacheStats {
     pub attempts_hits: AtomicU64,
@@ -49,11 +53,17 @@ pub struct CacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
-    /// Save and restore env vars across one test. Required because cargo
-    /// runs tests in parallel by default and env mutation isn't thread-safe;
-    /// we use serial_test only if needed (skip for now since each test sets
-    /// distinct vars).
+    /// Save and restore env vars across one test.
+    ///
+    /// Cargo runs tests in parallel by default and `std::env::set_var` is
+    /// not synchronised across threads, so any test mutating env vars that
+    /// another test reads must be marked `#[serial]`. The end-to-end tests
+    /// in this module (which manipulate the production `NASRUDIN_CACHE_*`
+    /// vars that `from_env()` reads) all carry `#[serial]` for that reason.
+    /// The variant-coverage tests use disjoint test-only var names and so
+    /// can run in parallel.
     struct EnvGuard {
         saved: Vec<(String, Option<String>)>,
     }
@@ -104,6 +114,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn defaults_are_off() {
         let _g = EnvGuard::clear(&[
             "NASRUDIN_CACHE_ATTEMPTS",
@@ -117,6 +128,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn one_flag_set_enables_only_that_cache() {
         let _g = EnvGuard::set(&[
             ("NASRUDIN_CACHE_ATTEMPTS", "1"),
@@ -126,6 +138,22 @@ mod tests {
         let cfg = CacheConfig::from_env();
         assert!(cfg.attempts_enabled);
         assert!(!cfg.tactic_priors_enabled);
+        assert!(!cfg.persistent_lean_enabled);
+    }
+
+    #[test]
+    #[serial]
+    fn truthy_variant_through_from_env() {
+        // End-to-end: confirm `from_env()` (not just `env_truthy`) accepts
+        // a non-"1" truthy value like "yes".
+        let _g = EnvGuard::set(&[
+            ("NASRUDIN_CACHE_ATTEMPTS", "yes"),
+            ("NASRUDIN_CACHE_TACTIC_PRIORS", "TRUE"),
+            ("NASRUDIN_CACHE_PERSISTENT_LEAN", "0"),
+        ]);
+        let cfg = CacheConfig::from_env();
+        assert!(cfg.attempts_enabled);
+        assert!(cfg.tactic_priors_enabled);
         assert!(!cfg.persistent_lean_enabled);
     }
 
