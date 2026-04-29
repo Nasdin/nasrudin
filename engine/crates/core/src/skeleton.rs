@@ -3,16 +3,18 @@
 //! Two expressions hash to the same skeleton iff they differ only in:
 //!   - literal numeric values (every `Lit` erased to `L`)
 //!   - free-variable names (renamed `V0`, `V1`, … in left-to-right discovery order)
+//!   - bound-variable names (renamed `B0`, `B1`, … per binder scope — alpha-equivalence)
 //!
-//! Operator structure, constants (`Const`), and bound-variable names inside
-//! `Lam` / `Pi` / `Let` / `Deriv` / `Integral` / `Sum` / `Prod` / `Limit`
-//! are flattened away (bound names don't affect skeleton — alpha-equivalence).
+//! Operator structure, constants (`Const`), and the *presence* of binders
+//! are part of the skeleton: `(λx. x) + y` and `(λx. y) + x` diverge,
+//! but `λx. x` and `λy. y` collide.
 //!
 //! Used by the tactic-priors cache: similar-shaped goals share a hash so a
 //! tactic chain that proved one goal is tried first on the next.
 
 use crate::expr::{BinOp, Expr, PhysConst, UnOp};
 use std::collections::HashMap;
+use std::fmt::Write;
 
 /// 8-byte BLAKE3 prefix over the skeleton's canonical bytes.
 pub type SkeletonHash = [u8; 8];
@@ -20,8 +22,16 @@ pub type SkeletonHash = [u8; 8];
 /// Render the canonical skeleton string. Public for debugging.
 pub fn normalise_to_skeleton(expr: &Expr) -> String {
     let mut out = String::new();
-    let mut var_map: HashMap<String, usize> = HashMap::new();
-    walk(expr, &mut out, &mut var_map);
+    let mut free_vars: HashMap<String, usize> = HashMap::new();
+    let mut bound_stack: Vec<HashMap<String, usize>> = Vec::new();
+    let mut next_bound: usize = 0;
+    walk(
+        expr,
+        &mut out,
+        &mut free_vars,
+        &mut bound_stack,
+        &mut next_bound,
+    );
     out
 }
 
@@ -34,18 +44,32 @@ pub fn skeleton_hash(expr: &Expr) -> SkeletonHash {
     out
 }
 
-fn walk(expr: &Expr, out: &mut String, var_map: &mut HashMap<String, usize>) {
+fn walk(
+    expr: &Expr,
+    out: &mut String,
+    free_vars: &mut HashMap<String, usize>,
+    bound_stack: &mut Vec<HashMap<String, usize>>,
+    next_bound: &mut usize,
+) {
     match expr {
         Expr::Var(name) => {
-            let idx = match var_map.get(name) {
-                Some(i) => *i,
+            // Bound vars shadow free — search innermost scope first.
+            for scope in bound_stack.iter().rev() {
+                if let Some(&bidx) = scope.get(name) {
+                    write!(out, "B{bidx}").unwrap();
+                    return;
+                }
+            }
+            // Free var.
+            let idx = match free_vars.get(name) {
+                Some(&i) => i,
                 None => {
-                    let i = var_map.len();
-                    var_map.insert(name.clone(), i);
+                    let i = free_vars.len();
+                    free_vars.insert(name.clone(), i);
                     i
                 }
             };
-            out.push_str(&format!("V{idx}"));
+            write!(out, "V{idx}").unwrap();
         }
         Expr::Const(c) => {
             out.push_str("C:");
@@ -54,105 +78,178 @@ fn walk(expr: &Expr, out: &mut String, var_map: &mut HashMap<String, usize>) {
         Expr::Lit(_, _) => out.push('L'),
         Expr::App(f, x) => {
             out.push_str("(@ ");
-            walk(f, out, var_map);
+            walk(f, out, free_vars, bound_stack, next_bound);
             out.push(' ');
-            walk(x, out, var_map);
+            walk(x, out, free_vars, bound_stack, next_bound);
             out.push(')');
         }
-        // Bound-variable names are intentionally erased — alpha-equivalence
-        // means two lambdas differing only in their parameter name should
-        // share a skeleton.
-        Expr::Lam(_, ty, body) => {
+        Expr::Lam(bname, ty, body) => {
             out.push_str("(lam ");
-            walk(ty, out, var_map);
+            // type annotation lives in the OUTER scope (the binder isn't visible there)
+            walk(ty, out, free_vars, bound_stack, next_bound);
             out.push(' ');
-            walk(body, out, var_map);
+            // body is in a new scope where bname is bound to the next bound index
+            let mut scope = HashMap::new();
+            let idx = *next_bound;
+            *next_bound += 1;
+            scope.insert(bname.clone(), idx);
+            bound_stack.push(scope);
+            walk(body, out, free_vars, bound_stack, next_bound);
+            bound_stack.pop();
             out.push(')');
         }
-        Expr::Pi(_, ty, body) => {
+        Expr::Pi(bname, ty, body) => {
             out.push_str("(pi ");
-            walk(ty, out, var_map);
+            walk(ty, out, free_vars, bound_stack, next_bound);
             out.push(' ');
-            walk(body, out, var_map);
+            let mut scope = HashMap::new();
+            let idx = *next_bound;
+            *next_bound += 1;
+            scope.insert(bname.clone(), idx);
+            bound_stack.push(scope);
+            walk(body, out, free_vars, bound_stack, next_bound);
+            bound_stack.pop();
             out.push(')');
         }
         Expr::BinOp(op, l, r) => {
             out.push('(');
             out.push_str(binop_name(op));
             out.push(' ');
-            walk(l, out, var_map);
+            walk(l, out, free_vars, bound_stack, next_bound);
             out.push(' ');
-            walk(r, out, var_map);
+            walk(r, out, free_vars, bound_stack, next_bound);
             out.push(')');
         }
         Expr::UnOp(op, e) => {
             out.push('(');
             out.push_str(unop_name(op));
             out.push(' ');
-            walk(e, out, var_map);
+            walk(e, out, free_vars, bound_stack, next_bound);
             out.push(')');
         }
-        Expr::Deriv(e, _) => {
+        Expr::Deriv(e, bvar) => {
             out.push_str("(deriv ");
-            walk(e, out, var_map);
+            // The differentiation variable binds inside `e` — push a scope so
+            // any Var(bvar) inside resolves to B<idx>.
+            let mut scope = HashMap::new();
+            let idx = *next_bound;
+            *next_bound += 1;
+            scope.insert(bvar.clone(), idx);
+            bound_stack.push(scope);
+            walk(e, out, free_vars, bound_stack, next_bound);
+            bound_stack.pop();
             out.push(')');
         }
-        Expr::PartialDeriv(e, _) => {
+        Expr::PartialDeriv(e, bvar) => {
             out.push_str("(pderiv ");
-            walk(e, out, var_map);
+            let mut scope = HashMap::new();
+            let idx = *next_bound;
+            *next_bound += 1;
+            scope.insert(bvar.clone(), idx);
+            bound_stack.push(scope);
+            walk(e, out, free_vars, bound_stack, next_bound);
+            bound_stack.pop();
             out.push(')');
         }
         Expr::Integral {
-            body, lower, upper, ..
+            body,
+            lower,
+            upper,
+            var,
         } => {
             out.push_str("(int ");
-            walk(body, out, var_map);
-            if let Some(l) = lower {
-                out.push(' ');
-                walk(l, out, var_map);
+            // body is in scope of var
+            let mut scope = HashMap::new();
+            let idx = *next_bound;
+            *next_bound += 1;
+            scope.insert(var.clone(), idx);
+            bound_stack.push(scope);
+            walk(body, out, free_vars, bound_stack, next_bound);
+            bound_stack.pop();
+            // lower / upper live in the OUTER scope; emit a sentinel for
+            // absent bounds so (None, Some(u)) and (Some(u), None) diverge.
+            out.push(' ');
+            match lower {
+                Some(l) => walk(l, out, free_vars, bound_stack, next_bound),
+                None => out.push('_'),
             }
-            if let Some(u) = upper {
-                out.push(' ');
-                walk(u, out, var_map);
+            out.push(' ');
+            match upper {
+                Some(u) => walk(u, out, free_vars, bound_stack, next_bound),
+                None => out.push('_'),
             }
             out.push(')');
         }
         Expr::Sum {
-            body, lower, upper, ..
+            body,
+            lower,
+            upper,
+            var,
         } => {
             out.push_str("(sum ");
-            walk(body, out, var_map);
+            let mut scope = HashMap::new();
+            let idx = *next_bound;
+            *next_bound += 1;
+            scope.insert(var.clone(), idx);
+            bound_stack.push(scope);
+            walk(body, out, free_vars, bound_stack, next_bound);
+            bound_stack.pop();
             out.push(' ');
-            walk(lower, out, var_map);
+            walk(lower, out, free_vars, bound_stack, next_bound);
             out.push(' ');
-            walk(upper, out, var_map);
+            walk(upper, out, free_vars, bound_stack, next_bound);
             out.push(')');
         }
         Expr::Prod {
-            body, lower, upper, ..
+            body,
+            lower,
+            upper,
+            var,
         } => {
             out.push_str("(prod ");
-            walk(body, out, var_map);
+            let mut scope = HashMap::new();
+            let idx = *next_bound;
+            *next_bound += 1;
+            scope.insert(var.clone(), idx);
+            bound_stack.push(scope);
+            walk(body, out, free_vars, bound_stack, next_bound);
+            bound_stack.pop();
             out.push(' ');
-            walk(lower, out, var_map);
+            walk(lower, out, free_vars, bound_stack, next_bound);
             out.push(' ');
-            walk(upper, out, var_map);
+            walk(upper, out, free_vars, bound_stack, next_bound);
             out.push(')');
         }
         Expr::Limit {
-            body, approaching, ..
+            body,
+            approaching,
+            var,
         } => {
             out.push_str("(lim ");
-            walk(body, out, var_map);
+            let mut scope = HashMap::new();
+            let idx = *next_bound;
+            *next_bound += 1;
+            scope.insert(var.clone(), idx);
+            bound_stack.push(scope);
+            walk(body, out, free_vars, bound_stack, next_bound);
+            bound_stack.pop();
             out.push(' ');
-            walk(approaching, out, var_map);
+            // approaching is in the OUTER scope
+            walk(approaching, out, free_vars, bound_stack, next_bound);
             out.push(')');
         }
-        Expr::Let(_, val, body) => {
+        Expr::Let(bname, val, body) => {
             out.push_str("(let ");
-            walk(val, out, var_map);
+            // val is in the OUTER scope (Rust let semantics, not letrec)
+            walk(val, out, free_vars, bound_stack, next_bound);
             out.push(' ');
-            walk(body, out, var_map);
+            let mut scope = HashMap::new();
+            let idx = *next_bound;
+            *next_bound += 1;
+            scope.insert(bname.clone(), idx);
+            bound_stack.push(scope);
+            walk(body, out, free_vars, bound_stack, next_bound);
+            bound_stack.pop();
             out.push(')');
         }
     }
@@ -304,5 +401,99 @@ mod tests {
         let e1 = Expr::Const(PhysConst::SpeedOfLight);
         let e2 = Expr::Const(PhysConst::PlanckConst);
         assert_ne!(skeleton_hash(&e1), skeleton_hash(&e2));
+    }
+
+    #[test]
+    fn free_variable_leak_through_binder_diverges() {
+        // (λx. x) + y     !=     (λx. y) + x
+        use crate::expr::Expr;
+        let body_id = Expr::Lam(
+            "x".into(),
+            Box::new(Expr::Var("T".into())),
+            Box::new(Expr::Var("x".into())),
+        );
+        let body_const = Expr::Lam(
+            "x".into(),
+            Box::new(Expr::Var("T".into())),
+            Box::new(Expr::Var("y".into())),
+        );
+        let e1 = Expr::BinOp(
+            BinOp::Add,
+            Box::new(body_id),
+            Box::new(Expr::Var("y".into())),
+        );
+        let e2 = Expr::BinOp(
+            BinOp::Add,
+            Box::new(body_const),
+            Box::new(Expr::Var("x".into())),
+        );
+        assert_ne!(skeleton_hash(&e1), skeleton_hash(&e2));
+    }
+
+    #[test]
+    fn alpha_renamed_lambdas_collide() {
+        // λx. x   ==   λy. y
+        use crate::expr::Expr;
+        let e1 = Expr::Lam(
+            "x".into(),
+            Box::new(Expr::Var("T".into())),
+            Box::new(Expr::Var("x".into())),
+        );
+        let e2 = Expr::Lam(
+            "y".into(),
+            Box::new(Expr::Var("T".into())),
+            Box::new(Expr::Var("y".into())),
+        );
+        assert_eq!(skeleton_hash(&e1), skeleton_hash(&e2));
+    }
+
+    #[test]
+    fn integral_with_only_lower_diverges_from_only_upper() {
+        use crate::expr::Expr;
+        let f = Box::new(Expr::Var("f".into()));
+        let bound = Box::new(Expr::Var("a".into()));
+        let only_lower = Expr::Integral {
+            body: f.clone(),
+            var: "x".into(),
+            lower: Some(bound.clone()),
+            upper: None,
+        };
+        let only_upper = Expr::Integral {
+            body: f,
+            var: "x".into(),
+            lower: None,
+            upper: Some(bound),
+        };
+        assert_ne!(skeleton_hash(&only_lower), skeleton_hash(&only_upper));
+    }
+
+    #[test]
+    fn deriv_and_pderiv_diverge() {
+        use crate::expr::Expr;
+        let e = Box::new(Expr::Var("f".into()));
+        let d = Expr::Deriv(e.clone(), "x".into());
+        let p = Expr::PartialDeriv(e, "x".into());
+        assert_ne!(skeleton_hash(&d), skeleton_hash(&p));
+    }
+
+    #[test]
+    fn sum_and_prod_diverge() {
+        use crate::expr::Expr;
+        let body = Box::new(Expr::Var("i".into()));
+        let lo = Box::new(Expr::Lit(0, 1));
+        let hi = Box::new(Expr::Lit(10, 1));
+        let s = Expr::Sum {
+            body: body.clone(),
+            var: "i".into(),
+            lower: lo.clone(),
+            upper: hi.clone(),
+        };
+        let p = Expr::Prod {
+            body,
+            var: "i".into(),
+            lower: lo,
+            upper: hi,
+        };
+        assert_ne!(skeleton_hash(&s), skeleton_hash(&p));
     }
 }
