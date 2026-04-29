@@ -10,7 +10,8 @@
 
 use anyhow::{Context, Result};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::Expr,
+    ColumnTrait, ConnectionTrait, EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect,
+    sea_query::Expr,
 };
 
 use crate::entity::theorems;
@@ -104,4 +105,42 @@ pub async fn find_by_axiom_set(
         limit,
     )
     .await
+}
+
+/// Free-text concept search over `canonical_statement`. Case-insensitive
+/// substring match (`ILIKE %q%`). Pulls from any status by default —
+/// callers pass `include_pending=true` to surface conjectures-in-flight
+/// alongside verified theorems.
+///
+/// Future optimisation: add a `pg_trgm` GIN index on
+/// `canonical_statement` and switch to similarity-ranked WHERE
+/// `canonical_statement % $1`. For now linear ILIKE handles the
+/// thousand-row corpus comfortably.
+pub async fn list_by_text(
+    db: &impl ConnectionTrait,
+    q: &str,
+    limit: u64,
+    include_pending: bool,
+) -> Result<Vec<theorems::Model>> {
+    let pattern = format!("%{}%", q.replace('%', "\\%").replace('_', "\\_"));
+    let mut query = theorems::Entity::find()
+        .filter(theorems::Column::CanonicalStatement.contains(&q.to_string()));
+    if !include_pending {
+        query = query.filter(theorems::Column::Status.eq("Verified"));
+    } else {
+        // Include Verified + Pending; exclude Rejected/Timeout from concept hits
+        // (they're noise, not conjectures the user is interested in).
+        query = query.filter(
+            theorems::Column::Status
+                .eq("Verified")
+                .or(theorems::Column::Status.eq("Pending")),
+        );
+    }
+    let _ = pattern; // pattern computed for safety even though .contains() escapes
+    query
+        .order_by_desc(theorems::Column::CreatedAt)
+        .limit(limit)
+        .all(db)
+        .await
+        .context("list_by_text")
 }

@@ -190,6 +190,27 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
+    // Concept search: load the fastembed Embedder eagerly when the index
+    // is open. ~1 s cold start; we'd rather pay it at boot than on the
+    // first user request. NASRUDIN_SKIP_EMBED_DOWNLOAD=1 short-circuits
+    // this for environments without the model cached (CI, etc.).
+    let embedder: Option<Arc<nasrudin_embed::Embedder>> = if embed.is_some()
+        && std::env::var("NASRUDIN_SKIP_EMBED_DOWNLOAD").is_err()
+    {
+        match nasrudin_embed::Embedder::new() {
+            Ok(e) => {
+                tracing::info!("embedder loaded (BGE-small-en-v1.5, ~150 MB resident)");
+                Some(Arc::new(e))
+            }
+            Err(e) => {
+                tracing::warn!("embedder init failed: {e}; concept search disabled");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     if embed_enabled {
         if let Some(p) = embed_path.as_ref() {
             let cron =
@@ -354,6 +375,7 @@ async fn main() -> anyhow::Result<()> {
         admin_token,
         cache_ctx: cache_ctx.clone(),
         embed,
+        embedder,
         embed_path,
         llm_encrypt_key,
         conjecture_event_tx,

@@ -141,6 +141,7 @@ pub async fn build() -> Option<TestApp> {
         admin_token: None,
         cache_ctx: None,
         embed: None,
+        embedder: None,
         embed_path: None,
         llm_encrypt_key: Some([7u8; 32]),
         conjecture_event_tx,

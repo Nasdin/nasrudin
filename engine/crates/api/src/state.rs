@@ -76,6 +76,11 @@ pub struct AppState {
     /// Embedding index over the verified-theorem corpus (Phase B). `None`
     /// when `NASRUDIN_EMBED_ENABLED` is unset or the file isn't on disk.
     pub embed: Option<Arc<nasrudin_embed::EmbeddingIndex>>,
+    /// fastembed Embedder (BGE-small-en-v1.5). Loaded eagerly at boot
+    /// alongside the index when embed is enabled — first-request latency
+    /// would otherwise eat ~1 s on the cold model load. ~150 MB resident.
+    /// Used by `/api/search/concept`.
+    pub embedder: Option<Arc<nasrudin_embed::Embedder>>,
     /// Filesystem path where the index lives. Used by the
     /// `/api/embed/index.bin` handler to stream the file directly.
     pub embed_path: Option<std::path::PathBuf>,
