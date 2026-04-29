@@ -73,6 +73,22 @@ pub struct DiscoveryConfig {
     /// uniform-1/6 distribution. Threaded in via the LLM-supplied
     /// LlmSuggestion seed.
     pub mutation_priors: Option<std::collections::HashMap<String, f32>>,
+    /// P-Task 11: when > 0, the GA harvests this many top-fitness
+    /// novel candidates per generation and pushes them into
+    /// `report.verified` *without running lake build*. The worker
+    /// submits them to /api/ingest where the server's reverify drain
+    /// chain-replays in microseconds (P-Task 1) and the lake-promotion
+    /// drain (P-Task 2) handles kernel confirmation lazily.
+    ///
+    /// This unblocks the "thousands of cheap school-volunteer workers"
+    /// model: each worker runs only the GA + canonical hashing +
+    /// Lean source emission (all sub-millisecond) instead of paying
+    /// 5–60s/lake-build locally. A 4-core school laptop can submit
+    /// hundreds of candidates per minute instead of a handful per hour.
+    ///
+    /// Set to 0 (default) for the legacy "verify locally before
+    /// submitting" mode.
+    pub submit_unverified_top_k: usize,
 }
 
 impl Default for DiscoveryConfig {
@@ -91,6 +107,7 @@ impl Default for DiscoveryConfig {
             cache_ctx: None,
             novelty_bloom: None,
             mutation_priors: None,
+            submit_unverified_top_k: 0,
         }
     }
 }
@@ -240,6 +257,60 @@ pub fn run_discovery(
                 .partial_cmp(&composite(&a.fitness))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+
+        // P-Task 11: harvest top-K novel candidates for server-side
+        // chain-replay verification. We emit Lean source locally
+        // (microseconds via emit_lean_file, no lake build) and push
+        // each into report.verified. The worker's existing submit
+        // path POSTs them to /api/ingest where the server's reverify
+        // drain takes over.
+        if config.submit_unverified_top_k > 0 {
+            let mut harvested = 0usize;
+            for ind in &offspring {
+                if harvested >= config.submit_unverified_top_k {
+                    break;
+                }
+                if ind.fitness.novelty < 1.0 || ind.fitness.nasrudin_relevance < 1.0 {
+                    continue;
+                }
+                let final_expr = match run_chain_for_final(&ind.chain, store) {
+                    Some(e) => e,
+                    None => continue,
+                };
+                let canonical = final_expr.to_canonical();
+                if !verified_canonicals.insert(canonical.clone()) {
+                    continue;
+                }
+                let canon_hash = nasrudin_core::canonical_hash(&canonical);
+                if config.rejected_canonicals.contains(&canon_hash) {
+                    continue;
+                }
+                // Emit Lean source — no lake build, just the text.
+                let mut ctx = nasrudin_derive::DerivationContext::new();
+                use nasrudin_derive::DerivationStrategy;
+                if ind.chain.execute(store, &mut ctx).is_err() {
+                    continue;
+                }
+                let theorem_name = format!("submit_gen{gen_idx}_{harvested}");
+                let module_path =
+                    format!("PhysicsGenerator.Derived.SubmitGen{gen_idx}_{harvested}");
+                let cfg = nasrudin_derive::lean_emitter::LeanEmitConfig {
+                    namespace: "PhysicsGenerator.Derived".into(),
+                    theorem_name: theorem_name.clone(),
+                    use_mathlib: true,
+                };
+                let lean_source = nasrudin_derive::lean_emitter::emit_lean_file(&ctx, &cfg);
+                report.verified.push(VerifiedDiscovery {
+                    chain: ind.chain.clone(),
+                    final_expr,
+                    canonical,
+                    lean_source,
+                    module_path,
+                    generation: gen_idx,
+                });
+                harvested += 1;
+            }
+        }
 
         // Try lake-verify on the top novel candidate(s) of this gen.
         if let Some(ref prover_root) = config.prover_root {
@@ -458,6 +529,7 @@ mod tests {
             cache_ctx: None,
             novelty_bloom: None,
             mutation_priors: None,
+        submit_unverified_top_k: 0,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -485,6 +557,7 @@ mod tests {
             cache_ctx: None,
             novelty_bloom: None,
             mutation_priors: None,
+        submit_unverified_top_k: 0,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);

@@ -60,6 +60,20 @@ async fn main() {
         || std::env::var("NASRUDIN_RESEARCH_MODE")
             .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
+    // P-Task 11: --no-local-lake flag (or NASRUDIN_NO_LOCAL_LAKE=1)
+    // makes the worker submit candidate chains WITHOUT first running
+    // local lake verification. Server-side reverify drain (P-Task 1)
+    // chain-replays in microseconds; lake-promotion drain (P-Task 2)
+    // handles kernel confirmation lazily. This is the architecture
+    // for "thousands of cheap school-volunteer workers" — each worker
+    // runs only the GA + canonical hashing + Lean source emission
+    // (sub-millisecond) instead of paying 5–60 s/lake-build locally.
+    let no_local_lake: bool = args.iter().any(|a| a == "--no-local-lake")
+        || std::env::var("NASRUDIN_NO_LOCAL_LAKE")
+            .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+    let submit_top_k: usize = arg_value(&args, "--submit-top-k")
+        .unwrap_or(if no_local_lake { 4 } else { 0 });
     let prover_root: Option<PathBuf> = args
         .iter()
         .position(|a| a == "--verify")
@@ -301,13 +315,24 @@ async fn main() {
         mutation_rate: 0.7,
         tournament_size: 3,
         max_chain_len,
-        prover_root: prover_root.clone(),
-        max_lake_verifications: if prover_root.is_some() { max_lake } else { 0 },
+        // P-Task 11: in --no-local-lake mode, drop the local lake-build
+        // pipeline entirely. Server's reverify drain handles
+        // verification via chain replay (microseconds) and the
+        // lake-promotion drain handles kernel confirmation lazily.
+        prover_root: if no_local_lake { None } else { prover_root.clone() },
+        max_lake_verifications: if no_local_lake {
+            0
+        } else if prover_root.is_some() {
+            max_lake
+        } else {
+            0
+        },
         target: target_spec,
         rejected_canonicals: rejected_canonicals.clone(),
         novelty_bloom: novelty_bloom.clone(),
         cache_ctx: None,
         mutation_priors: None,
+        submit_unverified_top_k: submit_top_k,
     };
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
@@ -708,6 +733,12 @@ async fn run_seed_driven_chunk(
             cache_ctx: None,
             novelty_bloom: novelty_bloom.clone(),
             mutation_priors: mutation_priors.clone(),
+            // research-mode submit path is its own conjecture-flow
+            // endpoint and doesn't share the /api/ingest pipeline that
+            // P-Task 11 unblocks. Stay on the legacy lake-locally
+            // pattern here; if a research-mode worker wants to skip
+            // local lake too it can be wired in a follow-up.
+            submit_unverified_top_k: 0,
         };
         let report = run_discovery(&filtered, &chunk_config, rng);
         total_attempted += report.total_candidates as u64;
