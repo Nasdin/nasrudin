@@ -21,6 +21,8 @@ chrono = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 instant-distance = { workspace = true }
 bincode = "1"
+num_cpus = { workspace = true }
+sysinfo = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

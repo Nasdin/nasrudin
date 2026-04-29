@@ -20,7 +20,7 @@
 use axum::{
     Json,
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde::Deserialize;
@@ -43,9 +43,16 @@ pub struct SeedQuery {
 }
 
 /// `GET /api/seed?domain=X&top=N` — bootstrap payload for a remote worker.
+///
+/// Honors `If-None-Match` / `ETag` for 304 conditional requests so
+/// 1000-worker polling doesn't transfer 13MB JSON every chunk
+/// boundary — most polls hit 304 with empty body. The ETag is the
+/// xxhash64 of the cached body, so any change to the AxiomStore or
+/// the LakeVerified set busts it.
 pub async fn seed(
     State(state): State<Arc<AppState>>,
     Query(q): Query<SeedQuery>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let pg = match &state.pg {
         Some(p) => p,
@@ -72,9 +79,37 @@ pub async fn seed(
     if let Ok(map) = state.seed_cache.lock() {
         if let Some((generated_at, body)) = map.get(&cache_key) {
             if generated_at.elapsed() < SEED_CACHE_TTL {
+                let etag = format!("\"{:016x}\"", xxhash_rust::xxh64::xxh64(body.as_bytes(), 0));
+                // Conditional request fast path: client sent
+                // If-None-Match matching our ETag → 304 + empty body.
+                if let Some(client_etag) = headers
+                    .get(axum::http::header::IF_NONE_MATCH)
+                    .and_then(|v| v.to_str().ok())
+                {
+                    if client_etag == etag {
+                        return (
+                            StatusCode::NOT_MODIFIED,
+                            [
+                                (axum::http::header::ETAG, etag.clone()),
+                                (
+                                    axum::http::header::CACHE_CONTROL,
+                                    "public, max-age=30, stale-while-revalidate=300".to_string(),
+                                ),
+                            ],
+                        )
+                            .into_response();
+                    }
+                }
                 return (
                     StatusCode::OK,
-                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    [
+                        (axum::http::header::CONTENT_TYPE, "application/json".to_string()),
+                        (axum::http::header::ETAG, etag),
+                        (
+                            axum::http::header::CACHE_CONTROL,
+                            "public, max-age=30, stale-while-revalidate=300".to_string(),
+                        ),
+                    ],
                     body.as_bytes().to_vec(),
                 )
                     .into_response();
@@ -215,9 +250,17 @@ pub async fn seed(
     if let Ok(mut map) = state.seed_cache.lock() {
         map.insert(cache_key, (Instant::now(), Arc::clone(&body_arc)));
     }
+    let etag = format!("\"{:016x}\"", xxhash_rust::xxh64::xxh64(body_arc.as_bytes(), 0));
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        [
+            (axum::http::header::CONTENT_TYPE, "application/json".to_string()),
+            (axum::http::header::ETAG, etag),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "public, max-age=30, stale-while-revalidate=300".to_string(),
+            ),
+        ],
         body_arc.as_bytes().to_vec(),
     )
         .into_response()

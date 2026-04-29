@@ -1,10 +1,12 @@
 pub mod admin;
 pub mod api_keys;
+pub mod billing;
 pub mod conjecture;
 pub mod embed;
 pub mod events;
 pub mod ingest;
 pub mod llm_keys;
+pub mod manual_verify;
 pub mod me;
 pub mod preferences;
 pub mod saved_searches;

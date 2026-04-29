@@ -36,6 +36,10 @@ thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Resource detection (for worker auto-sizing)
+num_cpus = "1.16"
+sysinfo = "0.32"
+
 # Hashing & encoding
 blake3 = "1.5"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
@@ -50,7 +54,7 @@ axum-extra = { version = "0.10", features = ["typed-header"] }
 axum-login = "0.18"
 tower-sessions = { version = "0.14", features = ["memory-store"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "compression-br"] }
 tower_governor = "0.8"
 governor = "0.10"
 

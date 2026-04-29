@@ -19,6 +19,7 @@ use axum_login::AuthManagerLayerBuilder;
 use serde::Deserialize;
 use tower_governor::GovernorLayer;
 use tower_http::cors::CorsLayer;
+use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -327,6 +328,19 @@ async fn main() -> anyhow::Result<()> {
     // Phase 9 Task 4.1: per-worker token-bucket limiter (60 req/min default).
     let worker_rate_limiter = Arc::new(physics_api::rate_limit::WorkerRateLimiter::new(60));
 
+    // Stripe billing — optional. Without env vars the /api/billing/* routes
+    // return 503 but the rest of the API works.
+    let billing = match physics_api::billing::stripe_client::BillingClient::from_env() {
+        Ok(c) => {
+            tracing::info!("Stripe billing client configured");
+            Some(c)
+        }
+        Err(e) => {
+            tracing::info!("Stripe billing disabled: {e}");
+            None
+        }
+    };
+
     let state = Arc::new(AppState {
         db,
         pg,
@@ -344,6 +358,7 @@ async fn main() -> anyhow::Result<()> {
         llm_encrypt_key,
         conjecture_event_tx,
         lake_promotion,
+        billing,
         seed_cache: Arc::new(std::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
@@ -419,6 +434,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/theorems/recent", get(handlers::theorems::recent))
         .route("/api/theorems/{id}/lineage", get(get_lineage))
         .route("/api/theorems/{id}/proof", get(get_proof))
+        // P-Task 4: manual "Verify with Lake" button. POST is
+        // user-triggered, GET is the polling status endpoint.
+        .route(
+            "/api/theorems/{id}/verify",
+            post(handlers::manual_verify::verify),
+        )
+        .route(
+            "/api/theorems/{id}/verify-status",
+            get(handlers::manual_verify::verify_status),
+        )
         .route("/api/theorems/{id}", get(handlers::theorems::by_id))
         .route("/api/theorems/{id}", delete(delete_theorem_handler))
         .route("/api/theorems", get(handlers::theorems::list))
@@ -591,8 +616,16 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Auth endpoints disabled (no PostgreSQL)");
     }
 
+    // P-Task 7: response compression (gzip + brotli) negotiated via
+    // Accept-Encoding. JSON payloads — `/api/seed` especially —
+    // compress 12-15× with gzip. Caddy in front already gzips
+    // outgoing bytes, but enabling at the origin means Cloudflare
+    // also gets a compressed payload to cache, and SSE clients that
+    // hit the origin directly via `origin.nasrudin.org` get
+    // compression too.
     let app = app
         .layer(cors)
+        .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 
