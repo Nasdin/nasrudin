@@ -30,6 +30,10 @@ pub struct Model {
     pub verified_theorem_ids: Option<Vec<Vec<u8>>>,
     pub created_at: DateTimeWithTimeZone,
     pub completed_at: Option<DateTimeWithTimeZone>,
+    /// Phase F: streamed Markdown paper draft. NULL until the user
+    /// requests one; populated incrementally as the LLM streams.
+    #[sea_orm(column_type = "Text", nullable)]
+    pub paper_draft: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

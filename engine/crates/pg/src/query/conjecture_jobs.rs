@@ -43,6 +43,7 @@ pub async fn create(db: &DatabaseConnection, input: CreateInput) -> Result<Uuid,
         verified_theorem_ids: Set(None),
         created_at: Set(chrono::Utc::now().into()),
         completed_at: Set(None),
+        paper_draft: Set(None),
     };
     am.insert(db).await?;
     Ok(id)
@@ -288,6 +289,46 @@ pub async fn complete(
         WHERE id = $1 AND claimed_by = $2 AND state = 'Running'
         "#,
         [id.into(), worker_id.into(), outcome.into()],
+    );
+    let res = db.execute_raw(stmt).await?;
+    Ok(res.rows_affected())
+}
+
+/// Phase F: append a chunk to the streaming paper draft. Concurrent-safe
+/// (single writer per job; the trigger handler holds the row implicitly
+/// while it streams from the LLM). Initialises the column from NULL.
+pub async fn append_paper_chunk(
+    db: &DatabaseConnection,
+    id: Uuid,
+    chunk: &str,
+) -> Result<u64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE conjecture_jobs SET paper_draft = COALESCE(paper_draft, '') || $2 WHERE id = $1",
+        [id.into(), chunk.into()],
+    );
+    let res = db.execute_raw(stmt).await?;
+    Ok(res.rows_affected())
+}
+
+/// Phase F: read the persisted paper draft for a job. `Ok(None)` when
+/// the row exists but no draft has been generated yet.
+pub async fn get_paper_draft(
+    db: &DatabaseConnection,
+    id: Uuid,
+) -> Result<Option<String>, DbErr> {
+    let model = conjecture_jobs::Entity::find_by_id(id).one(db).await?;
+    Ok(model.and_then(|m| m.paper_draft))
+}
+
+/// Phase F: clear (NULL) the paper draft. Called at the start of a
+/// fresh generation request so the SSE stream doesn't show stale
+/// chunks merged with new ones.
+pub async fn clear_paper_draft(db: &DatabaseConnection, id: Uuid) -> Result<u64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE conjecture_jobs SET paper_draft = NULL WHERE id = $1",
+        [id.into()],
     );
     let res = db.execute_raw(stmt).await?;
     Ok(res.rows_affected())
