@@ -7,6 +7,7 @@ edition.workspace = true
 nasrudin-core = { path = "../core" }
 nasrudin-derive = { path = "../derive" }
 nasrudin-rocks = { path = "../rocks" }
+nasrudin-embed = { path = "../embed" }
 rand = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -18,6 +19,8 @@ anyhow = { workspace = true }
 bloomfilter = { workspace = true }
 chrono = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+instant-distance = { workspace = true }
+bincode = "1"
 
 [dev-dependencies]
 tempfile = "3"

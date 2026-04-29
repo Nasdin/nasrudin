@@ -283,6 +283,25 @@ async fn main() {
     let mut current_rejected = rejected_canonicals.clone();
 
     for chunk_i in 0..chunks {
+        // Periodic embed-index refresh. Cheap when index is current
+        // (one HTTP HEAD-equivalent call per chunk). Off by default;
+        // flip on with NASRUDIN_EMBED_AUTOPULL=1.
+        if let Ok(autopull) = std::env::var("NASRUDIN_EMBED_AUTOPULL")
+            && matches!(autopull.trim().to_lowercase().as_str(), "1" | "true" | "yes")
+        {
+            let api = std::env::var("NASRUDIN_API_URL")
+                .unwrap_or_else(|_| "http://localhost:8080".into());
+            let path: std::path::PathBuf = std::env::var("NASRUDIN_EMBED_OUT")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                    std::path::PathBuf::from(home).join(".nasrudin/embed/corpus.embed")
+                });
+            if let Err(e) = embed_autopull::maybe_refresh(&api, &path).await {
+                tracing::debug!("embed autopull skipped: {e}");
+            }
+        }
+
         if chunk_i > 0
             && let Some(ref api_url) = api_url_for_resync
         {
@@ -699,4 +718,111 @@ async fn fetch_rejected_canonicals(
         set.insert(bytes);
     }
     Ok(set)
+}
+
+mod embed_autopull {
+    //! Worker-side auto-pull of `/api/embed/index.bin`.
+    //!
+    //! On each chunk iteration, GET `/api/embed/checksum`. If the
+    //! local file's BLAKE3 doesn't match the server's, download
+    //! `/api/embed/index.bin` (atomic write via `.tmp` + rename) and
+    //! rebuild the local HNSW sidecar from the records.
+
+    use anyhow::Result;
+    use std::path::Path;
+
+    /// One-shot refresh attempt. Returns `Ok(true)` if the index was
+    /// actually swapped, `Ok(false)` if no change needed.
+    pub async fn maybe_refresh(api_url: &str, local_path: &Path) -> Result<bool> {
+        let cs_url = format!(
+            "{}/api/embed/checksum",
+            api_url.trim_end_matches('/')
+        );
+        let client = reqwest::Client::new();
+        let resp = match client.get(&cs_url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!("embed checksum fetch failed: {e}");
+                return Ok(false);
+            }
+        };
+        if !resp.status().is_success() {
+            return Ok(false);
+        }
+        #[derive(serde::Deserialize)]
+        struct CsBody {
+            hex: String,
+        }
+        let cs: CsBody = match resp.json().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!("embed checksum body parse failed: {e}");
+                return Ok(false);
+            }
+        };
+        let local_hex = if local_path.exists() {
+            nasrudin_embed::compute_index_checksum(local_path)
+                .ok()
+                .map(|c| c.hex)
+        } else {
+            None
+        };
+        if local_hex.as_deref() == Some(cs.hex.as_str()) {
+            return Ok(false);
+        }
+        tracing::info!("embed: local checksum mismatch, downloading new index");
+        let bin_url = format!("{}/api/embed/index.bin", api_url.trim_end_matches('/'));
+        let bytes = client.get(&bin_url).send().await?.bytes().await?;
+        if let Some(parent) = local_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp = with_tmp_suffix(local_path);
+        std::fs::write(&tmp, &bytes)?;
+        std::fs::rename(&tmp, local_path)?;
+        tracing::info!(
+            "embed: wrote {} bytes to {:?}",
+            bytes.len(),
+            local_path
+        );
+        rebuild_sidecar(local_path)?;
+        Ok(true)
+    }
+
+    fn with_tmp_suffix(p: &Path) -> std::path::PathBuf {
+        let mut s = p.as_os_str().to_owned();
+        s.push(".tmp");
+        std::path::PathBuf::from(s)
+    }
+
+    fn rebuild_sidecar(main: &Path) -> Result<()> {
+        use instant_distance::Builder as HnswBuilder;
+        use nasrudin_core::TheoremId;
+        use nasrudin_embed::format::{HEADER_SIZE, RECORD_SIZE};
+        use nasrudin_embed::index::{sidecar_path, CosinePoint};
+        use nasrudin_embed::{IndexHeader, EMBED_DIM};
+
+        let bytes = std::fs::read(main)?;
+        let header_bytes = &bytes[..HEADER_SIZE];
+        let header = IndexHeader::decode(header_bytes)?;
+        let body = &bytes[HEADER_SIZE..];
+        let mut points: Vec<CosinePoint> = Vec::with_capacity(header.count as usize);
+        let mut values: Vec<TheoremId> = Vec::with_capacity(header.count as usize);
+        for i in 0..(header.count as usize) {
+            let off = i * RECORD_SIZE;
+            let mut id = [0u8; 8];
+            id.copy_from_slice(&body[off..off + 8]);
+            let mut v = vec![0f32; EMBED_DIM as usize];
+            for j in 0..(EMBED_DIM as usize) {
+                let s = off + 8 + j * 4;
+                v[j] = f32::from_le_bytes([body[s], body[s + 1], body[s + 2], body[s + 3]]);
+            }
+            points.push(CosinePoint(v));
+            values.push(id);
+        }
+        let hnsw = HnswBuilder::default().build(points, values);
+        let bytes = bincode::serialize(&hnsw)?;
+        let sidecar = sidecar_path(main);
+        std::fs::write(&sidecar, &bytes)?;
+        Ok(())
+    }
 }

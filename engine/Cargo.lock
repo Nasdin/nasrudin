@@ -2478,11 +2478,14 @@ name = "nasrudin-ga"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "bloomfilter",
  "chrono",
  "hex",
+ "instant-distance",
  "nasrudin-core",
  "nasrudin-derive",
+ "nasrudin-embed",
  "nasrudin-rocks",
  "rand 0.9.2",
  "reqwest",
