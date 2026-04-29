@@ -134,3 +134,44 @@ and `conjecture <uuid> → Verified|NoResult …` after the lease completes.
 cargo test -p nasrudin-pg --test conjecture_jobs_query  # 8 lifecycle tests
 cargo test -p physics-api --test conjecture_worker      # 4 auth-gate smokes
 ```
+
+## Phase F (paper draft generation)
+
+Once a conjecture finishes with `outcome=Verified`, the researcher can
+generate a Markdown paper draft summarising the discovery. The same LLM
+provider that proposed the conjecture writes it.
+
+| Verb   | Path                                  | Purpose |
+|--------|---------------------------------------|---------|
+| `POST` | `/api/conjecture/{id}/paper`          | Trigger background streaming. Returns 202 immediately. |
+| `GET`  | `/api/conjecture/{id}/paper.md`       | Read the persisted draft as `text/markdown`. |
+
+### Streaming wire format
+
+The background task uses `LlmProvider::stream` (real implementation
+landed for Anthropic in Phase F; OpenAI/Ollama remain stubbed). Each
+`TokenChunk` is forwarded twice:
+1. **Persisted** via `query::conjecture_jobs::append_paper_chunk` so the
+   `paper_draft` column accumulates the full draft.
+2. **Broadcast** as `paper_chunk` events on the existing conjecture SSE
+   channel — the frontend reconstructs the live preview by concatenating
+   them in arrival order.
+
+Final transitions:
+- `paper_done` event when `finish_reason` is set (clean end).
+- `paper_error` event when the stream errors out (UI surfaces the message).
+
+### Provider scope
+
+- **Anthropic**: full SSE streaming against `/v1/messages` with
+  `stream=true`. Parses `content_block_delta`, `message_stop`, `error`.
+- **OpenAI / Ollama**: trait method exists but returns `LlmError::Other`.
+  Phase F.1 will mirror the Anthropic implementation.
+
+### Concept search (related, ships alongside Phase F)
+
+`GET /api/search/concept?q=…` — natural-language search across the
+corpus, hybrid embedding-nearest + Postgres ILIKE, surfaces both
+verified theorems and pending conjectures so a user looking for
+"all the equations that have to do with Energy" sees in-flight
+work alongside completed proofs.
