@@ -87,5 +87,5 @@ bytes = "1.11"
 
 # Embeddings (Phase B)
 fastembed = "4"
-instant-distance = "0.6"
+instant-distance = { version = "0.6", features = ["with-serde"] }
 memmap2 = "0.9"
