@@ -3,20 +3,56 @@
 //! Each function returns a shared `GovernorConfig` keyed by peer IP.
 //! Attach via `GovernorLayer::new(config)` on the appropriate sub-router.
 
+use std::net::IpAddr;
 use std::time::Duration;
 
+use axum::http::Request;
 use governor::middleware::NoOpMiddleware;
+use tower_governor::GovernorError;
 use tower_governor::governor::GovernorConfig;
 use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::key_extractor::PeerIpKeyExtractor;
+use tower_governor::key_extractor::{KeyExtractor, PeerIpKeyExtractor};
 
-/// Concrete config type: per-IP keying, no extra middleware.
-pub type IpGovConfig = GovernorConfig<PeerIpKeyExtractor, NoOpMiddleware>;
+/// Custom key extractor that handles co-located worker traffic.
+///
+/// Default `PeerIpKeyExtractor` requires `ConnectInfo<SocketAddr>` to
+/// extract the peer IP — which doesn't exist for unix-domain-socket
+/// connections (no IP). It returns "Unable To Extract Key!" and the
+/// request gets rejected.
+///
+/// We need both transports to share these same Routers (so admin /
+/// /api/seed / etc. all work over UDS for the auto-trusted local
+/// worker). The fix: when the request carries a `LocalSocket`
+/// extension marker (inserted by the UDS-only `mark_local_socket`
+/// middleware in `main.rs`), return a fixed key. Otherwise, fall back
+/// to PeerIpKeyExtractor.
+#[derive(Clone)]
+pub struct UdsAwareKeyExtractor;
+
+impl KeyExtractor for UdsAwareKeyExtractor {
+    type Key = IpAddr;
+
+    fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
+        if req.extensions().get::<crate::trust::LocalSocket>().is_some() {
+            // All UDS traffic shares one bucket. The bucket gets a fixed
+            // sentinel address — never appears on the public TCP path so
+            // it can't collide with a real client.
+            return Ok(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 2)));
+        }
+        PeerIpKeyExtractor.extract(req)
+    }
+}
+
+/// Concrete config type. Uses the UDS-aware extractor so a single
+/// Router can serve both TCP (per-IP buckets) and UDS (one shared
+/// bucket for the local worker) without rejecting UDS requests.
+pub type IpGovConfig = GovernorConfig<UdsAwareKeyExtractor, NoOpMiddleware>;
 
 /// Auth-strict: brute-force protection for login/register.
 /// 5 req/min sustained, burst 5.
 pub fn auth_strict() -> IpGovConfig {
     GovernorConfigBuilder::default()
+        .key_extractor(UdsAwareKeyExtractor)
         .period(Duration::from_secs(12)) // 1 token per 12s → 5/min
         .burst_size(5)
         .finish()
@@ -27,6 +63,7 @@ pub fn auth_strict() -> IpGovConfig {
 /// 30 req/min sustained, burst 10.
 pub fn auth_session() -> IpGovConfig {
     GovernorConfigBuilder::default()
+        .key_extractor(UdsAwareKeyExtractor)
         .per_second(2) // ~30/min replenish
         .burst_size(10)
         .finish()
@@ -37,6 +74,7 @@ pub fn auth_session() -> IpGovConfig {
 /// 60 req/min sustained, burst 20.
 pub fn api_standard() -> IpGovConfig {
     GovernorConfigBuilder::default()
+        .key_extractor(UdsAwareKeyExtractor)
         .per_second(1) // 60/min replenish
         .burst_size(20)
         .finish()
@@ -47,6 +85,7 @@ pub fn api_standard() -> IpGovConfig {
 /// 120 req/min sustained, burst 30.
 pub fn health_relaxed() -> IpGovConfig {
     GovernorConfigBuilder::default()
+        .key_extractor(UdsAwareKeyExtractor)
         .per_millisecond(500) // 2/sec → 120/min replenish
         .burst_size(30)
         .finish()
@@ -56,6 +95,7 @@ pub fn health_relaxed() -> IpGovConfig {
 /// Platform-user: 60 req/min sustained, burst 30.
 pub fn platform_user() -> IpGovConfig {
     GovernorConfigBuilder::default()
+        .key_extractor(UdsAwareKeyExtractor)
         .per_second(1) // 60/min replenish
         .burst_size(30)
         .finish()
@@ -65,6 +105,7 @@ pub fn platform_user() -> IpGovConfig {
 /// Platform-worker: 300 req/min sustained, burst 120.
 pub fn platform_worker() -> IpGovConfig {
     GovernorConfigBuilder::default()
+        .key_extractor(UdsAwareKeyExtractor)
         .per_millisecond(200) // 5/sec → 300/min replenish
         .burst_size(120)
         .finish()
