@@ -14,6 +14,7 @@ mod m20260429_000011_targeted_search_usage;
 mod m20260429_000012_api_usage_daily;
 mod m20260901_000009_manual_verifications;
 mod m20260901_000010_worker_reputation;
+mod m20260901_000011_worker_verified;
 mod m20260430_000013_conjecture_paper_draft;
 
 pub struct Migrator;
@@ -36,6 +37,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260429_000012_api_usage_daily::Migration),
             Box::new(m20260901_000009_manual_verifications::Migration),
             Box::new(m20260901_000010_worker_reputation::Migration),
+            Box::new(m20260901_000011_worker_verified::Migration),
             Box::new(m20260430_000013_conjecture_paper_draft::Migration),
         ]
     }

@@ -141,15 +141,20 @@ pub async fn lean_download(
         Err(_) => return (StatusCode::BAD_REQUEST, "bad_hash").into_response(),
     };
 
-    // P-Task 1+2: download is a "consumption" trigger. If the theorem
-    // is currently ChainVerified (chain replay only, kernel not yet
-    // confirmed), force a synchronous lake-promotion. The user pulling
-    // a `.lean` for citation deserves the kernel guarantee.
+    // P-Task 1+2+12: download is a "consumption" trigger that demands
+    // the server's own kernel guarantee. Anything not yet flipped to
+    // `lake_build` (chain_replay or worker_claim) gets a synchronous
+    // priority-0 lake-promotion. worker_claim still needs server-side
+    // confirmation here because the .lean is the artifact the caller
+    // will cite — a malicious worker that lied about local lake-build
+    // would be caught at this gate before any external citation
+    // touches the source.
     //
-    // - If LakeVerified or Pending-with-no-chain: serve immediately.
-    // - If ChainVerified: enqueue at priority 0, park up to 60s on the
-    //   per-id Notify. On lake success, serve. On lake failure, the
-    //   drain has already run cascade-reject; return 410 Gone.
+    // - If lake_build: serve immediately.
+    // - If chain_replay or worker_claim: enqueue at priority 0, park
+    //   up to 60s on the per-id Notify. On lake success, serve. On
+    //   lake failure, the drain has already run cascade-reject; return
+    //   410 Gone.
     // - On wait timeout (lake genuinely takes >60s): 202 Accepted with
     //   Retry-After header.
     let mut id_arr = [0u8; 8];
@@ -159,7 +164,7 @@ pub async fn lean_download(
     let needs_promotion = matches!(
         state.db.get_theorem(&id_arr).ok().flatten().map(|t| t.verified),
         Some(nasrudin_core::VerificationStatus::Verified { tactic_used, .. })
-            if tactic_used == "chain_replay"
+            if tactic_used == "chain_replay" || tactic_used == "worker_claim"
     );
     if needs_promotion {
         if let Some(promotion) = state.lake_promotion.as_ref() {

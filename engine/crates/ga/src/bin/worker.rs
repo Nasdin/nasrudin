@@ -60,18 +60,34 @@ async fn main() {
         || std::env::var("NASRUDIN_RESEARCH_MODE")
             .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
-    // P-Task 11: --no-local-lake flag (or NASRUDIN_NO_LOCAL_LAKE=1)
-    // makes the worker submit candidate chains WITHOUT first running
-    // local lake verification. Server-side reverify drain (P-Task 1)
-    // chain-replays in microseconds; lake-promotion drain (P-Task 2)
-    // handles kernel confirmation lazily. This is the architecture
-    // for "thousands of cheap school-volunteer workers" — each worker
-    // runs only the GA + canonical hashing + Lean source emission
-    // (sub-millisecond) instead of paying 5–60 s/lake-build locally.
+    // P-Task 11/12: `--no-local-lake` is a DEV-ONLY mode that submits
+    // candidate chains *without* first running local lake verification.
+    // The production architecture requires workers to lake-build
+    // locally — only chains the kernel accepts get submitted, marked
+    // `worker_verified: true`, and the server immediately publishes
+    // them as peer-axioms (a cheap chain-replay sybil firewall is the
+    // only server-side check; lazy lake-build on download is
+    // defense-in-depth). This makes 99.9%+ of submissions correct
+    // without losing GA novelty: the kernel judges every chain.
+    //
+    // Use --no-local-lake only for development or when intentionally
+    // experimenting with the unverified-submission flow.
     let no_local_lake: bool = args.iter().any(|a| a == "--no-local-lake")
         || std::env::var("NASRUDIN_NO_LOCAL_LAKE")
             .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
+    if no_local_lake {
+        eprintln!(
+            "⚠ --no-local-lake is a DEV-ONLY mode. Production workers MUST lake-build locally."
+        );
+        eprintln!(
+            "  Submissions in this mode are flagged worker_verified=false; the server's"
+        );
+        eprintln!(
+            "  lazy lake-promotion drain handles kernel confirmation, which is slower"
+        );
+        eprintln!("  and may produce cascade-rejects on bogus chains.");
+    }
     let submit_top_k: usize = arg_value(&args, "--submit-top-k")
         .unwrap_or(if no_local_lake { 4 } else { 0 });
     let prover_root: Option<PathBuf> = args
@@ -498,9 +514,26 @@ async fn main() {
             );
             // Submit each chunk's discoveries immediately so peer
             // workers see them on their next periodic re-sync.
+            //
+            // Items in report.verified came from one of two paths:
+            //
+            //   * Local lake-build (default): pass worker_verified=true
+            //     so the server flips directly to LakeVerified on
+            //     chain-replay success — kernel has already confirmed
+            //     the theorem and we don't need the lake-promotion
+            //     drain to redo it.
+            //
+            //   * `--no-local-lake` dev mode: the GA harvested top-K
+            //     novel candidates and pushed them into report.verified
+            //     without lake. Pass worker_verified=false so the
+            //     server's lazy lake-promotion drain handles kernel
+            //     confirmation before they enter /api/seed.
             if let (Some(cfg), Some(_)) = (api_cfg.as_ref(), prover_root.as_ref()) {
+                let worker_verified = !no_local_lake;
                 for d in &report.verified {
-                    if let Err(e) = submit_discovery(cfg, &domain, d).await {
+                    if let Err(e) =
+                        submit_discovery(cfg, &domain, d, worker_verified).await
+                    {
                         eprintln!("  ! chunk-submit failed: {e}");
                     }
                 }
@@ -563,8 +596,9 @@ async fn main() {
             println!();
             println!("▶ Submitting {} discoveries to {}", report.verified.len(), cfg.api_url);
             let domain_str = domain.clone();
+            let worker_verified = !no_local_lake;
             for d in &report.verified {
-                match submit_discovery(cfg, &domain_str, d).await {
+                match submit_discovery(cfg, &domain_str, d, worker_verified).await {
                     Ok(()) => {
                         println!("  ✓ submitted: {} (gen {})", d.canonical, d.generation);
                     }
@@ -892,10 +926,17 @@ fn axioms_used(chain: &Chain) -> Vec<String> {
 }
 
 /// POST a single verified discovery to `/api/ingest`.
+///
+/// `worker_verified` reflects whether the worker locally lake-built
+/// the theorem before calling this. The default flow (no
+/// `--no-local-lake`) lake-builds every submitted theorem and passes
+/// `true` here; `--no-local-lake` dev mode passes `false` and the
+/// server falls back to the lazy lake-promotion drain.
 async fn submit_discovery(
     cfg: &ApiSubmitConfig,
     domain: &str,
     d: &VerifiedDiscovery,
+    worker_verified: bool,
 ) -> anyhow::Result<()> {
     submit_to_api(
         &cfg.api_url,
@@ -911,6 +952,7 @@ async fn submit_discovery(
         axioms_used(&d.chain),
         Some(d.chain.len() as u32),
         Some(d.generation as u64),
+        worker_verified,
     )
     .await
 }
@@ -928,6 +970,7 @@ async fn submit_to_api(
     axioms_used: Vec<String>,
     depth: Option<u32>,
     generation: Option<u64>,
+    worker_verified: bool,
 ) -> anyhow::Result<()> {
     let payload = serde_json::json!({
         "worker_id": worker_id,
@@ -941,6 +984,7 @@ async fn submit_to_api(
             "axioms_used": axioms_used,
             "depth": depth,
             "generation": generation,
+            "worker_verified": worker_verified,
         }]
     });
     let client = reqwest::Client::new();

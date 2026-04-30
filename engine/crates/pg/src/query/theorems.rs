@@ -61,6 +61,8 @@ pub struct NewTheorem {
     pub engine_git_sha: String,
     pub lean_version: String,
     pub contributor_id: String,
+    /// P-Task 12: worker locally lake-built before submitting.
+    pub worker_verified: bool,
 }
 
 impl Default for NewTheorem {
@@ -92,6 +94,7 @@ impl Default for NewTheorem {
             engine_git_sha: String::new(),
             lean_version: String::new(),
             contributor_id: String::new(),
+            worker_verified: false,
         }
     }
 }
@@ -157,6 +160,7 @@ pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<
         // Let the DB default (NOW()) populate created_at — saves a clock RTT.
         created_at: NotSet,
         verified_at: Set(None),
+        worker_verified: Set(n.worker_verified),
     };
 
     active

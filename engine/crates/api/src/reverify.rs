@@ -162,9 +162,44 @@ impl ReverifyQueue {
         // 30× ingest throughput headroom for thousands of distributed workers.
         match self.check_chain(&row) {
             ChainCheck::Regenerated(_regen) => {
-                // Chain replay succeeded → ChainVerified. No lake call.
-                self.flip_verified(&row, "A_chain_replay", "chain_replay", 0)
-                    .await?;
+                // Chain replay succeeded. P-Task 12 final design: 3
+                // verification states discriminated by `tactic_used`:
+                //
+                //   * "chain_replay" — no worker lake claim. Workers
+                //     can't compound on these (firewalled out of
+                //     /api/seed) until server lake-promotion confirms.
+                //   * "worker_claim" — worker claimed local lake
+                //     passed. Server immediately marks for peer use
+                //     (high prior probability of passing) but ALSO
+                //     queues for independent server-side lake
+                //     confirmation. Anyone could lie about local
+                //     lake; the queued check + lazy-on-download
+                //     verify catches forgery.
+                //   * "lake_build" — server has independently
+                //     kernel-confirmed. Required for download.
+                //
+                // Both worker_claim and chain_replay get enqueued for
+                // lake-promotion. worker_claim goes at priority 1
+                // (high prior of passing → drain it fast); plain
+                // chain_replay at priority 2 (low prior → drain
+                // opportunistically when server is idle).
+                let (path, tactic, promotion_priority) = if row.worker_verified {
+                    ("A_worker_claim", "worker_claim", 1u8)
+                } else {
+                    ("A_chain_replay", "chain_replay", 2u8)
+                };
+                self.flip_verified(&row, path, tactic, 0).await?;
+
+                // Enqueue server-side lake confirmation. P-Task 2's
+                // drain pops priority-then-FIFO and runs the actual
+                // lake build, flipping to "lake_build" or cascade-
+                // rejecting on disagreement.
+                let mut id_arr = [0u8; 8];
+                if row.id.len() == 8 {
+                    id_arr.copy_from_slice(&row.id);
+                    let _ = self.rocks.enqueue_lake_promotion(&id_arr, promotion_priority);
+                }
+
                 self.rocks.dequeue_reverify(&job.theorem_id).ok();
                 return Ok(());
             }

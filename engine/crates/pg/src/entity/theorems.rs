@@ -55,6 +55,12 @@ pub struct Model {
     pub contributor_id: String,
     pub created_at: DateTimeWithTimeZone,
     pub verified_at: Option<DateTimeWithTimeZone>,
+    /// P-Task 12: worker locally lake-built before submitting. When
+    /// true, the reverify drain treats chain-replay success as
+    /// sufficient to flip directly to LakeVerified — no separate
+    /// lake-promotion step.
+    #[sea_orm(default_value = false)]
+    pub worker_verified: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

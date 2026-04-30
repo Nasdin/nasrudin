@@ -85,6 +85,23 @@ pub struct IngestTheorem {
     pub verification_tactic: Option<String>,
     pub verification_duration_ms: Option<u32>,
     pub dimension: Option<[i32; 7]>,
+    /// **P-Task 12:** the worker locally lake-built this Lean source
+    /// before submitting and confirmed it kernel-verifies. When set,
+    /// the server's reverify drain treats chain-replay success as
+    /// sufficient to flip the row directly to LakeVerified — the
+    /// theorem is immediately available as a peer-axiom in /api/seed
+    /// without waiting for a separate lake-promotion step.
+    ///
+    /// The lazy lake-build on `/api/theorems/{id}/lean` (download)
+    /// remains as defense-in-depth: it re-runs lake against the
+    /// stored source, and on disagreement triggers cascade-reject +
+    /// reputation-tank for the submitter.
+    ///
+    /// Honest workers running a stock binary set this to true.
+    /// A bad actor who lies about it gets caught the moment any user
+    /// downloads the .lean file (the lazy lake catches forged claims).
+    #[serde(default)]
+    pub worker_verified: bool,
 }
 
 /// Per-theorem outcome variants. Tagged `kind` on the wire.
@@ -296,6 +313,7 @@ pub async fn ingest_one_theorem(
         engine_git_sha: engine_git_sha.to_string(),
         lean_version: lean_version.to_string(),
         contributor_id: worker_id.to_string(),
+        worker_verified: t.worker_verified,
     };
 
     let id_arr = id_bytes_arr;

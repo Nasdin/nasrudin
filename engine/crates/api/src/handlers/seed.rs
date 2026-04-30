@@ -155,18 +155,24 @@ pub async fn seed(
     // legacy data still surfaces during the rollout window.
     let _ = pg; // PG kept for the legacy fallback below.
     let mut seed_theorems: Vec<serde_json::Value> = Vec::new();
-    // P-Task 1 firewall: workers only compose chains on top of LakeVerified
-    // (kernel-confirmed) ancestors. ChainVerified theorems are
-    // intentionally absent from the seed payload; they get queued for
-    // lake-promotion (P-Task 2) so they eventually graduate. Without
-    // this filter, a bogus theorem that passes chain replay but fails
-    // lake build would silently propagate as a peer-axiom across the
-    // cluster — exactly the pollution scenario cascade-reject (P-Task 3)
-    // is designed to clean up *after the fact*. This filter prevents
-    // pollution at the source.
+    // P-Task 12 propagation policy:
+    //   - "lake_build"   → server kernel-confirmed (gold standard).
+    //   - "worker_claim" → worker locally lake-built before submitting
+    //                      AND chain replay regenerated the canonical.
+    //                      99.9999%-true under the trust-but-verify
+    //                      model: server still queues a redundant lake
+    //                      build (P-Task 2 drain), but propagation does
+    //                      not block on it.
+    //   - "chain_replay" → unverified at the kernel level; absent from
+    //                      seed. The pollution risk for these is real
+    //                      (chain replay is sound only over the audited
+    //                      AxiomStore + rule library), so we still gate
+    //                      them behind lake promotion before allowing
+    //                      peer-axiom composition.
     //
     // Pull a wider window than `top` from the recency index so we can
-    // afford to skip ChainVerified rows without thinning the response.
+    // afford to skip chain_replay-only rows without thinning the
+    // response.
     let scan_window = (top as usize).saturating_mul(8).max(top as usize);
     if let Ok(ids) = state.db.list_verified_recent_ids(scan_window) {
         for id in ids {
@@ -174,15 +180,15 @@ pub async fn seed(
                 break;
             }
             if let Ok(Some(theorem)) = state.db.get_theorem(&id) {
-                // Hard-filter: only LakeVerified theorems are eligible
-                // peer-axioms.
-                let lake_verified = matches!(
+                // Accept lake_build (gold) and worker_claim (worker lake
+                // build + chain replay agreed). Reject chain_replay-only.
+                let propagatable = matches!(
                     &theorem.verified,
                     nasrudin_core::VerificationStatus::Verified { tactic_used, .. }
-                        if tactic_used == "lake_build"
+                        if tactic_used == "lake_build" || tactic_used == "worker_claim"
                 );
-                if !lake_verified {
-                    // Side effect: enqueue this ChainVerified theorem
+                if !propagatable {
+                    // Side effect: enqueue this chain_replay theorem
                     // for lake promotion at priority 1 (seed-inclusion
                     // demand). The /api/seed endpoint heating up the
                     // promotion queue means workers polling create

@@ -46,6 +46,7 @@ use tokio::sync::{Mutex, Notify};
 
 use nasrudin_core::TheoremId;
 use nasrudin_pg::query::theorems as theorem_q;
+use nasrudin_pg::query::workers as worker_q;
 use nasrudin_rocks::TheoremDb;
 
 use crate::lake_builder::{LakeBuilder, VerifyOutcome};
@@ -190,19 +191,45 @@ impl LakePromotion {
                     reason: "lake_promotion_dispatch_error".into(),
                     stderr_tail: String::new(),
                 });
+            // Capture pre-verify status so we can detect "worker_claim
+            // disagreement" — the rare-but-critical case where the
+            // worker said `worker_verified=true` (claimed local lake
+            // succeeded) but the server's lake build now disagrees.
+            // That's a spot-check failure on a high-trust submission
+            // and warrants an extra-loud audit trail.
+            let was_worker_claim = matches!(
+                &row.verification_tactic,
+                Some(t) if t == "worker_claim"
+            );
             match outcome {
                 VerifyOutcome::Verified {
                     tactic,
                     duration_ms,
                 } => {
                     self.flip_lake_verified(&row, &tactic, duration_ms).await?;
+                    self.record_spot_check(&row, true, was_worker_claim).await;
                 }
                 VerifyOutcome::Rejected {
                     reason,
                     stderr_tail,
                 } => {
-                    let full_reason = format!("lake_failed: {reason}: {stderr_tail}");
+                    let full_reason = if was_worker_claim {
+                        format!(
+                            "worker_claim_disagreement: server_lake_failed: {reason}: {stderr_tail}"
+                        )
+                    } else {
+                        format!("lake_failed: {reason}: {stderr_tail}")
+                    };
+                    if was_worker_claim {
+                        tracing::error!(
+                            theorem_id = %hex::encode(&row.id),
+                            contributor_id = %row.contributor_id,
+                            "worker_claim disagreement: worker submitted with worker_verified=true \
+                             but server lake build rejected — cascading + tanking reputation"
+                        );
+                    }
                     self.flip_rejected_with_cascade(&row, &full_reason).await?;
+                    self.record_spot_check(&row, false, was_worker_claim).await;
                 }
             }
             // Ack ALL queue entries for this id (across all priority
@@ -257,6 +284,52 @@ impl LakePromotion {
 
         let _ = tactic;
         Ok(())
+    }
+
+    /// Record a spot-check outcome against the worker that submitted
+    /// this theorem. Updates the EMA reputation score and the lifetime
+    /// pass/fail counters. On `worker_claim` disagreement (worker said
+    /// pass, server says fail) we additionally check whether the
+    /// reputation has fallen below the auto-revoke threshold and, if
+    /// so, revoke the worker.
+    ///
+    /// `contributor_id` on a theorem row is the worker_id; an empty or
+    /// missing contributor_id is the legacy/admin path and gets
+    /// silently skipped.
+    async fn record_spot_check(
+        &self,
+        row: &nasrudin_pg::entity::theorems::Model,
+        passed: bool,
+        was_worker_claim: bool,
+    ) {
+        let worker_id = row.contributor_id.trim();
+        if worker_id.is_empty() || worker_id == "admin" {
+            return;
+        }
+        if let Err(e) = worker_q::record_spot_check(&self.pg, worker_id, passed).await {
+            tracing::warn!(
+                worker_id = %worker_id,
+                "lake_promotion: record_spot_check failed: {e}"
+            );
+            return;
+        }
+        if !passed {
+            // Auto-revoke heuristic: a worker_claim disagreement is
+            // weighty (worker actively claimed local lake passed). If
+            // the EMA has decayed below 0.2, revoke. The 0.2 threshold
+            // matches the ingest gate in handlers/ingest.rs so a
+            // revoked worker can't resubmit anyway.
+            if let Ok(Some(score)) = worker_q::get_reputation(&self.pg, worker_id).await {
+                if score < 0.2 {
+                    let reason = if was_worker_claim {
+                        "auto_revoke: worker_claim_disagreement + reputation < 0.2"
+                    } else {
+                        "auto_revoke: chain_replay lake_failed + reputation < 0.2"
+                    };
+                    let _ = worker_q::auto_revoke(&self.pg, worker_id, reason).await;
+                }
+            }
+        }
     }
 
     /// Lake-failure path: mark the theorem Rejected and cascade the
@@ -347,8 +420,14 @@ pub async fn drain_loop(promotion: Arc<LakePromotion>) {
 }
 
 /// Background crawler: every CRAWLER_INTERVAL, walk CF_THEOREMS and
-/// enqueue any ChainVerified row at priority 2. Ensures eventual
-/// promotion of every theorem regardless of consumption.
+/// enqueue any non-`lake_build` Verified row at priority 2. Ensures
+/// eventual server-side kernel confirmation of every theorem
+/// regardless of consumption — this is the defense-in-depth path the
+/// user flagged: "if something is already lazily verified and then
+/// suddenly appears in the front of the queue despite just being
+/// verified then obviously then verify it again". `worker_claim` rows
+/// are propagated to peers immediately (per seed.rs) but the crawler
+/// guarantees they all eventually pass the server's own lake build.
 pub async fn crawler_loop(promotion: Arc<LakePromotion>) {
     loop {
         tokio::time::sleep(CRAWLER_INTERVAL).await;
@@ -359,7 +438,7 @@ pub async fn crawler_loop(promotion: Arc<LakePromotion>) {
                 if let nasrudin_core::VerificationStatus::Verified { tactic_used, .. } =
                     &theorem.verified
                 {
-                    if tactic_used == "chain_replay" {
+                    if tactic_used == "chain_replay" || tactic_used == "worker_claim" {
                         rocks.enqueue_lake_promotion(&theorem.id, 2).ok();
                         count += 1;
                     }

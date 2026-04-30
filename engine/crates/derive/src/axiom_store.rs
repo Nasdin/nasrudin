@@ -6,6 +6,46 @@
 use nasrudin_core::{BinOp, Domain, Expr, PhysConst};
 use std::collections::HashMap;
 
+/// Classify an `Expr` as a proposition the GA can compose meaningfully.
+///
+/// A proposition has a top-level relational connective: `Eq`, `Ne`,
+/// `Le`, `Lt`, `Ge`, `Gt`, `Iff`, `Implies`, `And`, `Or` — possibly
+/// nested under `Pi` quantifiers (e.g. `∀ x : ℝ, x = x` is still a
+/// proposition). Anything else (raw `Var`, `App` chains over unknown
+/// heads, `Lam`, function-typed `Const`s) is decoration: the GA's
+/// rule library has no sound transformation that operates on these,
+/// so accepting them as `IntroduceAxiom` candidates produces chains
+/// that pass replay but fail Lake.
+///
+/// P-Task 12: this is the corpus-hygiene filter that drops the
+/// non-prop noise floor from the GA's reach so chain-replay output
+/// is sound by construction.
+pub fn is_propositional(expr: &Expr) -> bool {
+    match expr {
+        Expr::BinOp(op, _, _) => matches!(
+            op,
+            BinOp::Eq
+                | BinOp::Ne
+                | BinOp::Le
+                | BinOp::Lt
+                | BinOp::Ge
+                | BinOp::Gt
+                | BinOp::Iff
+                | BinOp::Implies
+                | BinOp::And
+                | BinOp::Or
+        ),
+        // Universal-quantifier wrapper: peek inside.
+        Expr::Pi(_, _, body) => is_propositional(body),
+        // App-chain (e.g. `Filter.Tendsto x y z`) — could be a Prop in
+        // Lean but our `Expr` representation treats the head as a
+        // generic identifier; the rule library can't transform these,
+        // so reject them from the GA pool. They stay accessible via
+        // catalog browse (a separate code path).
+        _ => false,
+    }
+}
+
 /// A named axiom with its domain and expression.
 #[derive(Debug, Clone)]
 pub struct Axiom {
@@ -100,9 +140,20 @@ impl AxiomStore {
                 // Prefer the structured `expr_ast` field (emitted by the
                 // updated PhysLean extractor); fall back to a `Var`
                 // placeholder when the entry is decorative-only. The GA
-                // can compose meaningfully only with real Expr trees;
+                // can compose meaningfully with structured Expr trees;
                 // placeholder entries stay introducible by name but
                 // can't participate in `RearrangeEquation` etc.
+                //
+                // **P-Task 12 final design:** we accept ALL entries
+                // with a structured Expr (propositional or not). The
+                // worker's local lake build is the soundness oracle —
+                // it'll reject any chain that composes non-prop
+                // entries in ways Lean can't justify. Pre-filtering
+                // here would block legitimate compositions the kernel
+                // would accept (e.g. theorems whose statement is an
+                // App-chain over a Mathlib head). We choose maximum
+                // corpus reach over conservative pre-filtering; the
+                // kernel is the final arbiter, not us.
                 let statement = thm
                     .get("expr_ast")
                     .filter(|v| !v.is_null())

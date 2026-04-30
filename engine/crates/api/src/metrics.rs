@@ -101,16 +101,19 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         out.push_str(&format!("nasrudin_max_generation {}\n", stats.max_generation));
     }
 
-    // ── ChainVerified vs LakeVerified split (P-Task 1 discriminator) ─
+    // ── 3-state verification split (P-Task 1 + P-Task 12) ──────────
     // Walk a bounded sample and count by tactic_used. With 100k+
     // theorems we don't want to scan all of them every 15s; cap at 10k.
     let mut chain_verified = 0u64;
+    let mut worker_claim = 0u64;
     let mut lake_verified = 0u64;
     if let Ok(theorems) = state.db.list_theorems() {
         for t in theorems.into_iter().take(10_000) {
             if let nasrudin_core::VerificationStatus::Verified { tactic_used, .. } = &t.verified {
                 if tactic_used == "chain_replay" {
                     chain_verified += 1;
+                } else if tactic_used == "worker_claim" {
+                    worker_claim += 1;
                 } else if tactic_used == "lake_build" {
                     lake_verified += 1;
                 }
@@ -118,7 +121,7 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         }
     }
     out.push_str(
-        "# HELP nasrudin_theorems_chain_verified Theorems with status=Verified{tactic=chain_replay} (provisional).\n",
+        "# HELP nasrudin_theorems_chain_verified Theorems with status=Verified{tactic=chain_replay} (provisional, server-only).\n",
     );
     out.push_str("# TYPE nasrudin_theorems_chain_verified gauge\n");
     out.push_str(&format!(
@@ -126,7 +129,15 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ));
 
     out.push_str(
-        "# HELP nasrudin_theorems_lake_verified Theorems with status=Verified{tactic=lake_build} (kernel-confirmed).\n",
+        "# HELP nasrudin_theorems_worker_claim Theorems with status=Verified{tactic=worker_claim} (worker locally lake-built; server lake pending).\n",
+    );
+    out.push_str("# TYPE nasrudin_theorems_worker_claim gauge\n");
+    out.push_str(&format!(
+        "nasrudin_theorems_worker_claim {worker_claim}\n"
+    ));
+
+    out.push_str(
+        "# HELP nasrudin_theorems_lake_verified Theorems with status=Verified{tactic=lake_build} (kernel-confirmed by server).\n",
     );
     out.push_str("# TYPE nasrudin_theorems_lake_verified gauge\n");
     out.push_str(&format!(
