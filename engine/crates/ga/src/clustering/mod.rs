@@ -65,6 +65,54 @@ pub struct DirectiveTrace {
     pub mean_fitness_at_apply: f32,
     pub samples: Vec<f32>,
     pub chunks_remaining: u8,
+    /// Intrinsic-motivation bonus computed at apply time from the
+    /// rarity of `centroid_hash_at_apply` in the worker's recent
+    /// history. Bounded to [0, INTRINSIC_BONUS_CAP]; added to the
+    /// γ-discounted extrinsic reward so the bandit learns to favour
+    /// multipliers applied to novel cluster lineages, not just
+    /// high-fitness familiar ones. AlphaProof-style curiosity
+    /// signal applied to cluster-level exploration.
+    pub novelty_bonus: f32,
+}
+
+/// Maximum extra reward an intrinsic-motivation novelty bonus can
+/// add to the discounted return. Capped so the bandit can't be
+/// hijacked by always-novel arms with zero extrinsic value.
+pub const INTRINSIC_BONUS_CAP: f32 = 0.10;
+
+/// Worker-local rolling window of recently-seen cluster centroid
+/// hashes. Approximates "novelty" of a directive's target cluster
+/// as 1 / (1 + recent_count), capped at INTRINSIC_BONUS_CAP.
+#[derive(Debug, Default)]
+pub struct CentroidHashHistory {
+    window: std::collections::VecDeque<u64>,
+    capacity: usize,
+}
+
+impl CentroidHashHistory {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            window: std::collections::VecDeque::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    /// Record a hash and roll the window. Returns the current
+    /// count of this hash in the window AFTER the insertion.
+    pub fn observe(&mut self, hash: u64) {
+        if self.window.len() >= self.capacity {
+            self.window.pop_front();
+        }
+        self.window.push_back(hash);
+    }
+
+    /// Novelty bonus for `hash` based on its recent count. Higher
+    /// for rarely-seen hashes. Cap matches `INTRINSIC_BONUS_CAP` so
+    /// callers can't be surprised by an out-of-band reward jump.
+    pub fn novelty_bonus(&self, hash: u64) -> f32 {
+        let count = self.window.iter().filter(|h| **h == hash).count();
+        (INTRINSIC_BONUS_CAP / (1.0 + count as f32)).min(INTRINSIC_BONUS_CAP)
+    }
 }
 
 impl DirectiveTrace {
@@ -83,15 +131,15 @@ impl DirectiveTrace {
             mean_fitness_at_apply,
             samples: Vec::new(),
             chunks_remaining: TRACE_HORIZON,
+            novelty_bonus: 0.0,
         }
     }
 
-    /// Compute the γ-discounted normalised return from accumulated
-    /// samples. Returns the bandit reward signal mapped into [0, 1]
-    /// via the same affine bias the single-shot path used.
-    ///
-    /// Empty `samples` → 0.5 (neutral); the trace was abandoned
-    /// without observing anything.
+    /// Compute the γ-discounted extrinsic return + novelty bonus
+    /// (intrinsic motivation), bounded to [0, 1]. Empty `samples`
+    /// → 0.5 (neutral) regardless of bonus; the trace was abandoned
+    /// without observing anything and the bonus alone shouldn't
+    /// reward the bandit for an unobserved pull.
     pub fn discounted_reward(&self) -> f64 {
         if self.samples.is_empty() {
             return 0.5;
@@ -108,7 +156,8 @@ impl DirectiveTrace {
         } else {
             0.0
         };
-        (normalized + 0.5).clamp(0.0, 1.0)
+        let extrinsic = normalized + 0.5;
+        (extrinsic + self.novelty_bonus as f64).clamp(0.0, 1.0)
     }
 }
 
@@ -259,5 +308,42 @@ mod directive_tests {
         let mut t2 = DirectiveTrace::new(0, "boost".into(), 2, 3, 0.0);
         t2.samples = vec![-5.0, -5.0, -5.0];
         assert_eq!(t2.discounted_reward(), 0.0);
+    }
+
+    #[test]
+    fn novelty_bonus_decays_with_repetition() {
+        let mut h = CentroidHashHistory::with_capacity(50);
+        let bonus_first = h.novelty_bonus(0xdeadbeef);
+        h.observe(0xdeadbeef);
+        let bonus_after_one = h.novelty_bonus(0xdeadbeef);
+        h.observe(0xdeadbeef);
+        h.observe(0xdeadbeef);
+        let bonus_after_three = h.novelty_bonus(0xdeadbeef);
+        assert!(bonus_first > bonus_after_one);
+        assert!(bonus_after_one > bonus_after_three);
+        // Capped at INTRINSIC_BONUS_CAP for an unseen hash.
+        assert!((bonus_first - INTRINSIC_BONUS_CAP).abs() < 1e-6);
+    }
+
+    #[test]
+    fn novelty_window_rolls_at_capacity() {
+        let mut h = CentroidHashHistory::with_capacity(3);
+        h.observe(0x1);
+        h.observe(0x2);
+        h.observe(0x3);
+        h.observe(0x4); // pushes 0x1 out
+        // 0x1 is no longer in the window → full novelty bonus
+        assert!((h.novelty_bonus(0x1) - INTRINSIC_BONUS_CAP).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trace_with_novelty_adds_to_extrinsic() {
+        let mut t = DirectiveTrace::new(0, "boost".into(), 2, 3, 0.0);
+        t.samples = vec![0.0, 0.0, 0.0]; // zero extrinsic delta → 0.5
+        let r_no_bonus = t.discounted_reward();
+        t.novelty_bonus = 0.05;
+        let r_with_bonus = t.discounted_reward();
+        assert!((r_no_bonus - 0.5).abs() < 1e-6);
+        assert!((r_with_bonus - 0.55).abs() < 1e-6);
     }
 }

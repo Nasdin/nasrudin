@@ -518,6 +518,11 @@ async fn main() {
     // with a multi-chunk credit assignment more robust to noise.
     let mut directive_traces: Vec<nasrudin_ga::clustering::DirectiveTrace> =
         Vec::new();
+    // Rolling window of the last 50 centroid hashes seen at apply
+    // time. Used to compute an intrinsic-motivation novelty bonus
+    // for directives that target rarely-visited cluster lineages.
+    let mut hash_history =
+        nasrudin_ga::clustering::CentroidHashHistory::with_capacity(50);
 
     // Phase E: when research-mode is on, build the HTTP client once.
     let research_client = if research_mode {
@@ -917,13 +922,21 @@ async fn main() {
                     .find(|s| s.cluster_id == cid)
                     .map(|s| s.mean_fitness)
                     .unwrap_or(0.0);
-                let trace = nasrudin_ga::clustering::DirectiveTrace::new(
+                let mut trace = nasrudin_ga::clustering::DirectiveTrace::new(
                     hash,
                     action.clone(),
                     strength_bucket,
                     multiplier_choice,
                     mean_fitness_at_apply,
                 );
+                // Curiosity / novelty bonus: rare hashes in the
+                // recent window get a small extra reward, capped at
+                // INTRINSIC_BONUS_CAP so the bandit can't be
+                // hijacked by always-novel arms with zero extrinsic
+                // value. Apply BEFORE recording the hash so a
+                // freshly-seen hash gets full novelty credit.
+                trace.novelty_bonus = hash_history.novelty_bonus(hash);
+                hash_history.observe(hash);
                 directive_traces.push(trace);
                 new_trace_indices.push(directive_traces.len() - 1);
                 tracing::info!(
