@@ -60,6 +60,14 @@ export function LandingFooter() {
               </li>
             </ul>
           </div>
+          <div className="footer-col">
+            <h5>Contact</h5>
+            <ul>
+              <li>
+                <a href="mailto:nasrudinsalim@nasrudin.org">Email us</a>
+              </li>
+            </ul>
+          </div>
         </div>
         <div className="footer-bottom">
           <span>Built in Rust + Lean 4 · open source · MIT licensed.</span>

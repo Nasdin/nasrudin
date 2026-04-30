@@ -45,6 +45,12 @@ export function AppFooter() {
           >
             GitHub
           </a>
+          <a
+            href="mailto:nasrudinsalim@nasrudin.org"
+            style={{ color: 'var(--paper-200)', textDecoration: 'none' }}
+          >
+            Contact
+          </a>
         </div>
       </div>
     </footer>

@@ -134,21 +134,25 @@ extract-physlean: build-extract
 # walked theorem (curried `App` chains for unknown heads), so the GA
 # gets the full corpus as building blocks rather than a hand-curated
 # subset. `+all` skips the namespace-prefix filter entirely and relies
-# on the global skip-list (Lean.*, Std.*, Mathlib.Tactic.*, etc.). This
-# is the right default — Mathlib's *constants* mostly live in bare-name
-# namespaces (Algebra., Module., Ring., Topology., Combinatorics.,
-# MeasureTheory., LinearAlgebra., Polynomial., Filter., Finset., …)
-# rather than under a `Mathlib.X` prefix, so the older `+mathlib`
-# whitelist matched only `Real./Nat./Int./Rat./Complex.` and missed
-# everything else. PhysLean must be built once via `just build-extract`.
+# on the global skip-list (Lean.*, Std.*, Mathlib.Tactic.*, _private.*,
+# Aesop.*, etc.). Yields ~200k theorems, ~290 MB JSON, ~5–10 min walk.
+#
+# This is the right default — Mathlib's *constants* mostly live in
+# bare-name namespaces (Algebra., Module., Ring., Topology.,
+# Combinatorics., MeasureTheory., LinearAlgebra., Polynomial., Filter.,
+# Finset., LinearMap., Submodule., InnerProductSpace., …) rather than
+# under a `Mathlib.X` prefix, so the older `+mathlib` whitelist matched
+# only `Real./Nat./Int./Rat./Complex.` and missed everything else.
+# PhysLean must be built once via `just build-extract`.
 extract-mathlib: build-extract
     cd physlean-extract && lake exe extract \
         --whitelist=+all \
         --output=output/math_corpus.json
 
-# Legacy narrower whitelist — kept as a fast-path for development /
-# CI when the full +all corpus would be too slow. NOT recommended for
-# production: misses 90+% of Mathlib's algebraic and topological content.
+# Narrower whitelist for development / CI when the full +all corpus
+# would be too slow. Yields ~14 k theorems (Real./Nat./Int./Rat./
+# Complex./physics-namespaces). Not recommended for production: misses
+# 90+% of Mathlib's algebraic/topological/probability content.
 extract-mathlib-narrow: build-extract
     cd physlean-extract && lake exe extract \
         --whitelist=+phys,+mathlib \

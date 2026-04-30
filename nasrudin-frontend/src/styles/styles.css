@@ -115,7 +115,7 @@ a { color: inherit; }
 .nav a:hover { color: var(--terracotta-500); }
 .nav-cta {
   background: var(--ink-900);
-  color: var(--paper-50);
+  color: #ffffff !important;
   padding: 8px 16px;
   border-radius: var(--radius-md);
   font-size: 14px;
@@ -1033,6 +1033,8 @@ a { color: inherit; }
   line-height: 1.7;
   color: var(--paper-100);
   min-height: 320px;
+  max-height: 320px;
+  overflow-y: auto;
 }
 .install-cli-body .prompt { color: var(--terracotta-300); }
 .install-cli-body .out { color: var(--paper-300); }

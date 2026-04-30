@@ -43,3 +43,4 @@ LOCK
 .claude/cache/
 
 .env
+physlean-extract/output/math_corpus_full.json

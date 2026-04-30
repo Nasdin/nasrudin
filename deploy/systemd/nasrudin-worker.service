@@ -9,7 +9,14 @@ User=nasrudin
 Group=nasrudin
 WorkingDirectory=/opt/nasrudin
 EnvironmentFile=/opt/nasrudin/.env
-Environment=NASRUDIN_API_URL=http://127.0.0.1:3001
+# Co-located worker auto-trust: connect via the unix-domain socket the
+# API binds at /run/nasrudin/api-local.sock. Caddy never proxies to this
+# socket, so any request that arrives on it is provably from a process
+# running on the same VM as the API. The trust resolver flips
+# `via_unix_socket=true` for these submissions and bypasses the
+# redundant server-side `lake build` confirmation (subject to spot-check
+# sampling). Public TCP (3001) stays available for everything else.
+Environment=NASRUDIN_API_URL=unix:///run/nasrudin/api-local.sock
 Environment=NASRUDIN_WORKER_ID=nasrudin-prod-droplet
 Environment=PROVER_ROOT=/opt/nasrudin/prover
 Environment=LAKE_WORKSPACE_ROOT=/var/lib/nasrudin/lake-cache

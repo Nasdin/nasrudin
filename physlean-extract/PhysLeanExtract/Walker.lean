@@ -97,7 +97,9 @@ def mathlibTopNamespaces : List String :=
 
 /-- Skip-list: namespaces we never want in the corpus regardless of the
     whitelist. Mostly compiler internals and category theory (which is
-    massive but inert for physics). -/
+    massive but inert for physics). When `+all` is used we also drop
+    private definitions (`_private.*`) — internal Mathlib helpers that
+    aren't meaningful theorems — and `Aesop.*` (tactic plumbing). -/
 def globalSkipPrefixes : List String :=
   [ "Lean."
   , "Std."
@@ -110,6 +112,12 @@ def globalSkipPrefixes : List String :=
   , "CategoryTheory."
   , "Mathlib.Init."
   , "Mathlib.Mathport."
+  , "_private."
+  , "Aesop."
+  , "Tactic."
+  , "Parser."
+  , "Elab."
+  , "Macro."
   ]
 
 /-- Check if a name belongs to PhysLean (not Lean/Mathlib internals). -/
