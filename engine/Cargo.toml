@@ -91,7 +91,7 @@ prost = "0.14"
 bytes = "1.11"
 
 # Embeddings (Phase B)
-fastembed = "4"
+fastembed = { version = "4", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries"] }
 instant-distance = { version = "0.6", features = ["with-serde"] }
 memmap2 = "0.9"
 
