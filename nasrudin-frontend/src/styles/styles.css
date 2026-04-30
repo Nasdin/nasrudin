@@ -351,14 +351,29 @@ a { color: inherit; }
 }
 .theorem-statement {
   font-family: "STIX Two Math", "Cambria Math", "Source Serif 4", serif;
-  font-size: 22px;
+  font-size: clamp(16px, 2.4vw, 22px);
   line-height: 1.4;
   color: var(--ink-900);
   text-align: center;
-  padding: 16px 0 24px;
-  min-height: 70px;
+  padding: 16px 12px;
+  height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
   font-style: italic;
   font-weight: 400;
+}
+.theorem-statement > * {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.theorem-statement .katex-display,
+.theorem-statement .katex {
+  max-width: 100%;
+  overflow: hidden;
+  margin: 0;
 }
 .theorem-statement .var { font-style: italic; }
 .theorem-statement .op { font-style: normal; padding: 0 4px; }
@@ -424,6 +439,7 @@ a { color: inherit; }
   color: var(--ink-700);
   overflow: hidden;
   position: relative;
+  min-height: 48px;
 }
 .ticker-label {
   flex-shrink: 0;

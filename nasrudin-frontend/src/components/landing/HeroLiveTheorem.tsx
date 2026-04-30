@@ -123,6 +123,9 @@ export function HeroLiveTheorem() {
             <div className="theorem-statement" style={{ opacity: 0.4 }}>
               —
             </div>
+            <div className="theorem-name" style={{ opacity: 0.4 }}>
+              &nbsp;
+            </div>
             <div className="theorem-tag" style={{ opacity: 0.4 }}>
               connecting…
             </div>
