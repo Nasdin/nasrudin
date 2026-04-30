@@ -53,10 +53,7 @@ function WorkersPage() {
           </p>
         </div>
 
-        <div
-          className="stat-row"
-          style={{ marginTop: 24, marginBottom: 32, gridTemplateColumns: 'repeat(3, 1fr)' }}
-        >
+        <div className="stat-row stat-row-3" style={{ marginTop: 24, marginBottom: 32 }}>
           <div className="stat-cell">
             <div className="label">Workers · live</div>
             <div className="num">{active}</div>
@@ -99,7 +96,11 @@ function WorkersPage() {
               <Link to="/api-keys">spin one up →</Link>
             </p>
           )}
-          {filtered.length > 0 && <WorkersTable workers={filtered} />}
+          {filtered.length > 0 && (
+            <div className="lead-table-scroll">
+              <WorkersTable workers={filtered} />
+            </div>
+          )}
         </div>
       </div>
       <AppFooter />

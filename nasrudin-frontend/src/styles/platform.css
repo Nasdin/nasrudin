@@ -651,6 +651,13 @@
   overflow: hidden;
   margin: 32px 0;
 }
+.stat-row-3 { grid-template-columns: repeat(3, 1fr); }
+
+.lead-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.lead-table-scroll .lead-table { min-width: 720px; }
 .stat-cell {
   background: var(--bg-raised);
   padding: 24px;
@@ -1446,6 +1453,7 @@
   .auth-form-wrap { padding: 40px 32px; max-width: 100%; }
   .profile-grid { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: repeat(2, 1fr); }
+  .stat-row-3 { grid-template-columns: repeat(2, 1fr); }
   .lead-podium { grid-template-columns: 1fr; }
   .app-header-inner { grid-template-columns: auto auto; gap: 12px; }
   .app-search { display: none; }
@@ -1477,6 +1485,9 @@
   .concept-search-bar { gap: 8px; }
   .concept-search-input { flex: 1 1 100%; font-size: 16px; }
   .concept-search-submit { width: 100%; justify-content: center; }
+
+  .lead-tabs { flex-wrap: wrap; }
+  .lead-tab { font-size: 12px; padding: 6px 12px; }
 }
 
 @media (max-width: 480px) {
