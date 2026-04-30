@@ -80,11 +80,23 @@ pub struct TestApp {
     /// Reverify-side broadcast handle, exposed so SSE tests can publish
     /// `theorem_*` events and verify they round-trip through the stream.
     pub reverify_event_tx: tokio::sync::broadcast::Sender<ReverifyDiscoveryEvent>,
+    /// Direct handle to the AppState the router holds. Used by tests
+    /// that need to mutate state directly (e.g. the LLM steering e2e
+    /// test invokes run_one_cycle which needs &Arc<AppState>) and
+    /// then read back through the same router.
+    pub state: Arc<AppState>,
     /// Holding the guard for the test's lifetime serialises against other
     /// tests that share the database.
     _guard: tokio::sync::MutexGuard<'static, ()>,
     /// Tempdir backing the in-memory RocksDB; dropped at end of test.
     _rocks_dir: TempDir,
+}
+
+impl TestApp {
+    /// Convenience: clone the AppState handle (cheap — `Arc<AppState>`).
+    pub fn state(&self) -> Arc<AppState> {
+        Arc::clone(&self.state)
+    }
 }
 
 /// Response captured from the test router. Body is fully buffered.
@@ -329,12 +341,13 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
             axum::routing::post(handlers::conjecture::complete_handler),
         )
         .layer(auth_layer)
-        .with_state(state);
+        .with_state(Arc::clone(&state));
 
     Some(TestApp {
         router,
         pg,
         reverify_event_tx: reverify_event_tx_for_test,
+        state,
         _guard: guard,
         _rocks_dir: rocks_dir,
     })

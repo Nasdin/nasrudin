@@ -152,6 +152,23 @@ fn weighted_pick(weights: &[f32; 6], rng: &mut impl Rng) -> u8 {
     5
 }
 
+/// Test hook: expose the internal weight-resolution path so the
+/// integration test can assert the LLM's mutation_priors actually
+/// shape the operator-selection distribution. Not for production use.
+#[doc(hidden)]
+pub fn resolve_weights_for_test(
+    priors: Option<&std::collections::HashMap<String, f32>>,
+    suffix_bias: f32,
+) -> [f32; 6] {
+    resolve_weights(priors, suffix_bias)
+}
+
+/// Test hook: see `resolve_weights_for_test`.
+#[doc(hidden)]
+pub fn weighted_pick_for_test(weights: &[f32; 6], rng: &mut impl Rng) -> u8 {
+    weighted_pick(weights, rng)
+}
+
 /// **Phase 6.5.8** — append a `RearrangeEquation{X²=Y²}` followed by
 /// `TakePositiveRoot` to the chain. `X`, `Y` are sampled from the
 /// chain's existing fact LHS/RHS atoms, so the synthesized target
