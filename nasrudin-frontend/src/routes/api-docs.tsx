@@ -41,7 +41,7 @@ function ApiDocsPage() {
           <h1
             style={{
               fontFamily: 'var(--font-serif)',
-              fontSize: 48,
+              fontSize: 'clamp(28px, 7vw, 48px)',
               fontWeight: 400,
               letterSpacing: '-0.025em',
               margin: '12px 0 12px',
