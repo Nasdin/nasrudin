@@ -101,6 +101,46 @@ pub async fn handler(
         {
             tracing::debug!(error=%err, "directive_pull_events insert failed (non-blocking)");
         }
+
+        // LinUCB rank-1 sufficient-statistics update. Pure CPU
+        // (~120 flops); runs inline. The discrete UCB1 update above
+        // and this contextual update both train from the same pull,
+        // so the system has *both* a per-arm point estimate AND a
+        // smooth predictor across the (strength, choice) plane —
+        // worker-side selection blends them via the snapshot.
+        if let Ok(Some(row)) = nasrudin_pg::query::cluster_directive_linucb::get(
+            pg,
+            &e.island_domain,
+            &e.action,
+        )
+        .await
+        {
+            let mut a_flat = row.a_matrix;
+            let mut b_vec = row.b_vector;
+            // Worker emits strength_bucket; reconstruct the
+            // continuous strength as the bucket's midpoint
+            // [0.0, 0.2, 0.4, 0.6, 0.8] → [0.1, 0.3, 0.5, 0.7, 0.9].
+            let s_mid = (e.strength_bucket as f64 + 0.5) / 5.0;
+            let max_choice = (crate::steerer::directive_bandit::MAX_MULTIPLIER_CHOICES - 1).min(8);
+            let x = crate::steerer::linucb::features(
+                s_mid,
+                e.multiplier_choice as u8,
+                max_choice,
+            );
+            crate::steerer::linucb::update_in_place(&mut a_flat, &mut b_vec, &x, reward);
+            if let Err(err) = nasrudin_pg::query::cluster_directive_linucb::save_update(
+                pg,
+                &e.island_domain,
+                &e.action,
+                a_flat,
+                b_vec,
+                row.pulls + 1,
+            )
+            .await
+            {
+                tracing::debug!(error=%err, "linucb save_update failed (non-blocking)");
+            }
+        }
     }
     (
         StatusCode::OK,

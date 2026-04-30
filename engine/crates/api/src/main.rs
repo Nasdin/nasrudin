@@ -672,6 +672,18 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Cluster compute bandit arms ensured");
         }
 
+        // LinUCB contextual bandit sufficient-statistics rows: 24
+        // rows (6 islands × 4 actions). Each row starts at A = λ·I,
+        // b = 0. Math is pure CPU, runs inline in directive_feedback.
+        if let Err(e) =
+            physics_api::steerer::directive_bandit::ensure_all_linucb_rows(pg).await
+        {
+            tracing::warn!(error=%e, "LinUCB ensure_all_linucb_rows failed; \
+                contextual generalisation falls back to discrete UCB1 only");
+        } else {
+            tracing::info!("LinUCB sufficient-statistics rows ensured");
+        }
+
         // Hourly purge of cluster_reports older than 7 days. Bandit
         // arms hold the long-running statistics; the per-chunk rows
         // are only needed for the most-recent prompt + reward window.

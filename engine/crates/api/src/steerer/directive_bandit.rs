@@ -300,6 +300,27 @@ pub async fn expand_dominant_compute_arms(
     Ok(materialised)
 }
 
+/// Materialise the per-(island, action) LinUCB sufficient-statistics
+/// rows. Each row stores A (λ·I) and b (zeros) — the Bayesian prior
+/// for the contextual bandit. 6 islands × 4 actions = 24 rows.
+/// Idempotent.
+pub async fn ensure_all_linucb_rows(
+    db: &DatabaseConnection,
+) -> Result<(), sea_orm::DbErr> {
+    for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
+        for &action in ACTIONS {
+            nasrudin_pg::query::cluster_directive_linucb::ensure_row(
+                db,
+                domain,
+                action_str(action),
+                crate::steerer::linucb::LINUCB_LAMBDA,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 /// Materialise every (island_domain, action, strength_bucket,
 /// multiplier_choice) row at zero stats. Idempotent — pre-existing
 /// rows are left alone. Called once at API boot, parallels
