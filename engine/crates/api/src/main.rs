@@ -772,22 +772,62 @@ async fn main() -> anyhow::Result<()> {
         .route("/metrics", get(physics_api::metrics::metrics))
         .layer(GovernorLayer::new(rate_limit::health_relaxed()));
 
-    // Admin: corpus reload (auth-checked inside the handler against
-    // ADMIN_TOKEN). Same rate-limit bucket as auth-strict — a stolen
-    // bearer token is the threat, brute-force is.
+    // Admin panel. Every route is gated by the `RequireAdmin` extractor
+    // (session OR ADMIN_TOKEN bearer) and every mutation writes a row
+    // through `perform_audited`. Same rate-limit bucket as auth-strict —
+    // a stolen admin session is the threat, brute-force is.
     let admin = Router::new()
         .route(
             "/api/admin/reload_corpus",
-            post(handlers::admin::reload_corpus),
+            post(handlers::admin::corpus::reload_corpus),
         )
         .route(
             "/api/admin/steering/recent",
-            get(handlers::admin::steering_recent),
+            get(handlers::admin::steering::steering_recent),
         )
         .route(
             "/api/admin/steering/force",
-            post(handlers::admin::steering_force),
+            post(handlers::admin::steering::steering_force),
         )
+        .route("/api/admin/users", get(handlers::admin::users::list))
+        .route(
+            "/api/admin/users/{id}",
+            get(handlers::admin::users::detail),
+        )
+        .route(
+            "/api/admin/users/{id}/admin",
+            post(handlers::admin::users::set_admin),
+        )
+        .route(
+            "/api/admin/users/{id}/trust",
+            post(handlers::admin::users::set_trust),
+        )
+        .route(
+            "/api/admin/users/{id}/spot_check_rate",
+            post(handlers::admin::users::set_spot_check_rate),
+        )
+        .route(
+            "/api/admin/users/{id}/plan",
+            post(handlers::admin::users::set_plan),
+        )
+        .route(
+            "/api/admin/users/{id}/credits",
+            post(handlers::admin::users::adjust_credits),
+        )
+        .route(
+            "/api/admin/api_keys/{id}",
+            delete(handlers::admin::api_keys::revoke),
+        )
+        .route(
+            "/api/admin/api_keys/{id}/trust",
+            post(handlers::admin::api_keys::set_trust),
+        )
+        .route(
+            "/api/admin/jobs/{id}/cancel",
+            post(handlers::admin::jobs::cancel),
+        )
+        .route("/api/admin/audit", get(handlers::admin::audit_log::list))
+        .route("/api/admin/stats", get(handlers::admin::stats::stats))
         .layer(GovernorLayer::new(rate_limit::auth_strict()));
 
     // SSE: no rate limit (long-lived connection)

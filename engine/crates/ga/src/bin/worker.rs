@@ -455,6 +455,10 @@ async fn main() {
         // chunks where steering hasn't landed yet.
         suffix_bias: 0.0,
         elitism_fraction: 0.0,
+        // Enabled when this worker reports clusters to the API (any
+        // worker connected to the cluster steerer). The chunk loop
+        // uses report.final_population to compute ClusterSummaries.
+        collect_final_population: api_cfg.is_some(),
     };
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
@@ -728,6 +732,63 @@ async fn main() {
             }
         }
         let report = run_discovery(&store, &chunk_config, &mut rng);
+
+        // Cluster the chunk's final population and POST the per-cluster
+        // ClusterSummaries to the API. Soft-fails: cluster reporting is
+        // observability, not a blocking dependency. K comes from the
+        // bandit's cluster_config (folded into /api/seed); falls back
+        // to DEFAULT_K=6 if steering is absent or doesn't list this
+        // domain. Skipped entirely when the worker isn't connected
+        // to an API (offline / dev mode).
+        if !report.final_population.is_empty()
+            && let Some(api_cfg_for_cluster) = api_cfg.as_ref()
+        {
+            let canonical_domain: &str = match domain.as_str() {
+                "sr" => "special_relativity",
+                "em" => "electromagnetism",
+                "qm" => "quantum_mechanics",
+                "thermo" => "thermodynamics",
+                "cm" => "classical_mechanics",
+                "gr" => "general_relativity",
+                other => other,
+            };
+            let k_for_island = last_steering
+                .as_ref()
+                .and_then(|s| s.get("cluster_config"))
+                .and_then(|cc| cc.get("k_per_island"))
+                .and_then(|m| m.get(canonical_domain))
+                .and_then(|v| v.as_u64())
+                .map(|v| v.clamp(2, 12) as u32)
+                .unwrap_or(6);
+            // Deterministic per-chunk seed so re-running the same
+            // chunk reproduces the same cluster assignments.
+            let chunk_seed = (chunk_i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let (summaries, _assignment) =
+                nasrudin_ga::clustering::cluster_and_summarise(
+                    &report.final_population,
+                    k_for_island,
+                    canonical_domain,
+                    chunk_seed,
+                );
+            tracing::debug!(
+                chunk = chunk_i,
+                k = k_for_island,
+                n_clusters = summaries.len(),
+                "chunk clustered"
+            );
+            if let Err(e) = post_cluster_report(
+                api_cfg_for_cluster,
+                chunk_i as i64,
+                k_for_island as i16,
+                canonical_domain,
+                &summaries,
+            )
+            .await
+            {
+                tracing::debug!(error=%e, "cluster_report post failed (non-blocking)");
+            }
+        }
+
         total_candidates += report.total_candidates;
         total_unique += report.unique_executable;
         total_lake += report.lake_attempts;
@@ -783,6 +844,7 @@ async fn main() {
         dim_rejected: total_dim_rejected,
         verified: combined_verified,
         top_fitness_canonical: None,
+        final_population: vec![],
     };
 
     println!("▶ Run complete.");
@@ -1042,6 +1104,9 @@ async fn run_seed_driven_chunk(
             // /api/research/jobs the steering knobs will land here too.)
             suffix_bias: 0.0,
             elitism_fraction: 0.0,
+            // Research-mode does not (yet) participate in cluster
+            // reporting, so skip the final-population snapshot.
+            collect_final_population: false,
         };
         let report = run_discovery(&filtered, &chunk_config, rng);
         total_attempted += report.total_candidates as u64;
@@ -1192,6 +1257,52 @@ fn axioms_used(chain: &Chain) -> Vec<String> {
         }
     }
     out
+}
+
+/// POST a per-chunk cluster report to `/api/cluster-report`. The
+/// API steerer reads `cluster_reports` rows for both UCB1 reward
+/// (which K worked) and the LLM prompt's `cluster_summaries` block
+/// (semantic reasoning over per-cluster axioms / fitness). Soft-fails
+/// — a missing/down API never blocks the GA chunk loop.
+async fn post_cluster_report(
+    cfg: &ApiSubmitConfig,
+    chunk_index: i64,
+    k_used: i16,
+    island_domain: &str,
+    summaries: &[nasrudin_ga::clustering::ClusterSummary],
+) -> anyhow::Result<()> {
+    let summaries_json: Vec<serde_json::Value> = summaries
+        .iter()
+        .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null))
+        .collect();
+    // The endpoint stores worker_id as PG UUID. Production workers
+    // typically have a string identifier (e.g. "pool-worker-1"); derive
+    // a deterministic UUID v5 in the DNS namespace so reports from
+    // the same logical worker collapse to the same row regardless of
+    // restart, and we never need server-side worker provisioning just
+    // for cluster reports.
+    let worker_uuid = uuid::Uuid::new_v5(
+        &uuid::Uuid::NAMESPACE_DNS,
+        cfg.worker_id.as_bytes(),
+    );
+    let body = serde_json::json!({
+        "worker_id": worker_uuid,
+        "chunk_index": chunk_index,
+        "k_used": k_used,
+        "island_reports": [{
+            "island_domain": island_domain,
+            "summaries": summaries_json,
+        }]
+    });
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/cluster-report", cfg.api_url))
+        .bearer_auth(&cfg.worker_key)
+        .json(&body)
+        .send()
+        .await?;
+    resp.error_for_status()?;
+    Ok(())
 }
 
 /// POST a single verified discovery to `/api/ingest`.

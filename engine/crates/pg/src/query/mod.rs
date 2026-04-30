@@ -1,4 +1,5 @@
 pub mod admin_audit_log;
+pub mod admin_users;
 pub mod api_keys;
 pub mod api_usage;
 pub mod billing;

@@ -5,8 +5,9 @@
 //! `query::admin_audit_log::insert` helper does the `::inet` cast.
 
 use sea_orm::entity::prelude::*;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "admin_audit_log")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]

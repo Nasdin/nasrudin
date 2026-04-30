@@ -3,7 +3,7 @@
 //! The audit log is only useful if every admin mutation writes a row.
 //! We enforce this with a single helper, `perform_audited`, that:
 //! 1. Validates the reason (≥ 10 chars).
-//! 2. Opens a transaction.
+//! 2. Opens a transaction (via `sea_orm::TransactionTrait::transaction`).
 //! 3. Runs the mutation closure inside the txn.
 //! 4. INSERTs the audit row inside the same txn.
 //! 5. Commits.
@@ -14,8 +14,11 @@
 
 use std::future::Future;
 use std::net::IpAddr;
+use std::pin::Pin;
 
-use nasrudin_pg::sea_orm::{DatabaseConnection, DatabaseTransaction, DbErr, TransactionTrait};
+use nasrudin_pg::sea_orm::{
+    DatabaseConnection, DatabaseTransaction, DbErr, TransactionError, TransactionTrait,
+};
 use uuid::Uuid;
 
 /// Frozen action codes. Add new codes by appending; never rename or
@@ -82,8 +85,13 @@ pub enum AuditError {
 ///
 /// `mutate` runs inside the same txn as the audit insert, returning
 /// `(result, after_value_json)`. Both succeed-or-fail atomically.
+///
+/// The closure signature uses `Pin<Box<dyn Future + Send + 'c>>` to
+/// match `sea_orm::TransactionTrait::transaction` and avoid the
+/// well-known borrow-checker dance with `&'a DatabaseTransaction` in
+/// the return type.
 #[allow(clippy::too_many_arguments)]
-pub async fn perform_audited<T, F, Fut>(
+pub async fn perform_audited<T, F>(
     pg: &DatabaseConnection,
     actor: &crate::auth::AuthUser,
     impersonation: Option<ImpersonationCtx>,
@@ -95,29 +103,48 @@ pub async fn perform_audited<T, F, Fut>(
     mutate: F,
 ) -> Result<T, AuditError>
 where
-    F: FnOnce(&DatabaseTransaction) -> Fut + Send,
-    Fut: Future<Output = Result<(T, serde_json::Value), DbErr>> + Send,
-    T: Send,
+    F: for<'c> FnOnce(
+            &'c DatabaseTransaction,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<(T, serde_json::Value), DbErr>> + Send + 'c>,
+        > + Send
+        + 'static,
+    T: Send + 'static,
 {
     if reason.trim().chars().count() < 10 {
         return Err(AuditError::ReasonTooShort);
     }
 
-    let txn = pg.begin().await?;
-    let (out, after_value) = mutate(&txn).await?;
-    nasrudin_pg::query::admin_audit_log::insert(
-        &txn,
-        actor.id,
-        target_user_id,
-        impersonation.as_ref().map(|i| i.original_admin_id),
-        action,
-        Some(before_value),
-        Some(after_value),
-        reason,
-        req_meta.ip,
-        req_meta.user_agent.clone(),
-    )
-    .await?;
-    txn.commit().await?;
-    Ok(out)
+    let actor_id = actor.id;
+    let impersonating = impersonation.as_ref().map(|i| i.original_admin_id);
+    let ip = req_meta.ip;
+    let ua = req_meta.user_agent.clone();
+
+    let result: Result<T, TransactionError<DbErr>> = pg
+        .transaction::<_, T, DbErr>(move |txn| {
+            Box::pin(async move {
+                let (out, after_value) = mutate(txn).await?;
+                nasrudin_pg::query::admin_audit_log::insert(
+                    txn,
+                    actor_id,
+                    target_user_id,
+                    impersonating,
+                    action,
+                    Some(before_value),
+                    Some(after_value),
+                    reason,
+                    ip,
+                    ua,
+                )
+                .await?;
+                Ok(out)
+            })
+        })
+        .await;
+
+    match result {
+        Ok(out) => Ok(out),
+        Err(TransactionError::Connection(e)) => Err(AuditError::Db(e)),
+        Err(TransactionError::Transaction(e)) => Err(AuditError::Db(e)),
+    }
 }

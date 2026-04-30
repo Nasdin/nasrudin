@@ -123,6 +123,10 @@ pub struct DiscoveryConfig {
     /// (no elitism). With elitism_fraction=0.05 and population=128,
     /// the top 6 elites carry through verbatim each generation.
     pub elitism_fraction: f32,
+    /// When true, `run_discovery` snapshots the chunk's final
+    /// population into `DiscoveryReport.final_population`. Off by
+    /// default — only the worker that runs cluster reporting needs it.
+    pub collect_final_population: bool,
 }
 
 impl Default for DiscoveryConfig {
@@ -147,6 +151,7 @@ impl Default for DiscoveryConfig {
             elaborator: None,
             suffix_bias: 0.0,
             elitism_fraction: 0.0,
+            collect_final_population: false,
         }
     }
 }
@@ -187,6 +192,12 @@ pub struct DiscoveryReport {
     pub dim_rejected: usize,
     pub verified: Vec<VerifiedDiscovery>,
     pub top_fitness_canonical: Option<String>,
+    /// Snapshot of the chunk's final population for clustering /
+    /// reporting. Populated when `config.collect_final_population` is
+    /// true; empty otherwise so the legacy hot path doesn't pay for
+    /// the clone. Each entry is (chain, fitness components vector,
+    /// axiom/theorem names referenced by the chain).
+    pub final_population: Vec<(Chain, [f32; 4], Vec<String>)>,
 }
 
 /// Run the chain-based GA for `config.generations` generations.
@@ -478,6 +489,40 @@ pub fn run_discovery(
         }
     }
 
+    if config.collect_final_population {
+        // Snapshot the final population for clustering / reporting.
+        // Populated only when the worker has opted in (workers that
+        // POST /api/cluster-report). Cost: one Chain clone per
+        // individual + an axiom-name walk per chain.
+        report.final_population.reserve(population.len());
+        for ind in &population {
+            let names: Vec<String> = ind
+                .chain
+                .0
+                .iter()
+                .filter_map(|s| match s {
+                    RuleStep::IntroduceAxiom { axiom_name } => Some(axiom_name.clone()),
+                    RuleStep::IntroduceTheorem { theorem_name } => Some(theorem_name.clone()),
+                    _ => None,
+                })
+                .collect();
+            // Map FitnessScore → 4-component vector aligned with the
+            // steerer's `fitness_weights` (novelty, dimensional
+            // elegance, length penalty, target proximity). All clamped
+            // to [0,1] so the cluster-feature L2 distance is bounded.
+            let f = &ind.fitness;
+            let length_signal = (1.0 - (ind.chain.0.len() as f64 / 16.0).min(1.0))
+                .clamp(0.0, 1.0);
+            let comps = [
+                f.novelty.clamp(0.0, 1.0) as f32,
+                f.dimensional.clamp(0.0, 1.0) as f32,
+                length_signal as f32,
+                f.target_shape.max(f.ladder_progress).clamp(0.0, 1.0) as f32,
+            ];
+            report.final_population.push((ind.chain.clone(), comps, names));
+        }
+    }
+
     report
 }
 
@@ -641,6 +686,7 @@ mod tests {
             elaborator: None,
             suffix_bias: 0.0,
             elitism_fraction: 0.0,
+            collect_final_population: false,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -674,6 +720,7 @@ mod tests {
             elaborator: None,
             suffix_bias: 0.0,
             elitism_fraction: 0.0,
+            collect_final_population: false,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
