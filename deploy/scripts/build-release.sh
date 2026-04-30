@@ -87,6 +87,12 @@ pnpm install --frozen-lockfile --silent
 (cd nasrudin-frontend && \
   VITE_API_URL="${VITE_API_URL:-https://api.nasrudin.org}" \
   VITE_STRIPE_SPONSOR_PAYMENT_LINK="${VITE_STRIPE_SPONSOR_PAYMENT_LINK:-https://donate.stripe.com/aFaaEXg2KgjZeCibEHbsc00}" \
+  VITE_FIREBASE_API_KEY="${VITE_FIREBASE_API_KEY:-}" \
+  VITE_FIREBASE_AUTH_DOMAIN="${VITE_FIREBASE_AUTH_DOMAIN:-}" \
+  VITE_FIREBASE_PROJECT_ID="${VITE_FIREBASE_PROJECT_ID:-}" \
+  VITE_FIREBASE_STORAGE_BUCKET="${VITE_FIREBASE_STORAGE_BUCKET:-}" \
+  VITE_FIREBASE_MESSAGING_SENDER_ID="${VITE_FIREBASE_MESSAGING_SENDER_ID:-}" \
+  VITE_FIREBASE_APP_ID="${VITE_FIREBASE_APP_ID:-}" \
   pnpm build)
 
 # `pnpm deploy --prod` produces an isolated directory (package.json +
