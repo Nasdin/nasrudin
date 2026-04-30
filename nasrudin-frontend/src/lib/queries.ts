@@ -11,6 +11,7 @@ import type {
   CreateResearchJobRequest,
   CreateResearchJobResponse,
   DbStats,
+  LandingStats,
   LlmKeysListResponse,
   MeProfile,
   MeStats,
@@ -68,6 +69,17 @@ export function useLogout() {
   return useMutation({
     mutationFn: () => apiFetch<{ logged_out: true }>('/api/auth/logout', { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
+  });
+}
+
+// --- public landing stats ---
+
+export function useLandingStats() {
+  return useQuery<LandingStats>({
+    queryKey: ['stats', 'landing'],
+    queryFn: () => apiFetch<LandingStats>('/api/stats/landing'),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 

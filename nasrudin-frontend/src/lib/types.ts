@@ -83,6 +83,12 @@ export interface DbStats {
   domain_counts: Record<string, number>;
 }
 
+export interface LandingStats {
+  verified_theorems: number;
+  active_workers: number;
+  contributors: number;
+}
+
 export interface AuthUser {
   id: string;
   email: string;

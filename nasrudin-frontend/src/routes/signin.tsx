@@ -1,16 +1,16 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { AuthForm } from '~/components/auth/AuthForm';
-import { useStats, useWorkers } from '~/lib/queries';
+import { useLandingStats } from '~/lib/queries';
 
 export const Route = createFileRoute('/signin')({ component: SignInPage });
 
+function fmt(n: number | undefined): string {
+  if (typeof n !== 'number') return '—';
+  return n.toLocaleString('en-US');
+}
+
 function SignInPage() {
-  const stats = useStats();
-  const workers = useWorkers();
-
-  const liveWorkers = workers.data?.filter(w => w.status === 'Active' || w.status === 'active').length ?? 0;
-  const totalVerified = stats.data?.total_verified ?? 0;
-
+  const stats = useLandingStats();
   return (
     <div className="auth-page">
       <div className="auth-side">
@@ -39,16 +39,16 @@ function SignInPage() {
         </div>
         <div className="auth-stat-row">
           <div className="auth-stat">
-            <div className="num">{totalVerified.toLocaleString()}</div>
+            <div className="num">{fmt(stats.data?.verified_theorems)}</div>
             <div className="lbl">Verified theorems</div>
           </div>
           <div className="auth-stat">
-            <div className="num">{liveWorkers.toLocaleString()}</div>
+            <div className="num">{fmt(stats.data?.active_workers)}</div>
             <div className="lbl">Workers · live</div>
           </div>
           <div className="auth-stat">
-            <div className="num">42</div>
-            <div className="lbl">Countries</div>
+            <div className="num">{fmt(stats.data?.contributors)}</div>
+            <div className="lbl">Contributors</div>
           </div>
         </div>
       </div>
