@@ -279,3 +279,37 @@ pub async fn list_all(db: &impl ConnectionTrait) -> Result<Vec<workers::Model>> 
         .all(db)
         .await?)
 }
+
+/// Count workers whose `last_seen` is more recent than `now() - threshold`.
+/// Used by the public landing-stats endpoint.
+pub async fn count_active_workers(
+    db: &impl ConnectionTrait,
+    threshold: chrono::Duration,
+) -> Result<u64> {
+    let cutoff = chrono::Utc::now() - threshold;
+    let cutoff_offset: chrono::DateTime<chrono::FixedOffset> = cutoff.into();
+    let count = workers::Entity::find()
+        .filter(workers::Column::LastSeen.gt(cutoff_offset))
+        .count(db)
+        .await?;
+    Ok(count)
+}
+
+/// Count distinct user_ids on api_keys rows of kind = 'worker' — i.e. the
+/// number of people who have ever registered a worker. Used by the public
+/// landing-stats endpoint.
+pub async fn count_distinct_contributors(db: &impl ConnectionTrait) -> Result<u64> {
+    use sea_orm::FromQueryResult;
+    #[derive(FromQueryResult)]
+    struct R {
+        n: i64,
+    }
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT COUNT(DISTINCT user_id)::bigint AS n \
+         FROM api_keys WHERE kind = 'worker' AND user_id IS NOT NULL",
+        [],
+    );
+    let row = R::find_by_statement(stmt).one(db).await?;
+    Ok(row.map(|r| r.n).unwrap_or(0).try_into().unwrap_or(0))
+}

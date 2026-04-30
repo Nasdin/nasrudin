@@ -25,7 +25,10 @@ async fn fresh_db() -> Option<(DatabaseConnection, MutexGuard<'static, ()>)> {
     });
     let db = connect_simple(&url).await.ok()?;
     db.execute_unprepared(
-        "DROP TABLE IF EXISTS conjecture_events CASCADE; \
+        "DROP TABLE IF EXISTS user_saved_theorems CASCADE; \
+         DROP TABLE IF EXISTS library_folders CASCADE; \
+         DROP TABLE IF EXISTS cluster_steering CASCADE; \
+         DROP TABLE IF EXISTS conjecture_events CASCADE; \
          DROP TABLE IF EXISTS conjecture_jobs CASCADE; \
          DROP TABLE IF EXISTS manual_verifications CASCADE; \
          DROP TABLE IF EXISTS targeted_search_usage CASCADE; \
@@ -93,4 +96,92 @@ async fn list_all_returns_ordered_by_contribution() {
     let list = workers::list_all(&db).await.unwrap();
     assert_eq!(list.first().unwrap().id, "high");
     assert_eq!(list.last().unwrap().id, "low");
+}
+
+#[tokio::test]
+async fn count_active_workers_within_threshold() {
+    let Some((db, _g)) = fresh_db().await else { return };
+
+    // Two registered workers, both with last_seen = now (set by register()).
+    workers::register(&db, "active-a", None, None).await.unwrap();
+    workers::register(&db, "active-b", None, None).await.unwrap();
+
+    let n = workers::count_active_workers(&db, chrono::Duration::minutes(5))
+        .await
+        .unwrap();
+    assert_eq!(n, 2, "both freshly-registered workers must be counted");
+
+    // Tight window — last_seen is up to a few ms old, so a 0-second window
+    // should not include them (gt, not gte).
+    let n_zero = workers::count_active_workers(&db, chrono::Duration::seconds(0))
+        .await
+        .unwrap();
+    assert_eq!(n_zero, 0, "with a 0-second window nothing is active");
+}
+
+#[tokio::test]
+async fn count_distinct_contributors_returns_distinct_user_ids() {
+    let Some((db, _g)) = fresh_db().await else { return };
+
+    // Two users, with one and two worker keys respectively → 2 distinct contributors.
+    let alice = nasrudin_pg::query::users::create_user(
+        &db, "alice@test", Some("h"), None,
+    )
+    .await
+    .unwrap();
+    let bob = nasrudin_pg::query::users::create_user(&db, "bob@test", Some("h"), None)
+        .await
+        .unwrap();
+
+    nasrudin_pg::query::api_keys::create(
+        &db,
+        Some(alice.id),
+        "worker",
+        "alice-w1",
+        "nsk_worker_a1",
+        "h",
+        None,
+    )
+    .await
+    .unwrap();
+    nasrudin_pg::query::api_keys::create(
+        &db,
+        Some(bob.id),
+        "worker",
+        "bob-w1",
+        "nsk_worker_b1",
+        "h",
+        None,
+    )
+    .await
+    .unwrap();
+    nasrudin_pg::query::api_keys::create(
+        &db,
+        Some(bob.id),
+        "worker",
+        "bob-w2",
+        "nsk_worker_b2",
+        "h",
+        None,
+    )
+    .await
+    .unwrap();
+
+    let n = workers::count_distinct_contributors(&db).await.unwrap();
+    assert_eq!(n, 2, "two distinct user_ids on worker keys");
+
+    // A 'live' key for bob should not count.
+    nasrudin_pg::query::api_keys::create(
+        &db,
+        Some(bob.id),
+        "live",
+        "bob-live",
+        "nsk_live_xyz",
+        "h",
+        None,
+    )
+    .await
+    .unwrap();
+    let n2 = workers::count_distinct_contributors(&db).await.unwrap();
+    assert_eq!(n2, 2, "live keys must not change the contributor count");
 }
