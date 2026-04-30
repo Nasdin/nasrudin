@@ -181,6 +181,12 @@ pub struct AppState {
     /// `IMPERSONATION_SIGNING_KEY`. `None` disables impersonation —
     /// the start handler returns 503.
     pub impersonation_signing_key: Option<Vec<u8>>,
+    /// Per-run progress channel for bulk admin operations. Senders:
+    /// the bulk runner task. Receivers: SSE handlers filtered by run_id.
+    pub bulk_run_progress_tx: tokio::sync::broadcast::Sender<(
+        uuid::Uuid,
+        crate::admin::bulk_runner::BulkProgress,
+    )>,
 }
 
 /// Cache key for the `/api/seed` JSON response cache. Distinct

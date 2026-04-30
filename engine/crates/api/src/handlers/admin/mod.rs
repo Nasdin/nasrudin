@@ -4,6 +4,7 @@
 
 pub mod api_keys;
 pub mod audit_log;
+pub mod bulk;
 pub mod corpus;
 pub mod impersonate;
 pub mod jobs;

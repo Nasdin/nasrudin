@@ -463,6 +463,7 @@ async fn main() -> anyhow::Result<()> {
             .ok()
             .and_then(|hex_key| hex::decode(hex_key.trim()).ok())
             .filter(|b| b.len() >= 16),
+        bulk_run_progress_tx: tokio::sync::broadcast::channel(256).0,
         trust_cache: trust_cache.clone(),
         trust_invalidation_tx: trust_invalidation_tx.clone(),
         trusted_spot_check_rate,
@@ -515,6 +516,19 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Conjecture lease reaper spawned");
     } else {
         tracing::info!("Conjecture lease reaper disabled (no PostgreSQL)");
+    }
+
+    // Bulk-runs restart reaper. On startup, mark any rows still
+    // status='running' from before the restart as 'aborted' so the UI
+    // doesn't show a fake live run.
+    if let Some(pg) = state.pg.clone() {
+        tokio::spawn(async move {
+            if let Ok(n) = nasrudin_pg::query::bulk_runs::reap_stale(&pg).await
+                && n > 0
+            {
+                tracing::warn!("Reaped {n} stale bulk_runs at startup");
+            }
+        });
     }
 
     // Impersonation expiry tick — 60s. Marks ended_at + writes a
@@ -865,6 +879,14 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/admin/impersonate/end",
             post(handlers::admin::impersonate::end_impersonation),
+        )
+        .route(
+            "/api/admin/users/bulk",
+            post(handlers::admin::bulk::start),
+        )
+        .route(
+            "/api/admin/users/bulk/{run_id}/stream",
+            get(handlers::admin::bulk::stream),
         )
         .route("/api/admin/audit", get(handlers::admin::audit_log::list))
         .route("/api/admin/stats", get(handlers::admin::stats::stats))

@@ -45,6 +45,7 @@ password-auth = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 futures = { workspace = true }
+async-stream = "0.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tower = { workspace = true }
