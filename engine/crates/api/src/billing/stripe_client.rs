@@ -19,6 +19,14 @@ use stripe::{
 pub struct BillingConfig {
     pub price_researcher_monthly: String,
     pub price_researcher_annual: String,
+    /// Recurring monthly sponsor tiers — donations, not service tiers.
+    /// Webhook maps these to `PlanTier::Free`.
+    pub price_sponsor_5: String,
+    pub price_sponsor_25: String,
+    pub price_sponsor_100: String,
+    /// Stripe Payment Link URL for one-time, name-your-amount donations.
+    /// Frontend links straight to it; no checkout endpoint involved.
+    pub sponsor_payment_link: String,
     pub checkout_success_url: String,
     pub checkout_cancel_url: String,
     pub portal_return_url: String,
@@ -48,6 +56,11 @@ impl BillingClient {
         let cfg = BillingConfig {
             price_researcher_monthly: std::env::var("STRIPE_PRICE_RESEARCHER_MONTHLY")?,
             price_researcher_annual: std::env::var("STRIPE_PRICE_RESEARCHER_ANNUAL")?,
+            price_sponsor_5: std::env::var("STRIPE_PRICE_SPONSOR_5").unwrap_or_default(),
+            price_sponsor_25: std::env::var("STRIPE_PRICE_SPONSOR_25").unwrap_or_default(),
+            price_sponsor_100: std::env::var("STRIPE_PRICE_SPONSOR_100").unwrap_or_default(),
+            sponsor_payment_link: std::env::var("STRIPE_SPONSOR_PAYMENT_LINK")
+                .unwrap_or_default(),
             checkout_success_url: std::env::var("STRIPE_CHECKOUT_SUCCESS_URL")?,
             checkout_cancel_url: std::env::var("STRIPE_CHECKOUT_CANCEL_URL")?,
             portal_return_url: std::env::var("STRIPE_CUSTOMER_PORTAL_RETURN_URL")?,

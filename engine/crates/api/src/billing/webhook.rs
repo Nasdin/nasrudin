@@ -26,13 +26,18 @@ pub fn parse_event(payload: &[u8], sig_header: &str, secret: &str) -> Result<Eve
     Webhook::construct_event(payload_str, sig_header, secret)
 }
 
-/// Phase-1 price→tier map. Researcher is the only paid tier with
-/// self-serve checkout right now; Team / Institution / Enterprise route
-/// through a sales-contact CTA and ship in a separate plan.
+/// Phase-1 price→tier map. Researcher is the only paid *service* tier
+/// with self-serve checkout right now; Team / Institution / Enterprise
+/// route through a sales-contact CTA and ship in a separate plan.
+///
+/// Sponsor prices stay `PlanTier::Free` — they're donations, not service
+/// upgrades. The Stripe customer record is still the source of truth for
+/// "this user is a sponsor"; we just don't grant Researcher quota for it.
 pub fn tier_for_price(price_id: &str, cfg: &BillingConfig) -> PlanTier {
     if price_id == cfg.price_researcher_monthly || price_id == cfg.price_researcher_annual {
         PlanTier::Researcher
     } else {
+        // Includes sponsor prices and any unrecognized id — both stay Free.
         PlanTier::Free
     }
 }
@@ -107,6 +112,10 @@ mod tests {
         BillingConfig {
             price_researcher_monthly: monthly.to_string(),
             price_researcher_annual: annual.to_string(),
+            price_sponsor_5: String::new(),
+            price_sponsor_25: String::new(),
+            price_sponsor_100: String::new(),
+            sponsor_payment_link: String::new(),
             checkout_success_url: "x".into(),
             checkout_cancel_url: "x".into(),
             portal_return_url: "x".into(),

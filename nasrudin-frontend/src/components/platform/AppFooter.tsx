@@ -36,6 +36,9 @@ export function AppFooter() {
           <Link to="/pricing" style={{ color: 'var(--paper-200)', textDecoration: 'none' }}>
             Pricing
           </Link>
+          <Link to="/sponsor" style={{ color: 'var(--paper-200)', textDecoration: 'none' }}>
+            Sponsor
+          </Link>
           <a
             href="https://github.com"
             style={{ color: 'var(--paper-200)', textDecoration: 'none' }}

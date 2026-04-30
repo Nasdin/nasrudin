@@ -1,0 +1,11 @@
+# GitHub Sponsors / fiscal channels for Nasrudin.
+# Apply for GitHub Sponsors at https://github.com/sponsors and replace
+# the placeholder below. Until then, the `custom:` line below points at
+# our self-hosted Stripe-based sponsor flow, which works today.
+
+# github: nasdin                  # uncomment after GitHub Sponsors approval
+# ko_fi: nasdin                   # alternative one-click tip platform
+# open_collective: nasrudin       # alternative if we set up an OpenCollective
+
+custom:
+  - "https://nasrudin.org/sponsor"

@@ -207,6 +207,14 @@ Nasrudin is designed so anyone can contribute. When you run a worker:
 
 All theorem generation and verification happens on your hardware. The server only receives pre-verified results and confirms them.
 
+## Support
+
+The corpus is open by principle and built by volunteer worker compute. What it costs us to run — central Lean4 re-verification, the embedding index, hosting, ingest, the engineering time that keeps all of it improving — is funded by sponsorships.
+
+If Nasrudin is useful to you, sponsor it: **https://nasrudin.org/sponsor** (Stripe-hosted, $5/mo and up; one-time gifts also welcome).
+
+Sponsorship is a donation, not a subscription tier — it doesn't grant Researcher quota. If you need targeted GA compute pointed at your own conjecture, see [Pricing](https://nasrudin.org/pricing).
+
 ## License
 
 MIT

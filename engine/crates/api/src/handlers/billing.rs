@@ -54,8 +54,14 @@ pub async fn checkout(
     let price_id = match body.price_key.as_str() {
         "researcher_monthly" => billing.cfg.price_researcher_monthly.clone(),
         "researcher_annual" => billing.cfg.price_researcher_annual.clone(),
+        "sponsor_5" => billing.cfg.price_sponsor_5.clone(),
+        "sponsor_25" => billing.cfg.price_sponsor_25.clone(),
+        "sponsor_100" => billing.cfg.price_sponsor_100.clone(),
         _ => return err(StatusCode::BAD_REQUEST, "unknown_price_key"),
     };
+    if price_id.is_empty() {
+        return err(StatusCode::SERVICE_UNAVAILABLE, "price_not_configured");
+    }
 
     let user = &auth.user;
 

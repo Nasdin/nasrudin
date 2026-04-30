@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkersRouteImport } from './routes/workers'
+import { Route as SponsorRouteImport } from './routes/sponsor'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SearchRouteImport } from './routes/search'
@@ -30,6 +31,11 @@ import { Route as ConjectureIdRouteImport } from './routes/conjecture.$id'
 const WorkersRoute = WorkersRouteImport.update({
   id: '/workers',
   path: '/workers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SponsorRoute = SponsorRouteImport.update({
+  id: '/sponsor',
+  path: '/sponsor',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SigninRoute = SigninRouteImport.update({
@@ -127,6 +133,7 @@ export interface FileRoutesByFullPath {
   '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
+  '/sponsor': typeof SponsorRoute
   '/workers': typeof WorkersRoute
   '/conjecture/$id': typeof ConjectureIdRoute
   '/search/concept': typeof SearchConceptRoute
@@ -146,6 +153,7 @@ export interface FileRoutesByTo {
   '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
+  '/sponsor': typeof SponsorRoute
   '/workers': typeof WorkersRoute
   '/conjecture/$id': typeof ConjectureIdRoute
   '/search/concept': typeof SearchConceptRoute
@@ -166,6 +174,7 @@ export interface FileRoutesById {
   '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
+  '/sponsor': typeof SponsorRoute
   '/workers': typeof WorkersRoute
   '/conjecture/$id': typeof ConjectureIdRoute
   '/search/concept': typeof SearchConceptRoute
@@ -187,6 +196,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/settings'
     | '/signin'
+    | '/sponsor'
     | '/workers'
     | '/conjecture/$id'
     | '/search/concept'
@@ -206,6 +216,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/settings'
     | '/signin'
+    | '/sponsor'
     | '/workers'
     | '/conjecture/$id'
     | '/search/concept'
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/settings'
     | '/signin'
+    | '/sponsor'
     | '/workers'
     | '/conjecture/$id'
     | '/search/concept'
@@ -245,6 +257,7 @@ export interface RootRouteChildren {
   SearchRoute: typeof SearchRouteWithChildren
   SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
+  SponsorRoute: typeof SponsorRoute
   WorkersRoute: typeof WorkersRoute
   TheoremIdRoute: typeof TheoremIdRoute
 }
@@ -256,6 +269,13 @@ declare module '@tanstack/react-router' {
       path: '/workers'
       fullPath: '/workers'
       preLoaderRoute: typeof WorkersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sponsor': {
+      id: '/sponsor'
+      path: '/sponsor'
+      fullPath: '/sponsor'
+      preLoaderRoute: typeof SponsorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signin': {
@@ -410,6 +430,7 @@ const rootRouteChildren: RootRouteChildren = {
   SearchRoute: SearchRouteWithChildren,
   SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,
+  SponsorRoute: SponsorRoute,
   WorkersRoute: WorkersRoute,
   TheoremIdRoute: TheoremIdRoute,
 }
