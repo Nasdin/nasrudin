@@ -571,6 +571,22 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Sponsorship backfill. Opt-in via BACKFILL_SPONSORSHIPS=1; when
+    // set, paginates Stripe `customers.list`, joins on
+    // `users.stripe_customer_id`, and upserts every active
+    // subscription + recent (<=90d) one-time charge into
+    // `user_sponsorships`. Only useful for cold-starting a fresh
+    // environment that already has live customers — once webhooks are
+    // delivering, the live path keeps the table current.
+    if let (Some(pg), Some(billing)) = (state.pg.clone(), state.billing.clone()) {
+        physics_api::billing::sponsorship_backfill::spawn_if_enabled(
+            pg,
+            billing,
+            state.stripe_secret.clone(),
+            state.stripe_base_url.clone(),
+        );
+    }
+
     // RocksDB-primary ingest write-behind: spawn the PG drain loop iff
     // Postgres is wired. The hot ingest path persists to RocksDB +
     // pg_insert_queue synchronously; this task drains the queue every
@@ -1011,6 +1027,16 @@ async fn main() -> anyhow::Result<()> {
     // Public workers list — readable without auth (returns [] if PG unavailable).
     let workers_public = Router::new()
         .route("/api/workers", get(handlers::workers::list))
+        // Public profile + sponsorship summary. No auth — these are
+        // intentionally world-readable so contributors can link to
+        // their profile pages from anywhere. Sensitive fields
+        // (email, plan_tier, stripe ids) are filtered in the
+        // handler.
+        .route("/api/users/{id}", get(handlers::users::public_profile))
+        .route(
+            "/api/users/{id}/sponsorship",
+            get(handlers::users::public_sponsorship),
+        )
         .layer(GovernorLayer::new(rate_limit::api_standard()));
 
     // Start with core routes

@@ -23,4 +23,5 @@ pub mod seed;
 pub mod stats;
 pub mod steering;
 pub mod theorems;
+pub mod users;
 pub mod workers;

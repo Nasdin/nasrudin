@@ -13,7 +13,10 @@ interface Tier {
   name: string;
   amount: string;
   description: string;
-  priceKey: 'sponsor_5' | 'sponsor_25' | 'sponsor_100';
+  priceKey: 'sponsor_5' | 'sponsor_25' | 'sponsor_100' | 'sponsor_open';
+  /// Recurring subscription tile copy. The pay-what-you-want tile uses
+  /// "Donate" because it's a one-time charge with no renewal.
+  cta: 'monthly' | 'one_time';
 }
 
 const TIERS: Tier[] = [
@@ -23,6 +26,7 @@ const TIERS: Tier[] = [
     description:
       'Buys ~one hour of Lean4 verification time. Keeps the lights on and the workers fed.',
     priceKey: 'sponsor_5',
+    cta: 'monthly',
   },
   {
     name: 'Pizza',
@@ -30,6 +34,7 @@ const TIERS: Tier[] = [
     description:
       'Underwrites a slice of the central re-verification cluster. The corpus stays open because of you.',
     priceKey: 'sponsor_25',
+    cta: 'monthly',
   },
   {
     name: 'Cluster Hour',
@@ -37,6 +42,15 @@ const TIERS: Tier[] = [
     description:
       'Sponsors meaningful targeted-search compute and lets us point cycles at open conjectures with no paying buyer attached.',
     priceKey: 'sponsor_100',
+    cta: 'monthly',
+  },
+  {
+    name: 'Open',
+    amount: 'Custom amount',
+    description:
+      'Pay what you can. One-time donation, any amount you choose. Helpful when you want to chip in without committing to a recurring subscription.',
+    priceKey: 'sponsor_open',
+    cta: 'one_time',
   },
 ];
 
@@ -145,7 +159,7 @@ function SponsorPage() {
                 className="btn btn-primary"
                 onClick={() => startSponsor(t.priceKey)}
               >
-                Sponsor monthly
+                {t.cta === 'monthly' ? 'Sponsor monthly' : 'Donate'}
               </button>
             </div>
           ))}

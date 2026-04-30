@@ -9,10 +9,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use stripe::{
-    BillingPortalSession, CheckoutSession, CheckoutSessionMode, Client, CreateBillingPortalSession,
-    CreateCheckoutSession, CreateCheckoutSessionAutomaticTax, CreateCheckoutSessionLineItems,
-    CreateCheckoutSessionSubscriptionData, CreateCustomer, Customer, CustomerId, Expandable,
-    Subscription,
+    BillingPortalSession, CheckoutSession, CheckoutSessionMode, CheckoutSessionSubmitType, Client,
+    CreateBillingPortalSession, CreateCheckoutSession, CreateCheckoutSessionAutomaticTax,
+    CreateCheckoutSessionLineItems, CreateCheckoutSessionSubscriptionData, CreateCustomer,
+    Customer, CustomerId, Expandable, Subscription,
 };
 
 #[derive(Clone)]
@@ -24,6 +24,11 @@ pub struct BillingConfig {
     pub price_sponsor_5: String,
     pub price_sponsor_25: String,
     pub price_sponsor_100: String,
+    /// Pay-what-you-want one-time sponsor price (customer-adjustable
+    /// amount). Wired into a `mode=payment` Checkout Session with
+    /// `submit_type=donate`; webhook maps the resulting charge to a
+    /// `kind='one_time'` row in `user_sponsorships`.
+    pub price_sponsor_open: String,
     /// Stripe Payment Link URL for one-time, name-your-amount donations.
     /// Frontend links straight to it; no checkout endpoint involved.
     pub sponsor_payment_link: String,
@@ -59,6 +64,7 @@ impl BillingClient {
             price_sponsor_5: std::env::var("STRIPE_PRICE_SPONSOR_5").unwrap_or_default(),
             price_sponsor_25: std::env::var("STRIPE_PRICE_SPONSOR_25").unwrap_or_default(),
             price_sponsor_100: std::env::var("STRIPE_PRICE_SPONSOR_100").unwrap_or_default(),
+            price_sponsor_open: std::env::var("STRIPE_PRICE_SPONSOR_OPEN").unwrap_or_default(),
             sponsor_payment_link: std::env::var("STRIPE_SPONSOR_PAYMENT_LINK")
                 .unwrap_or_default(),
             checkout_success_url: std::env::var("STRIPE_CHECKOUT_SUCCESS_URL")?,
@@ -120,6 +126,47 @@ impl BillingClient {
             enabled: true,
             ..Default::default()
         });
+        let session = CheckoutSession::create(&self.stripe, params).await?;
+        session
+            .url
+            .ok_or(StripeError::MissingField("checkout_session.url"))
+    }
+
+    /// Create a Checkout Session for a one-time, customer-adjustable
+    /// donation. Returns the hosted URL. Stripe renders an amount
+    /// input on the page because the price has `unit_amount=null`;
+    /// `submit_type=donate` reframes the CTA from "Pay" to "Donate".
+    ///
+    /// We intentionally do NOT enable `automatic_tax` here — donations
+    /// are gifts, not taxable supplies. The recipient is the
+    /// not-for-profit operator; the donor's local jurisdiction
+    /// determines deductibility, which we don't claim.
+    pub async fn create_donation_session(
+        &self,
+        customer_id: &str,
+        price_id: &str,
+        user_id: uuid::Uuid,
+    ) -> Result<String, StripeError> {
+        let cust = CustomerId::from_str(customer_id)
+            .map_err(|_| StripeError::BadCustomerId(customer_id.to_string()))?;
+        let mut params = CreateCheckoutSession::new();
+        params.mode = Some(CheckoutSessionMode::Payment);
+        params.submit_type = Some(CheckoutSessionSubmitType::Donate);
+        params.customer = Some(cust);
+        params.success_url = Some(self.cfg.checkout_success_url.as_str());
+        params.cancel_url = Some(self.cfg.checkout_cancel_url.as_str());
+        params.line_items = Some(vec![CreateCheckoutSessionLineItems {
+            price: Some(price_id.to_string()),
+            quantity: Some(1),
+            ..Default::default()
+        }]);
+        // Tag the session with the user_id so the
+        // `checkout.session.completed` webhook can resolve a row in
+        // `user_sponsorships` without a roundtrip through `customers`.
+        let mut metadata = HashMap::new();
+        metadata.insert("user_id".to_string(), user_id.to_string());
+        metadata.insert("kind".to_string(), "sponsor_open".to_string());
+        params.metadata = Some(metadata);
         let session = CheckoutSession::create(&self.stripe, params).await?;
         session
             .url

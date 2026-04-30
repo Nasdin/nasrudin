@@ -51,12 +51,17 @@ pub async fn checkout(
         None => return err(StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable"),
     };
 
-    let price_id = match body.price_key.as_str() {
-        "researcher_monthly" => billing.cfg.price_researcher_monthly.clone(),
-        "researcher_annual" => billing.cfg.price_researcher_annual.clone(),
-        "sponsor_5" => billing.cfg.price_sponsor_5.clone(),
-        "sponsor_25" => billing.cfg.price_sponsor_25.clone(),
-        "sponsor_100" => billing.cfg.price_sponsor_100.clone(),
+    // `sponsor_open` is a one-time, customer-adjustable donation
+    // (`mode=payment` + `submit_type=donate`). Every other key is a
+    // recurring subscription. We branch the Stripe call on this
+    // distinction; the price id resolution stays unified.
+    let (price_id, is_donation) = match body.price_key.as_str() {
+        "researcher_monthly" => (billing.cfg.price_researcher_monthly.clone(), false),
+        "researcher_annual" => (billing.cfg.price_researcher_annual.clone(), false),
+        "sponsor_5" => (billing.cfg.price_sponsor_5.clone(), false),
+        "sponsor_25" => (billing.cfg.price_sponsor_25.clone(), false),
+        "sponsor_100" => (billing.cfg.price_sponsor_100.clone(), false),
+        "sponsor_open" => (billing.cfg.price_sponsor_open.clone(), true),
         _ => return err(StatusCode::BAD_REQUEST, "unknown_price_key"),
     };
     if price_id.is_empty() {
@@ -86,10 +91,17 @@ pub async fn checkout(
         }
     };
 
-    match billing
-        .create_checkout_session(&customer_id, &price_id, user.id)
-        .await
-    {
+    let session_result = if is_donation {
+        billing
+            .create_donation_session(&customer_id, &price_id, user.id)
+            .await
+    } else {
+        billing
+            .create_checkout_session(&customer_id, &price_id, user.id)
+            .await
+    };
+
+    match session_result {
         Ok(url) => Json(CheckoutResponse { url }).into_response(),
         Err(e) => {
             tracing::warn!("stripe checkout create failed: {e}");

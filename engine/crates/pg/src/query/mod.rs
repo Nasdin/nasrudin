@@ -25,5 +25,6 @@ pub mod targeted_search_usage;
 pub mod theorems;
 pub mod user_llm_keys;
 pub mod user_preferences;
+pub mod user_sponsorships;
 pub mod users;
 pub mod workers;

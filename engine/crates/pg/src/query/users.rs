@@ -77,6 +77,19 @@ pub async fn find_by_email(
         .await
 }
 
+/// Find a user by their Stripe customer id. Used by the sponsorship
+/// webhook to resolve `event.customer` → `users.id` before recording
+/// in `user_sponsorships`.
+pub async fn find_by_stripe_customer_id<C: ConnectionTrait>(
+    db: &C,
+    stripe_customer_id: &str,
+) -> Result<Option<users::Model>, DbErr> {
+    users::Entity::find()
+        .filter(users::Column::StripeCustomerId.eq(stripe_customer_id))
+        .one(db)
+        .await
+}
+
 /// Update a user's display name.
 pub async fn update_display_name(
     db: &DatabaseConnection,

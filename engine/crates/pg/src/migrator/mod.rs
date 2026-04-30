@@ -42,6 +42,7 @@ mod m20260430_000024_cluster_directive_linucb;
 mod m20260430_000025_cluster_compute_linucb;
 mod m20260430_000028_theorems_trust_state;
 mod m20260430_000029_drop_email_outbox;
+mod m20260430_000030_user_sponsorships;
 
 pub struct Migrator;
 
@@ -91,6 +92,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260430_000025_cluster_compute_linucb::Migration),
             Box::new(m20260430_000028_theorems_trust_state::Migration),
             Box::new(m20260430_000029_drop_email_outbox::Migration),
+            Box::new(m20260430_000030_user_sponsorships::Migration),
         ]
     }
 }

@@ -12,6 +12,9 @@ import {
   useMeStats,
   useMyWorkers,
   useSavedSearches,
+  useUserSponsorship,
+  type PublicSponsorshipSummary,
+  type SponsorTier,
 } from '~/lib/queries';
 
 export const Route = createFileRoute('/profile')({ component: ProfilePage });
@@ -61,6 +64,98 @@ function BillingCard() {
   );
 }
 
+/// Sponsorship-tier → metal mapping for the public-profile badge.
+/// Gold for the top-tier monthly subscriptions (researcher_annual /
+/// sponsor_100), silver for mid-tier (researcher_monthly /
+/// sponsor_25), bronze for entry-tier (sponsor_5), generic olive for
+/// the pay-what-you-want (sponsor_open) and unknown tiers.
+function tierStyle(tier: SponsorTier | string | null): {
+  label: string;
+  bg: string;
+  fg: string;
+} {
+  switch (tier) {
+    case 'sponsor_100':
+    case 'researcher_annual':
+      return { label: 'Gold sponsor', bg: '#fef3c7', fg: '#78350f' };
+    case 'sponsor_25':
+    case 'researcher_monthly':
+      return { label: 'Silver sponsor', bg: '#e5e7eb', fg: '#374151' };
+    case 'sponsor_5':
+      return { label: 'Bronze sponsor', bg: '#fed7aa', fg: '#7c2d12' };
+    case 'sponsor_open':
+      return { label: 'Sponsor', bg: 'var(--olive-100)', fg: 'var(--olive-700)' };
+    default:
+      return { label: 'Sponsor', bg: 'var(--olive-100)', fg: 'var(--olive-700)' };
+  }
+}
+
+function fmtUsd(cents: number): string {
+  const dollars = cents / 100;
+  if (dollars >= 100) return `$${Math.round(dollars).toLocaleString()}`;
+  return `$${dollars.toFixed(2)}`;
+}
+
+function SponsorshipBadge({ summary }: { summary: PublicSponsorshipSummary }) {
+  const hasSub = !!summary.active_tier;
+  const hasDonations = summary.lifetime_total_cents > 0;
+  if (!hasSub && !hasDonations) return null;
+
+  const style = hasSub ? tierStyle(summary.active_tier) : null;
+  const since = summary.first_supported_at
+    ? new Date(summary.first_supported_at).toLocaleDateString(undefined, {
+        month: 'short',
+        year: 'numeric',
+      })
+    : null;
+
+  return (
+    <section
+      style={{
+        margin: '24px 0',
+        padding: 20,
+        border: '1px solid var(--paper-200)',
+        borderRadius: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}
+    >
+      <h3 className="section-h" style={{ marginTop: 0 }}>
+        Support
+      </h3>
+      {style && (
+        <div
+          aria-label={style.label}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '6px 12px',
+            borderRadius: 999,
+            background: style.bg,
+            color: style.fg,
+            fontSize: 13,
+            fontWeight: 600,
+            letterSpacing: 0.3,
+            alignSelf: 'flex-start',
+          }}
+        >
+          ★ {style.label}
+        </div>
+      )}
+      {hasDonations && (
+        <p style={{ color: 'var(--ink-500)', fontSize: 14, margin: 0 }}>
+          Supported with {fmtUsd(summary.lifetime_total_cents)} total over{' '}
+          {summary.donation_count}{' '}
+          {summary.donation_count === 1 ? 'donation' : 'donations'}
+          {since ? ` since ${since}` : ''}.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function ProfilePage() {
   const { data: me, isPending } = useMe();
   const { data: stats } = useMeStats();
@@ -68,6 +163,7 @@ function ProfilePage() {
   const { data: saved } = useSavedSearches();
   const { data: profile } = useMeProfile();
   const { data: myWorkers } = useMyWorkers();
+  const { data: sponsorship } = useUserSponsorship(me?.id ?? null);
   const logout = useLogout();
 
   if (isPending)
@@ -156,6 +252,7 @@ function ProfilePage() {
         </div>
 
         <BillingCard />
+        {sponsorship && <SponsorshipBadge summary={sponsorship} />}
 
         <div className="profile-grid">
           <div>

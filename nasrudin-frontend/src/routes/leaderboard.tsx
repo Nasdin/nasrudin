@@ -1,9 +1,56 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
-import { useWorkers } from '~/lib/queries';
+import { useUserSponsorship, useWorkers, type SponsorTier } from '~/lib/queries';
 
 export const Route = createFileRoute('/leaderboard')({ component: LeaderboardPage });
+
+/// Small colored dot rendered next to a contributor handle when the
+/// linked user has an active sponsorship. Subtle by design — no
+/// accompanying text, just a 6px circle with a tooltip.
+function dotColor(tier: SponsorTier | string | null): string {
+  switch (tier) {
+    case 'sponsor_100':
+    case 'researcher_annual':
+      return '#d4a017'; // gold
+    case 'sponsor_25':
+    case 'researcher_monthly':
+      return '#9ca3af'; // silver
+    case 'sponsor_5':
+      return '#a16207'; // bronze
+    case 'sponsor_open':
+      return 'var(--olive-700)';
+    default:
+      return 'var(--olive-700)';
+  }
+}
+
+function SponsorDot({ userId }: { userId: string | null | undefined }) {
+  const { data } = useUserSponsorship(userId ?? null);
+  if (!data) return null;
+  const hasSubscription = !!data.active_tier;
+  const hasDonated = data.lifetime_total_cents > 0;
+  if (!hasSubscription && !hasDonated) return null;
+  const colour = dotColor(data.active_tier);
+  const title = hasSubscription
+    ? `Active sponsor (${String(data.active_tier ?? 'sponsor').replace('_', ' ')})`
+    : `Donated $${(data.lifetime_total_cents / 100).toFixed(0)} total`;
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      style={{
+        display: 'inline-block',
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        background: colour,
+        marginLeft: 6,
+        verticalAlign: 'middle',
+      }}
+    />
+  );
+}
 
 function LeaderboardPage() {
   const { data } = useWorkers();
@@ -72,7 +119,10 @@ function LeaderboardPage() {
               {ranked.map((w, i) => (
                 <tr key={w.id}>
                   <td className="rank-cell">{i + 1}</td>
-                  <td className="handle-cell">{w.id}</td>
+                  <td className="handle-cell">
+                    {w.id}
+                    <SponsorDot userId={w.owner?.user_id} />
+                  </td>
                   <td
                     style={{
                       color: 'var(--ink-500)',

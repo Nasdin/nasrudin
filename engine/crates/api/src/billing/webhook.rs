@@ -11,6 +11,32 @@ use stripe::{Event, EventObject, EventType, Webhook, WebhookError};
 use crate::billing::stripe_client::{customer_id_from_expandable, first_price_id, BillingConfig};
 use crate::billing::tier::PlanTier;
 
+/// Translate a Stripe price id into our internal sponsorship tier
+/// label. Returns `None` for prices we don't recognise (e.g. legacy
+/// or test prices) — those still produce a sponsorship row, but with
+/// `tier=NULL` so the public-profile renderer falls back to the
+/// generic badge.
+pub fn sponsorship_tier_for_price(price_id: &str, cfg: &BillingConfig) -> Option<&'static str> {
+    if price_id.is_empty() {
+        return None;
+    }
+    if price_id == cfg.price_researcher_monthly {
+        Some("researcher_monthly")
+    } else if price_id == cfg.price_researcher_annual {
+        Some("researcher_annual")
+    } else if price_id == cfg.price_sponsor_5 {
+        Some("sponsor_5")
+    } else if price_id == cfg.price_sponsor_25 {
+        Some("sponsor_25")
+    } else if price_id == cfg.price_sponsor_100 {
+        Some("sponsor_100")
+    } else if price_id == cfg.price_sponsor_open {
+        Some("sponsor_open")
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DispatchError {
     #[error("no customer on event")]
@@ -68,6 +94,14 @@ pub async fn dispatch(
             if cancelled {
                 nasrudin_pg::query::billing::apply_subscription_cancelled(pg, &customer_id)
                     .await?;
+                // Mirror to the public-profile ledger.
+                let now = chrono::Utc::now();
+                let _ = nasrudin_pg::query::user_sponsorships::mark_canceled(
+                    pg,
+                    sub.id.as_str(),
+                    now,
+                )
+                .await;
                 return Ok(());
             }
             let price_id = first_price_id(sub).unwrap_or_default();
@@ -121,12 +155,141 @@ pub async fn dispatch(
                 period_end,
             )
             .await?;
+
+            // Public-profile sponsorship ledger. Resolve customer →
+            // user; a missing user is logged but not treated as a
+            // dispatch error (apply_subscription_active is the
+            // source of truth for entitlement; the ledger is
+            // best-effort decoration for the profile badge).
+            if let Ok(Some(user)) =
+                nasrudin_pg::query::users::find_by_stripe_customer_id(pg, &customer_id)
+                    .await
+            {
+                let amount_cents = sub
+                    .items
+                    .data
+                    .first()
+                    .and_then(|item| item.price.as_ref())
+                    .and_then(|p| p.unit_amount);
+                let sponsor_tier = sponsorship_tier_for_price(&price_id, cfg);
+                let started_at = chrono::DateTime::<chrono::Utc>::from_timestamp(sub.start_date, 0)
+                    .unwrap_or(cycle_start);
+                if let Err(e) = nasrudin_pg::query::user_sponsorships::upsert_subscription(
+                    pg,
+                    user.id,
+                    sub.id.as_str(),
+                    sponsor_tier,
+                    amount_cents,
+                    "active",
+                    started_at,
+                    Some(event.id.as_str()),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        customer = %customer_id,
+                        error = %e,
+                        "user_sponsorships upsert (subscription) failed",
+                    );
+                }
+            }
+
             Ok(())
         }
         (EventType::CustomerSubscriptionDeleted, EventObject::Subscription(sub)) => {
             let customer_id = customer_id_from_expandable(&sub.customer)
                 .ok_or(DispatchError::NoCustomer)?;
             nasrudin_pg::query::billing::apply_subscription_cancelled(pg, &customer_id).await?;
+            let canceled_at = sub
+                .canceled_at
+                .and_then(|ts| chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0))
+                .unwrap_or_else(chrono::Utc::now);
+            if let Err(e) = nasrudin_pg::query::user_sponsorships::mark_canceled(
+                pg,
+                sub.id.as_str(),
+                canceled_at,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "user_sponsorships mark_canceled failed");
+            }
+            Ok(())
+        }
+        (EventType::CheckoutSessionCompleted, EventObject::CheckoutSession(session)) => {
+            // Pay-what-you-want one-time donation. Subscriptions
+            // also fire `checkout.session.completed`, but
+            // `subscription.created` already covers them — we filter
+            // here on `mode == Payment` to avoid double-recording.
+            if session.mode != stripe::CheckoutSessionMode::Payment {
+                return Ok(());
+            }
+            // Idempotency belt-and-braces: the partial unique index
+            // on stripe_event_id catches replays at the DB layer,
+            // but checking here lets us short-circuit cheaply.
+            if nasrudin_pg::query::user_sponsorships::event_already_processed(
+                pg,
+                event.id.as_str(),
+            )
+            .await
+            .unwrap_or(false)
+            {
+                return Ok(());
+            }
+            let customer_id = match session.customer.as_ref() {
+                Some(c) => customer_id_from_expandable(c).ok_or(DispatchError::NoCustomer)?,
+                None => return Ok(()), // anonymous donations skipped
+            };
+            let user = match nasrudin_pg::query::users::find_by_stripe_customer_id(
+                pg,
+                &customer_id,
+            )
+            .await?
+            {
+                Some(u) => u,
+                None => return Ok(()), // donation by a customer with no user account; nothing to attribute
+            };
+            // Use the PaymentIntent id as the unique charge key. The
+            // CheckoutSession itself isn't unique per payment for
+            // long-lived sessions, but every successful payment
+            // exposes a fresh PaymentIntent id, so we get
+            // idempotent insert via the UNIQUE(stripe_charge_id)
+            // constraint regardless of webhook replays.
+            let charge_key = session
+                .payment_intent
+                .as_ref()
+                .map(|pi| match pi {
+                    stripe::Expandable::Id(id) => id.to_string(),
+                    stripe::Expandable::Object(obj) => obj.id.to_string(),
+                })
+                .unwrap_or_else(|| session.id.to_string());
+            let amount = session.amount_total.unwrap_or(0);
+            let started_at = chrono::DateTime::<chrono::Utc>::from_timestamp(session.created, 0)
+                .unwrap_or_else(chrono::Utc::now);
+            // For the open-amount donate flow we tag the price as
+            // `sponsor_open`; any other one-time charge falls back
+                // to NULL.
+            let tier = session
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("kind"))
+                .map(|s| s.as_str());
+            if let Err(e) = nasrudin_pg::query::user_sponsorships::upsert_one_time(
+                pg,
+                user.id,
+                &charge_key,
+                tier,
+                amount,
+                started_at,
+                Some(event.id.as_str()),
+            )
+            .await
+            {
+                tracing::warn!(
+                    customer = %customer_id,
+                    error = %e,
+                    "user_sponsorships upsert (one_time) failed",
+                );
+            }
             Ok(())
         }
         // invoice.paid / invoice.payment_failed are no-ops at Phase 1 —
@@ -147,6 +310,7 @@ mod tests {
             price_sponsor_5: String::new(),
             price_sponsor_25: String::new(),
             price_sponsor_100: String::new(),
+            price_sponsor_open: String::new(),
             sponsor_payment_link: String::new(),
             checkout_success_url: "x".into(),
             checkout_cancel_url: "x".into(),

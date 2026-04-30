@@ -4,6 +4,7 @@
 pub mod api_quota_layer;
 pub mod refund;
 pub mod refund_reconciler;
+pub mod sponsorship_backfill;
 pub mod stripe_client;
 pub mod tier;
 pub mod webhook;

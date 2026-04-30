@@ -24,5 +24,6 @@ pub mod theorems;
 pub mod user_llm_keys;
 pub mod user_preferences;
 pub mod user_saved_theorems;
+pub mod user_sponsorships;
 pub mod users;
 pub mod workers;

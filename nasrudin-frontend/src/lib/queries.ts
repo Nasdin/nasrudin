@@ -718,3 +718,39 @@ export function useBillingMe() {
     staleTime: 30_000,
   });
 }
+
+// --- public sponsorship ---
+
+/**
+ * Public-profile sponsorship summary. Active subscription tier is
+ * the latest `kind='subscription' AND status='active'` row;
+ * lifetime totals roll up every donation + (current OR ended)
+ * subscription's per-interval price. Stripe-side ids are NOT
+ * exposed here — only the aggregate badge fields.
+ */
+export type SponsorTier =
+  | 'sponsor_5'
+  | 'sponsor_25'
+  | 'sponsor_100'
+  | 'sponsor_open'
+  | 'researcher_monthly'
+  | 'researcher_annual';
+
+export interface PublicSponsorshipSummary {
+  active_tier: SponsorTier | string | null;
+  active_amount_cents: number | null;
+  lifetime_total_cents: number;
+  donation_count: number;
+  first_supported_at: string | null;
+  latest_supported_at: string | null;
+}
+
+export function useUserSponsorship(userId: string | null | undefined) {
+  return useQuery<PublicSponsorshipSummary>({
+    queryKey: ['users', userId, 'sponsorship'],
+    queryFn: () =>
+      apiFetch<PublicSponsorshipSummary>(`/api/users/${userId}/sponsorship`),
+    enabled: !!userId,
+    staleTime: 60_000,
+  });
+}
