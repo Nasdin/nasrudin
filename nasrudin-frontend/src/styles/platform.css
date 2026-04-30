@@ -1518,6 +1518,25 @@
   .saved-date { display: none; }
   .activity-feed li { grid-template-columns: 1fr; gap: 4px; }
   .targeted-search-card { grid-template-columns: 1fr; padding: 20px; gap: 16px; }
+
+  .pricing-hero { padding: 40px 0 20px; }
+  .pricing-hero h1 { font-size: clamp(32px, 9vw, 44px); }
+  .pricing-hero .lede { font-size: 16px; }
+  .tier-grid { grid-template-columns: 1fr; gap: 16px; margin: 32px 0 24px; }
+  .tier { padding: 24px 20px; }
+  .tier-name { font-size: 20px; }
+  .tier-price-num { font-size: 40px; }
+  .targeted-band {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 28px 20px;
+    margin: 40px 0;
+  }
+  .targeted-band h2 { font-size: 26px; }
+  .targeted-band p { font-size: 15px; }
+  .donate-quote { font-size: 24px; }
+  .faq-grid { grid-template-columns: 1fr; gap: 24px; }
+  .donate-band { padding: 40px 0; }
 }
 
 @media (max-width: 480px) {
@@ -1549,4 +1568,10 @@
   .stat-cell { padding: 14px; }
   .stat-cell .num { font-size: 24px; }
   .stat-cell .label { font-size: 10px; }
+
+  .pricing-hero h1 { font-size: clamp(26px, 9vw, 36px); }
+  .tier { padding: 20px 16px; }
+  .tier-features li { font-size: 13px; }
+  .targeted-band h2 { font-size: 22px; }
+  .donate-quote { font-size: 20px; }
 }
