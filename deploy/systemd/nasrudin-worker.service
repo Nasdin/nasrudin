@@ -1,0 +1,30 @@
+[Unit]
+Description=Nasrudin Discovery Worker (co-located with API)
+After=network-online.target nasrudin-api.service
+Wants=network-online.target nasrudin-api.service
+
+[Service]
+Type=simple
+User=nasrudin
+Group=nasrudin
+WorkingDirectory=/opt/nasrudin
+EnvironmentFile=/opt/nasrudin/.env
+Environment=NASRUDIN_API_URL=http://127.0.0.1:3001
+Environment=NASRUDIN_WORKER_ID=nasrudin-prod-droplet
+Environment=PROVER_ROOT=/opt/nasrudin/prover
+Environment=LAKE_WORKSPACE_ROOT=/var/lib/nasrudin/lake-cache
+Environment=ROCKS_DB_PATH=/var/lib/nasrudin/rocks-worker
+Environment=ELAN_HOME=/opt/nasrudin/elan
+Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
+# RUST_LOG=info gives us a sensible default journal stream; tune via .env if
+# the worker gets too chatty.
+Environment=RUST_LOG=info
+ExecStart=/opt/nasrudin/bin/worker --verify /opt/nasrudin/prover --domain sr
+Restart=on-failure
+RestartSec=30
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
