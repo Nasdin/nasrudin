@@ -7,8 +7,6 @@ pub struct Model {
     pub id: Uuid,
     #[sea_orm(unique)]
     pub email: String,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub password_hash: Option<String>,
     pub display_name: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub plan_tier: String,
@@ -20,8 +18,11 @@ pub struct Model {
     /// when a paid `conjecture_jobs` row is created and refunded on
     /// cancel-before-progress or zero-result `budget_exhausted`.
     pub research_credits: i32,
-    pub github_id: Option<i64>,
-    pub github_login: Option<String>,
+    /// Firebase UID — the source-of-truth identity link. Stable across
+    /// provider linking (e.g. user adds Google to an email/password
+    /// account → same UID).
+    #[sea_orm(unique)]
+    pub firebase_uid: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
