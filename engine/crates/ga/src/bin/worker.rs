@@ -1773,16 +1773,19 @@ async fn post_cluster_report(
     Ok(())
 }
 
-/// Look up the 5 arms for a (island, action, strength_bucket) slot
+/// Look up the arms for a (island, action, strength_bucket) slot
 /// from a seed payload's compact `directive_arms` snapshot. Returns
 /// an empty Vec if the slot isn't present (cold boot before the
-/// steerer cycle has run).
+/// steerer cycle has run). Each arm tuple is
+/// `(choice, pulls, total_reward_sum, linucb_score?)`. The LinUCB
+/// score is the server-computed contextual score; `None` until
+/// the LinUCB row reaches its warmup pull count.
 fn directive_arms_for_slot(
     seed_value: &serde_json::Value,
     island_domain: &str,
     action: &str,
     strength_bucket: u8,
-) -> Vec<(u8, i64, f64)> {
+) -> Vec<(u8, i64, f64, Option<f64>)> {
     let Some(snapshot) = seed_value
         .get("directive_arms")
         .and_then(|v| v.get("snapshot"))
@@ -1808,7 +1811,8 @@ fn directive_arms_for_slot(
                     let pulls = a.get("pulls").and_then(|v| v.as_i64())?;
                     let mean = a.get("mean_reward").and_then(|v| v.as_f64())?;
                     let total = mean * pulls as f64;
-                    Some((choice, pulls, total))
+                    let linucb = a.get("linucb_score").and_then(|v| v.as_f64());
+                    Some((choice, pulls, total, linucb))
                 })
                 .collect();
         }
@@ -1817,25 +1821,44 @@ fn directive_arms_for_slot(
 }
 
 /// Pick a multiplier_choice for one (island, action, strength_bucket)
-/// slot. Cold-start: until the slot has ≥15 cumulative pulls across
-/// its 5 arms, fall back to the static linear strength→choice map so
-/// the bandit's first few cycles match the static-formula baseline.
-fn pick_multiplier_choice(arms: &[(u8, i64, f64)], strength: f32) -> u8 {
+/// slot. Three regimes blended by total pull count:
+///
+/// 1. **Cold start** (total < 15): fall back to the static linear
+///    strength → choice map. The bandit hasn't seen enough data to
+///    pick anything meaningful.
+/// 2. **Per-arm UCB1** (15 ≤ total < 100): classic UCB1 over the
+///    discrete arm rewards.
+/// 3. **Blended UCB1 + LinUCB** (total ≥ 100): when LinUCB has
+///    enough pulls, blend its contextual score with UCB1's
+///    per-arm score. Weight ramps linearly to 100% LinUCB at
+///    total=200, so the contextual layer takes over once it has
+///    reliable predictions.
+fn pick_multiplier_choice(arms: &[(u8, i64, f64, Option<f64>)], strength: f32) -> u8 {
     const COLD_START: i64 = 15;
-    let total: i64 = arms.iter().map(|(_, p, _)| *p).sum();
+    const LINUCB_FULL_WEIGHT_AT: f64 = 200.0;
+    let total: i64 = arms.iter().map(|(_, p, _, _)| *p).sum();
     if arms.is_empty() || total < COLD_START {
         return (strength.clamp(0.0, 1.0) * 5.0).floor().min(4.0) as u8;
     }
-    if let Some((c, _, _)) = arms.iter().find(|(_, p, _)| *p == 0) {
+    if let Some((c, _, _, _)) = arms.iter().find(|(_, p, _, _)| *p == 0) {
         return *c;
     }
     let ln_n = (total as f64).ln();
+    // Blend weight: 0.0 below LINUCB_FULL_WEIGHT_AT*0.5, ramps to
+    // 1.0 at LINUCB_FULL_WEIGHT_AT. Keeps UCB1 dominant while
+    // LinUCB warms up; flips to contextual once it's reliable.
+    let blend = ((total as f64 - 50.0) / (LINUCB_FULL_WEIGHT_AT - 50.0))
+        .clamp(0.0, 1.0);
     let mut best_choice = arms[0].0;
     let mut best_score = f64::NEG_INFINITY;
-    for &(c, p, t) in arms {
+    for &(c, p, t, linucb) in arms {
         let mean = if p > 0 { t / p as f64 } else { 0.0 };
         let exploration = (2.0 * ln_n / p as f64).sqrt();
-        let score = mean + exploration;
+        let ucb1_score = mean + exploration;
+        let score = match linucb {
+            Some(l) => (1.0 - blend) * ucb1_score + blend * l,
+            None => ucb1_score,
+        };
         if score > best_score {
             best_score = score;
             best_choice = c;
@@ -1862,13 +1885,17 @@ fn lookup_compute_multiplier(choice: u8) -> f32 {
     [0.50, 0.75, 1.00, 1.50, 3.00][i]
 }
 
-/// Look up the 5 compute arms for a (island, strength_bucket) slot
-/// from the seed payload's `compute_arms` snapshot.
+/// Look up the compute arms for a (island, strength_bucket) slot
+/// from the seed payload's `compute_arms` snapshot. Returns 4-tuples
+/// `(choice, pulls, total_reward_sum, linucb_score?)` so the same
+/// `pick_multiplier_choice` selector works for compute too. The
+/// LinUCB score is read from the per-arm JSON if present (set by
+/// the compute LinUCB layer when it warms up); `None` otherwise.
 fn compute_arms_for_slot(
     seed_value: &serde_json::Value,
     island_domain: &str,
     strength_bucket: u8,
-) -> Vec<(u8, i64, f64)> {
+) -> Vec<(u8, i64, f64, Option<f64>)> {
     let Some(snapshot) = seed_value
         .get("compute_arms")
         .and_then(|v| v.get("snapshot"))
@@ -1891,7 +1918,8 @@ fn compute_arms_for_slot(
                     let choice = a.get("multiplier_choice").and_then(|v| v.as_u64())? as u8;
                     let pulls = a.get("pulls").and_then(|v| v.as_i64())?;
                     let mean = a.get("mean_reward").and_then(|v| v.as_f64())?;
-                    Some((choice, pulls, mean * pulls as f64))
+                    let linucb = a.get("linucb_score").and_then(|v| v.as_f64());
+                    Some((choice, pulls, mean * pulls as f64, linucb))
                 })
                 .collect();
         }

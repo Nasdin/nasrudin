@@ -161,15 +161,53 @@ pub async fn run_one_cycle(
     let arm_rows = nasrudin_pg::query::cluster_directive_arms::snapshot_all(db)
         .await
         .unwrap_or_default();
+    // Load LinUCB sufficient stats once per cycle and build a
+    // (island, action) → (a_flat, b_vec, pulls) map. Then for each
+    // arm row, compute its LinUCB score at snapshot time so workers
+    // don't need the matrix data shipped to them.
+    let linucb_rows = nasrudin_pg::query::cluster_directive_linucb::snapshot_all(db)
+        .await
+        .unwrap_or_default();
+    let mut linucb_map: std::collections::HashMap<
+        (String, String),
+        (Vec<f64>, Vec<f64>, i64),
+    > = std::collections::HashMap::new();
+    for r in linucb_rows {
+        linucb_map.insert(
+            (r.island_domain, r.action),
+            (r.a_matrix, r.b_vector, r.pulls),
+        );
+    }
+    let max_choice: u8 =
+        std::cmp::min(crate::steerer::directive_bandit::MAX_MULTIPLIER_CHOICES - 1, 8);
     let directive_rows: Vec<crate::state::DirectiveArmRow> = arm_rows
         .into_iter()
-        .map(|m| crate::state::DirectiveArmRow {
-            island_domain: m.island_domain,
-            action: m.action,
-            strength_bucket: m.strength_bucket,
-            multiplier_choice: m.multiplier_choice,
-            pulls: m.pulls,
-            total_reward: m.total_reward,
+        .map(|m| {
+            // Strength bucket midpoint (0.1, 0.3, 0.5, 0.7, 0.9).
+            let strength_mid = (m.strength_bucket as f64 + 0.5) / 5.0;
+            let linucb_score = linucb_map
+                .get(&(m.island_domain.clone(), m.action.clone()))
+                .filter(|(_, _, pulls)| {
+                    *pulls >= crate::steerer::linucb::LINUCB_WARMUP_PULLS
+                })
+                .and_then(|(a, b, _)| {
+                    crate::steerer::linucb::score(
+                        a,
+                        b,
+                        strength_mid,
+                        m.multiplier_choice as u8,
+                        max_choice,
+                    )
+                });
+            crate::state::DirectiveArmRow {
+                island_domain: m.island_domain,
+                action: m.action,
+                strength_bucket: m.strength_bucket,
+                multiplier_choice: m.multiplier_choice,
+                pulls: m.pulls,
+                total_reward: m.total_reward,
+                linucb_score,
+            }
         })
         .collect();
     let directive_etag = {

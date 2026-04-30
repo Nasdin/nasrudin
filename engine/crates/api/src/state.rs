@@ -253,6 +253,13 @@ pub struct DirectiveArmRow {
     pub multiplier_choice: i16,
     pub pulls: i64,
     pub total_reward: f64,
+    /// LinUCB contextual score for this arm, computed at snapshot
+    /// time using the per-(island, action) ridge regression. `None`
+    /// when the LinUCB row hasn't reached warmup pulls yet — the
+    /// worker falls through to UCB1 in that case. Embedded in the
+    /// snapshot so the worker doesn't need to ship 36+6 floats per
+    /// (island, action) just to recompute the score itself.
+    pub linucb_score: Option<f64>,
 }
 
 /// Compute-scaling bandit arm snapshot. Same shape as

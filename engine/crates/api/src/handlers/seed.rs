@@ -80,6 +80,7 @@ fn directive_arms_compact(snap: &DirectiveArmsSnapshot) -> Vec<serde_json::Value
             "multiplier_choice": r.multiplier_choice,
             "pulls": r.pulls,
             "mean_reward": mean,
+            "linucb_score": r.linucb_score,
         }));
     }
     by_slot
