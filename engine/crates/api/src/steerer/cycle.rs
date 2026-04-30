@@ -232,11 +232,18 @@ impl LlmCaller for GradientCaller {
         user: &str,
     ) -> Result<(String, Option<i32>, Option<i32>), CycleError> {
         use nasrudin_llm::{CompletionRequest, LlmProvider, ResponseFormat};
+        // Kimi K2.5 (and other reasoning models on Gradient) burn
+        // tokens on `reasoning_content` before producing the actual
+        // SteeringConfig JSON in `content`. 8192 is a generous
+        // ceiling that keeps a SteeringConfig (~1500 token JSON) +
+        // a long chain-of-thought comfortably below the wall. If the
+        // model truncates anyway, the parse will fail and the cycle
+        // falls back to last-known-good — see parse_and_validate.
         let req = CompletionRequest {
             model: self.model.clone(),
             system_prompt: system.to_owned(),
             user_prompt: user.to_owned(),
-            max_tokens: 2048,
+            max_tokens: 8192,
             temperature: 0.4,
             stop_sequences: vec![],
             response_format: ResponseFormat::Json {

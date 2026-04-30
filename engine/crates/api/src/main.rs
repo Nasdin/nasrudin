@@ -474,7 +474,7 @@ async fn main() -> anyhow::Result<()> {
             match nasrudin_llm::GradientProvider::from_env() {
                 Ok(provider) => {
                     let model_id = std::env::var("STEERER_MODEL")
-                        .unwrap_or_else(|_| "kimi-k2-instruct".into());
+                        .unwrap_or_else(|_| "kimi-k2.5".into());
                     match provider.list_models().await {
                         Ok(models) => {
                             if !models.iter().any(|m| m == &model_id) {

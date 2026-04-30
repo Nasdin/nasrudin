@@ -10,10 +10,13 @@
 //!     (`GRADIENT_API_KEY`), not in the per-user `user_llm_keys` table.
 //!     The cluster steerer uses it for an internal control-loop call
 //!     and there is no per-user attribution.
-//!  2. **Default model is Kimi 2.6** (`kimi-k2-instruct`), not GPT.
-//!     `supported_models` reflects the catalog Gradient currently
-//!     advertises; `list_models()` queries the catalog dynamically so
-//!     the steerer's boot-time check stays accurate.
+//!  2. **Default model is Kimi K2.5** (`kimi-k2.5`), not GPT. K2.5 is
+//!     a reasoning model that emits a `reasoning_content` chain of
+//!     thought before producing the actual `content`, so callers must
+//!     give it a generous `max_tokens` budget (≥4096) when asking for
+//!     structured JSON. `supported_models()` reflects the catalog
+//!     Gradient currently advertises; `list_models()` queries the live
+//!     catalog so the steerer's boot-time check stays accurate.
 //!  3. **Lives in its own provider** so the BYO LLM Registry never
 //!     accidentally dispatches a user request to the server's key.
 
@@ -26,9 +29,20 @@ use crate::provider::{
 };
 
 const DEFAULT_BASE_URL: &str = "https://inference.do-ai.run";
+// Names mirror DigitalOcean Gradient's serverless catalog. The list is
+// advisory — `list_models()` queries the live catalog at boot and the
+// daemon doesn't hard-reject anything not listed here, so adding a
+// model here is purely about giving operators a sane default.
+//
+// Kimi K2.5 is a reasoning model: it spends tokens on
+// `reasoning_content` before producing the actual `content` field, so
+// callers should give it a generous `max_tokens` budget (≥4096) when
+// asking for structured JSON output.
 const SUPPORTED: &[&str] = &[
-    "kimi-k2-instruct",
-    "llama-3.3-70b-instruct",
+    "kimi-k2.5",
+    "llama3.3-70b-instruct",
+    "anthropic-claude-4.6-sonnet",
+    "anthropic-claude-haiku-4.5",
     "deepseek-r1-distill-llama-70b",
 ];
 
@@ -260,7 +274,7 @@ mod tests {
     #[test]
     fn supports_kimi_k2() {
         let p = GradientProvider::new("test".into());
-        assert!(p.supported_models().contains(&"kimi-k2-instruct"));
+        assert!(p.supported_models().contains(&"kimi-k2.5"));
     }
 
     #[test]

@@ -85,7 +85,7 @@ A naïve genetic algorithm running across thousands of volunteer workers is unfo
                     v             v
             ┌────────────────────────────┐
             │  DigitalOcean Gradient     │
-            │  Kimi 2.6 (kimi-k2-instruct)
+            │  Kimi K2.5 (kimi-k2.5)
             │  POST /v1/chat/completions │
             └────────────┬───────────────┘
                          │
@@ -228,7 +228,7 @@ just clean           # Remove all build artifacts
 | **Math Rendering** | KaTeX | 0.16 |
 | **Graph Canvas** | React Flow | 12 |
 | **LLM Integration** | MCP (Model Context Protocol) | -- |
-| **Cluster Steerer** | Kimi 2.6 via DigitalOcean Gradient | `kimi-k2-instruct` |
+| **Cluster Steerer** | Kimi K2.5 via DigitalOcean Gradient | `kimi-k2.5` |
 
 ## The GA Engine
 
