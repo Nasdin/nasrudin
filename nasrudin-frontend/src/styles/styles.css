@@ -1225,6 +1225,29 @@ a { color: inherit; }
 @media (max-width: 640px) {
   .container, .container-wide { padding: 0 var(--space-5); }
   .nav { display: none; }
+  .nav-cta { display: inline-flex; }
+  .topbar-inner { padding: 12px var(--space-5); }
+  .brand-tag { display: none; }
+  .brand { font-size: 20px; }
+
+  .hero { padding: 48px 0 32px; }
+  .hero-eyebrow { font-size: 11px; padding: 5px 12px 5px 8px; margin-bottom: 20px; }
+  .hero-title { font-size: clamp(40px, 9vw, 56px); }
+  .hero-sub { font-size: 18px; margin-top: 18px; }
+  .hero-quote { margin-top: 28px; padding: 16px 0 16px 18px; }
+  .hero-quote-text { font-size: 20px; }
+  .hero-ctas { gap: 10px; margin-top: 28px; }
+  .hero-ctas .btn { width: 100%; justify-content: center; }
+  .hero-meta { margin-top: 36px; padding-top: 20px; gap: 18px; }
+  .hero-meta-num { font-size: 24px; }
+
+  .section { padding: 56px 0; }
+  .section.compact { padding: 40px 0; }
+  .section-head { margin-bottom: 28px; grid-template-columns: 1fr; gap: 16px; }
+  .section-num { padding: 0 0 12px; border-right: none; border-bottom: 1px solid var(--paper-300); }
+  .section-title { font-size: 28px; }
+  .section-lede { font-size: 15px; margin-top: 12px; }
+
   .rediscover-grid { grid-template-columns: 1fr; }
   .browser-row { grid-template-columns: 80px 1fr 24px; }
   .browser-row > :nth-child(3),
@@ -1235,8 +1258,46 @@ a { color: inherit; }
   .browser-row.head > :nth-child(5) { display: none; }
   .browser-detail { grid-template-columns: 1fr; }
   .pipe-row { grid-template-columns: 1fr; gap: 12px; }
-  .section-head { grid-template-columns: 1fr; gap: 16px; }
-  .section-num { padding: 0 0 12px; border-right: none; border-bottom: 1px solid var(--paper-300); }
+
+  .theorem-statement { height: 120px; padding: 12px 8px; }
+  .theorem-card-body { padding: 20px 18px 8px; }
+  .theorem-card-head { padding: 12px 16px; }
+  .ticker { padding: 12px 14px; min-height: 44px; }
+
+  .install-cli-body { padding: 18px; font-size: 12px; }
+}
+
+@media (max-width: 480px) {
+  .container, .container-wide { padding: 0 16px; }
+  .topbar-inner { padding: 10px 16px; }
+
+  .hero { padding: 32px 0 24px; }
+  .hero-title { font-size: clamp(32px, 9vw, 44px); }
+  .hero-sub { font-size: 16px; }
+  .hero-quote-text { font-size: 18px; }
+  .hero-meta { gap: 14px; }
+  .hero-meta-num { font-size: 22px; }
+  .hero-meta-label { font-size: 11px; }
+
+  .section { padding: 40px 0; }
+  .section.compact { padding: 32px 0; }
+  .section-title { font-size: 24px; }
+
+  .theorem-statement { height: 100px; font-size: clamp(14px, 4vw, 18px); }
+  .theorem-card-body { padding: 16px 14px 8px; }
+  .theorem-card-head { padding: 10px 14px; }
+  .theorem-name { font-size: 16px; }
+  .theorem-tag { font-size: 11px; }
+  .ticker { padding: 10px 12px; font-size: 12px; min-height: 40px; }
+  .ticker-text { font-size: 11.5px; }
+
+  .nav-cta { padding: 6px 12px; font-size: 13px; }
+
+  .footer { padding: 48px 0 32px; }
+  .footer-grid { grid-template-columns: 1fr; gap: 32px; margin-bottom: 32px; }
+  .footer-brand { font-size: 26px; }
+  .footer-tag { font-size: 18px; }
+  .footer-bottom { flex-direction: column; gap: 8px; }
 }
 
 /* ─── RunWorker section ─────────────────────────────────────────────────── */
