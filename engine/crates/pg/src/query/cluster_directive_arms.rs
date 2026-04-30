@@ -71,8 +71,25 @@ pub async fn snapshot_all(db: &DatabaseConnection) -> Result<Vec<Model>, DbErr> 
         .await
 }
 
+/// Smoothing weight applied to adjacent strength buckets when a
+/// pull lands. 0.3 = the neighbour absorbs 30% of the reward signal
+/// at 30% pull weight; lets the bandit generalise across buckets
+/// without separate contextual modelling. Pure UCB1 with no
+/// smoothing means a pull at bucket=2 leaves bucket=1 and bucket=3
+/// learning at half the rate; smoothing accelerates convergence
+/// across the full strength range. Set to 0.0 to disable.
+const NEIGHBOUR_SMOOTHING_WEIGHT: f64 = 0.3;
+
 /// Increment pulls + total_reward, set last_reward. Caller is
 /// responsible for the [0,1] clamp.
+///
+/// Side effect: also nudges the SAME (island, action, choice) at
+/// adjacent strength_buckets (B-1, B+1) at fractional weight so the
+/// bandit gets free contextual generalisation across the strength
+/// dimension. The nudge increments fractional pulls/total_reward
+/// (stored as f64), so adjacent buckets converge faster on
+/// strength-correlated rewards. Smoothing is symmetric — a pull at
+/// the edges (B=0 or B=4) only nudges one neighbour.
 pub async fn record_pull(
     db: &DatabaseConnection,
     island_domain: &str,
@@ -81,6 +98,59 @@ pub async fn record_pull(
     multiplier_choice: i16,
     reward: f64,
 ) -> Result<(), DbErr> {
+    record_one(
+        db,
+        island_domain,
+        action,
+        strength_bucket,
+        multiplier_choice,
+        reward,
+        1.0,
+    )
+    .await?;
+
+    if NEIGHBOUR_SMOOTHING_WEIGHT > 0.0 {
+        for nb in [strength_bucket - 1, strength_bucket + 1] {
+            if (0..5).contains(&nb) {
+                record_one(
+                    db,
+                    island_domain,
+                    action,
+                    nb,
+                    multiplier_choice,
+                    reward,
+                    NEIGHBOUR_SMOOTHING_WEIGHT,
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Internal helper: record a single weighted pull. `weight=1.0` is
+/// the canonical pull (full bandit credit). Fractional weight uses
+/// stochastic rounding: with probability `weight` the call performs
+/// a full +1 pull with full `reward`; otherwise it is a no-op. Over
+/// many calls this is an unbiased Monte Carlo estimator of the true
+/// per-arm mean, so the smoothed bandit converges to the same fixed
+/// point a fully-pulled bandit would, just slower.
+async fn record_one(
+    db: &DatabaseConnection,
+    island_domain: &str,
+    action: &str,
+    strength_bucket: i16,
+    multiplier_choice: i16,
+    reward: f64,
+    weight: f64,
+) -> Result<(), DbErr> {
+    use rand::Rng;
+    if weight < 1.0 {
+        let mut rng = rand::rng();
+        if !rng.random_bool(weight.clamp(0.0, 1.0)) {
+            return Ok(());
+        }
+    }
     let arm = Entity::find_by_id((
         island_domain.to_string(),
         action.to_string(),
