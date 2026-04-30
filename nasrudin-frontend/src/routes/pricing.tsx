@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { API_BASE } from '~/lib/api';
 
 export const Route = createFileRoute('/pricing')({ component: PricingPage });
 
@@ -160,7 +161,7 @@ async function startCheckout(tier: Tier, annual: boolean) {
   const key = annual
     ? (tier.priceKey.replace('_monthly', '_annual') as 'researcher_annual')
     : tier.priceKey;
-  const res = await fetch('/api/billing/checkout', {
+  const res = await fetch(`${API_BASE}/api/billing/checkout`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

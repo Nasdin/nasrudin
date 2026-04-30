@@ -714,11 +714,7 @@ export interface BillingMe {
 export function useBillingMe() {
   return useQuery<BillingMe>({
     queryKey: ['billing', 'me'],
-    queryFn: async () => {
-      const res = await fetch('/api/billing/me', { credentials: 'include' });
-      if (!res.ok) throw new Error(`/api/billing/me: ${res.status}`);
-      return res.json();
-    },
+    queryFn: () => apiFetch<BillingMe>('/api/billing/me'),
     staleTime: 30_000,
   });
 }

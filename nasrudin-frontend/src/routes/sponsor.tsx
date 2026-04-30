@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { API_BASE } from '~/lib/api';
 
 export const Route = createFileRoute('/sponsor')({
   component: SponsorPage,
@@ -43,7 +44,7 @@ const ONE_TIME_LINK =
   (import.meta.env.VITE_STRIPE_SPONSOR_PAYMENT_LINK as string | undefined) ?? '';
 
 async function startSponsor(priceKey: Tier['priceKey']) {
-  const res = await fetch('/api/billing/checkout', {
+  const res = await fetch(`${API_BASE}/api/billing/checkout`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

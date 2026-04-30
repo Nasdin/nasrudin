@@ -1,6 +1,7 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { API_BASE } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
 import {
   useApiKeys,
@@ -20,7 +21,7 @@ function BillingCard() {
   if (!data) return null;
   const isPaid = data.plan_tier !== 'free';
   const onManage = async () => {
-    const res = await fetch('/api/billing/portal', {
+    const res = await fetch(`${API_BASE}/api/billing/portal`, {
       method: 'POST',
       credentials: 'include',
     });
