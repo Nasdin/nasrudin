@@ -10,6 +10,7 @@ import type {
   CreateConjectureResponse,
   CreateResearchJobRequest,
   CreateResearchJobResponse,
+  DbStats,
   LlmKeysListResponse,
   MeProfile,
   MeStats,
@@ -130,6 +131,151 @@ export function useSavedSearches() {
   });
 }
 
+// --- library: saved theorems + folders ---
+
+export interface LibraryFolder {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedTheoremRow {
+  theorem: Theorem;
+  saved_at: string;
+  folder_id: string | null;
+  note: string | null;
+  label: string | null;
+}
+
+export interface LibraryListResponse {
+  saved: SavedTheoremRow[];
+  count: number;
+  limit: number;
+  plan_tier: string;
+}
+
+export interface LibraryFoldersResponse {
+  folders: LibraryFolder[];
+}
+
+export const libraryQueryKey = (folderId?: string) =>
+  folderId ? (['library', 'theorems', folderId] as const) : (['library', 'theorems'] as const);
+
+export function useLibraryTheorems(folderId?: string) {
+  const qs = folderId ? `?folder_id=${encodeURIComponent(folderId)}` : '';
+  return useQuery({
+    queryKey: libraryQueryKey(folderId),
+    queryFn: () => apiFetch<LibraryListResponse>(`/api/me/library/theorems${qs}`),
+  });
+}
+
+export function useLibraryFolders() {
+  return useQuery({
+    queryKey: ['library', 'folders'],
+    queryFn: () => apiFetch<LibraryFoldersResponse>('/api/me/library/folders'),
+  });
+}
+
+export interface LibraryFullError {
+  error: 'library_full';
+  limit: number;
+  saved: number;
+  plan_tier: string;
+  upgrade_to: string;
+}
+
+export function useSaveTheorem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      theorem_id: string;
+      folder_id?: string | null;
+      note?: string | null;
+      label?: string | null;
+    }) =>
+      apiFetch<{ saved: true; saved_count?: number; limit?: number; already_saved?: boolean }>(
+        '/api/me/library/theorems',
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['library'] });
+    },
+  });
+}
+
+export function useUnsaveTheorem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (theoremIdHex: string) =>
+      apiFetch<{ deleted: true }>(`/api/me/library/theorems/${theoremIdHex}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  });
+}
+
+export function usePatchSavedTheorem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      theoremIdHex,
+      patch,
+    }: {
+      theoremIdHex: string;
+      patch: {
+        folder_id?: string | null;
+        note?: string | null;
+        label?: string | null;
+      };
+    }) =>
+      apiFetch(`/api/me/library/theorems/${theoremIdHex}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  });
+}
+
+export function useCreateFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; color?: string | null }) =>
+      apiFetch<LibraryFolder>('/api/me/library/folders', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  });
+}
+
+export function useDeleteFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<{ deleted: true }>(`/api/me/library/folders/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  });
+}
+
+export function usePatchFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: { name?: string; color?: string | null };
+    }) =>
+      apiFetch<LibraryFolder>(`/api/me/library/folders/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  });
+}
+
 // --- workers ---
 
 export function useWorkers() {
@@ -137,6 +283,16 @@ export function useWorkers() {
     queryKey: ['workers'],
     queryFn: () => apiFetch<Worker[]>('/api/workers'),
     refetchInterval: 30_000,
+  });
+}
+
+// --- stats ---
+
+export function useStats() {
+  return useQuery({
+    queryKey: ['stats'],
+    queryFn: () => apiFetch<DbStats>('/api/stats'),
+    refetchInterval: 60_000,
   });
 }
 
@@ -380,6 +536,25 @@ export function useCancelResearchJob() {
       qc.invalidateQueries({ queryKey: ['research-job', id] });
       qc.invalidateQueries({ queryKey: meProfileQueryKey });
     },
+  });
+}
+
+// --- /api/featured ---
+
+export function useFeaturedDiscoveries() {
+  return useQuery({
+    queryKey: ['featured'],
+    queryFn: () => apiFetch<Array<{
+      formula: string;
+      name: string;
+      domain: string;
+      found: boolean;
+      cycle: string;
+      elapsed: string;
+      proof_lines?: number;
+      note: string;
+    }>>('/api/featured'),
+    staleTime: 300_000, // 5 minutes
   });
 }
 

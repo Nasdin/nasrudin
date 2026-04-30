@@ -528,10 +528,26 @@ async fn main() {
     } else {
         None
     };
-    // Slot count we report to the server on every paid claim. v1
-    // uses `--max-lake` as a proxy; v2 should plug in a real
-    // ResourceBudget detector.
-    let paid_available_slots: u32 = (max_lake as u32).max(1);
+    // Slot count we report to the server on every paid claim.
+    // `ResourceBudget::detect()` honors cgroup CPU + memory limits so
+    // a worker running inside Docker / k8s reports the slots actually
+    // available to the container, not the host's. The `--max-lake`
+    // CLI override (or `NASRUDIN_LAKE_SLOTS_OVERRIDE`) trumps detection
+    // when the operator wants to pin a specific count.
+    let paid_available_slots: u32 = {
+        let budget = nasrudin_ga::auto_size::ResourceBudget::detect();
+        let cli_override = max_lake as u32;
+        let detected = budget.lake_slots as u32;
+        // CLI flag wins when explicitly higher; otherwise prefer
+        // detected so a `--max-lake 3` on a 32-slot box still reports
+        // 32 to the cluster (the operator can lower with the env-var
+        // override if they really mean to cap).
+        std::cmp::max(cli_override, detected).max(1)
+    };
+    tracing::info!(
+        paid_available_slots,
+        "worker reporting available_lake_slots to /api/jobs/claim"
+    );
     // Seed config for paid slices: same shape as the background
     // config but with `submit_unverified_top_k = 0` so a noisy slice
     // doesn't pollute the global ingest path — the slice's only

@@ -295,6 +295,15 @@ a { color: inherit; }
 
 /* ---------- LIVE THEOREM CARD ---------- */
 
+.theorem-card-link {
+  text-decoration: none;
+  display: block;
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.theorem-card-link:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
 .theorem-card {
   background: var(--bg-raised);
   border: 1px solid var(--paper-200);

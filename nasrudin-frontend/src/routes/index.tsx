@@ -7,10 +7,25 @@ import { PipelineDiagram } from '~/components/landing/PipelineDiagram';
 import { RediscoveryGrid } from '~/components/landing/RediscoveryGrid';
 import { TheoremBrowser } from '~/components/landing/TheoremBrowser';
 import { WorkerMap } from '~/components/landing/WorkerMap';
+import { useStats, useWorkers } from '~/lib/queries';
 
 export const Route = createFileRoute('/')({ component: Landing });
 
 function Landing() {
+  const stats = useStats();
+  const workers = useWorkers();
+
+  const liveWorkers = workers.data?.filter(w => w.status === 'Active' || w.status === 'active').length ?? 0;
+  const totalTheorems = stats.data?.total_theorems ?? 0;
+  const totalVerified = stats.data?.total_verified ?? 0;
+  const totalAxioms = stats.data?.total_axioms ?? 0;
+  const maxGeneration = stats.data?.max_generation ?? 0;
+
+  // Calculate acceptance rate (verified / total)
+  const acceptanceRate = totalTheorems > 0
+    ? ((totalVerified / totalTheorems) * 100).toFixed(1)
+    : '0.0';
+
   return (
     <div className="page">
       <header className="topbar">
@@ -78,20 +93,20 @@ function Landing() {
 
               <div className="hero-meta">
                 <div className="hero-meta-item">
-                  <div className="hero-meta-num">350,124</div>
-                  <div className="hero-meta-label">Mathlib axioms</div>
+                  <div className="hero-meta-num">{totalAxioms.toLocaleString()}</div>
+                  <div className="hero-meta-label">Axioms</div>
                 </div>
                 <div className="hero-meta-item">
-                  <div className="hero-meta-num">43</div>
-                  <div className="hero-meta-label">Physics postulates</div>
+                  <div className="hero-meta-num">{maxGeneration.toLocaleString()}</div>
+                  <div className="hero-meta-label">Max generation</div>
                 </div>
                 <div className="hero-meta-item">
-                  <div className="hero-meta-num">1,247</div>
+                  <div className="hero-meta-num">{liveWorkers.toLocaleString()}</div>
                   <div className="hero-meta-label">Workers · live</div>
                 </div>
                 <div className="hero-meta-item">
-                  <div className="hero-meta-num">3.2 M</div>
-                  <div className="hero-meta-label">Theorems / minute</div>
+                  <div className="hero-meta-num">{totalVerified.toLocaleString()}</div>
+                  <div className="hero-meta-label">Verified theorems</div>
                 </div>
               </div>
             </div>
@@ -136,7 +151,11 @@ function Landing() {
               </p>
             </div>
           </div>
-          <PipelineDiagram />
+          <PipelineDiagram
+            totalAxioms={totalAxioms}
+            totalVerified={totalVerified}
+            acceptanceRate={acceptanceRate}
+          />
           <div className="margin-note" style={{ marginTop: 32, textAlign: 'center' }}>
             ~98% of candidates are rejected. The wise fool is patient.
           </div>

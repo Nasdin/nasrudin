@@ -25,8 +25,8 @@ fn err(status: StatusCode, code: &str) -> Response {
 #[derive(Deserialize)]
 pub struct CheckoutRequest {
     /// "researcher_monthly" or "researcher_annual" — Phase 1 only sells
-    /// the Researcher tier self-serve. Team / Institution / Enterprise
-    /// stay on a sales-contact CTA until org-subscriptions ship.
+    /// the Researcher tier self-serve. Institution / Enterprise stay on
+    /// a sales-contact CTA (mailto:contact@nasrudin.org).
     pub price_key: String,
 }
 

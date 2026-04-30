@@ -20,6 +20,7 @@ mod m20260501_000001_cluster_steering;
 mod m20260501_000002_paid_job_quota;
 mod m20260501_000003_research_credits;
 mod m20260430_000014_user_oauth_identity;
+mod m20260430_000015_library;
 
 pub struct Migrator;
 
@@ -47,6 +48,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260501_000002_paid_job_quota::Migration),
             Box::new(m20260501_000003_research_credits::Migration),
             Box::new(m20260430_000014_user_oauth_identity::Migration),
+            Box::new(m20260430_000015_library::Migration),
         ]
     }
 }

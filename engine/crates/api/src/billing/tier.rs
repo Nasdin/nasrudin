@@ -12,7 +12,6 @@ use chrono::{DateTime, Datelike, TimeZone, Utc};
 pub enum PlanTier {
     Free,
     Researcher,
-    Team,
     Institution,
     Enterprise,
 }
@@ -21,7 +20,6 @@ impl PlanTier {
     pub fn from_db(s: &str) -> Self {
         match s {
             "researcher" => Self::Researcher,
-            "team" => Self::Team,
             "institution" => Self::Institution,
             "enterprise" => Self::Enterprise,
             _ => Self::Free,
@@ -32,7 +30,6 @@ impl PlanTier {
         match self {
             Self::Free => "free",
             Self::Researcher => "researcher",
-            Self::Team => "team",
             Self::Institution => "institution",
             Self::Enterprise => "enterprise",
         }
@@ -54,12 +51,6 @@ impl PlanTier {
                 // each). 10/period matches targeted_searches_per_period
                 // and the pricing-page promise.
                 research_credits_per_period: 10,
-            },
-            Self::Team => Quotas {
-                api_per_day: 50_000,
-                targeted_searches_per_period: 50,
-                library_max: u32::MAX,
-                research_credits_per_period: 50,
             },
             Self::Institution => Quotas {
                 api_per_day: 250_000,
@@ -127,7 +118,6 @@ mod tests {
         for tier in [
             PlanTier::Free,
             PlanTier::Researcher,
-            PlanTier::Team,
             PlanTier::Institution,
             PlanTier::Enterprise,
         ] {

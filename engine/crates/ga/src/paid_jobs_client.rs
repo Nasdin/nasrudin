@@ -42,6 +42,12 @@ pub struct PaidJob {
     pub heartbeat_url: String,
     pub release_url: String,
     pub mark_proved_url: String,
+    /// Slots the server allocated to this job at claim time. `None`
+    /// when the row pre-dates elastic per-job sizing (server defaults
+    /// to 4 in that case). The slice runner uses this for slot-hour
+    /// accounting math.
+    #[serde(default)]
+    pub allocated_slots: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]

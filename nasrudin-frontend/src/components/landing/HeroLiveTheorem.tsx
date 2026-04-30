@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
+import { Link } from '@tanstack/react-router';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import { useRecentTheorems } from '~/lib/queries';
@@ -20,13 +21,41 @@ const FALLBACK_HERO = {
   name: 'Schwarz inequality',
 };
 
+function getTimeAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 export function HeroLiveTheorem() {
-  const recent = useRecentTheorems(3);
+  const recent = useRecentTheorems(12);
   const [idx, setIdx] = useState(0);
   const [tickerLines, setTickerLines] = useState<string[]>(FALLBACK_TICKER);
   const [tickIdx, setTickIdx] = useState(0);
 
-  const total = recent.data?.theorems.length ?? 1;
+  // Shuffle theorems on load to avoid same order every time
+  const shuffledTheorems = useMemo(() => {
+    if (!recent.data?.theorems) return [];
+    const arr = [...recent.data.theorems];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const temp = arr[i];
+      if (arr[j] !== undefined) {
+        arr[i] = arr[j];
+      }
+      if (temp !== undefined) {
+        arr[j] = temp;
+      }
+    }
+    return arr;
+  }, [recent.data?.theorems]);
+
+  const total = shuffledTheorems.length ?? 1;
   useEffect(() => {
     const t = setInterval(() => setIdx((i) => (i + 1) % Math.max(total, 1)), 5500);
     return () => clearInterval(t);
@@ -72,31 +101,38 @@ export function HeroLiveTheorem() {
     return () => clearInterval(t);
   }, [tickerLines.length]);
 
-  const t = recent.data?.theorems[idx];
+  const t = shuffledTheorems[idx];
   const stmt = t ? (t.latex ?? t.canonical_statement) : FALLBACK_HERO.statement_latex;
   const id = t ? bytesToHex(t.id) : FALLBACK_HERO.id;
   const domain = t?.domain ?? FALLBACK_HERO.domain;
   const generation = t?.generation ?? FALLBACK_HERO.generation;
+  const verifiedAt = t?.verified_at ? new Date(t.verified_at) : null;
+  const timeAgo = verifiedAt
+    ? getTimeAgo(verifiedAt)
+    : null;
 
   return (
     <div>
-      <div className="theorem-card">
-        <div className="theorem-card-head">
-          <span className="theorem-card-id">{id.slice(0, 8)}</span>
-          <span className="verified-badge">
-            <span className="verified-dot" /> Verified · Lean 4
-          </span>
-        </div>
-        <div className="theorem-card-body">
-          <div className="theorem-statement">
-            <MathExpr source={stmt} block />
+      <Link to="/theorem/$id" params={{ id }} className="theorem-card-link">
+        <div className="theorem-card">
+          <div className="theorem-card-head">
+            <span className="theorem-card-id">{id.slice(0, 8)}</span>
+            <span className="verified-badge">
+              <span className="verified-dot" /> Verified · Lean 4
+            </span>
           </div>
-          <div className="theorem-name">{id}</div>
-          <div className="theorem-tag">
-            {domain} · gen {generation}
+          <div className="theorem-card-body">
+            <div className="theorem-statement">
+              <MathExpr source={stmt} block />
+            </div>
+            <div className="theorem-name">{id}</div>
+            <div className="theorem-tag">
+              {domain} · gen {generation}
+              {timeAgo && <span> · {timeAgo}</span>}
+            </div>
           </div>
         </div>
-      </div>
+      </Link>
       <div className="ticker">
         <span className="ticker-label">Live</span>
         <span className="ticker-text" key={tickIdx}>

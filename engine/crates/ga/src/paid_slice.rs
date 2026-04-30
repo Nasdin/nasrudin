@@ -30,12 +30,25 @@
 //! English. The fallback is logged at WARN so ops can see when it
 //! kicks in.
 //!
-//! v1 simplifications still in effect:
-//!  * Every slice gets the worker's whole AxiomStore + classical
-//!    mechanics postulates. No conjecture-specific axiom subsetting.
-//!  * Slot-hour accounting uses `(elapsed_seconds / 3600) * slot_count`
-//!    where `slot_count = 4` (matches the 96 slot-hour quota = 4 × 24h).
-//!  * Heartbeat cadence is hard-coded to 30 s.
+//! Conjecture-relative AxiomStore subsetting:
+//!  * If the hunch parses as LaTeX, we walk it to collect every Var
+//!    identifier (e.g. `{E, m, c}`).
+//!  * The slice's effective AxiomStore is filtered to keep only
+//!    axioms whose canonical statement mentions at least one of those
+//!    identifiers, plus a fixed "core kept always" set (sign /
+//!    non-negativity / classical mechanics postulates) so chains can
+//!    still close on standard physics priors.
+//!  * Empty intersection (e.g. hunch with no Var identifiers, or no
+//!    matching axioms) → keep the full store as a safe fallback.
+//!
+//! Slot-hour accounting honors the per-job allocated slot count:
+//!  * Server-side: `conjecture_jobs.allocated_slots` is set on
+//!    /api/jobs/claim from the worker's `available_lake_slots`.
+//!  * Worker-side: `PaidJob.allocated_slots` (defaulting to 4 for
+//!    backwards-compat with existing rows) is consumed here for the
+//!    consumed_h_unsent debit math.
+//!
+//! Heartbeat cadence is hard-coded to 30 s.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -57,16 +70,131 @@ use crate::paid_jobs_client::{
 /// tolerance for slow networks).
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
-/// v1 fixed slot allocation per paid job. Matches the 96 slot-hour
-/// quota = 4 slots × 24 h. The server uses the same constant on the
-/// claim path; both must move together when v2 introduces elastic
-/// per-job sizing.
-pub const SLOTS_PER_JOB: f32 = 4.0;
+/// Default slot allocation per paid job, used when `PaidJob.allocated_slots`
+/// is missing (server pre-elastic-sizing or a backwards-compat row).
+/// Matches the 96 slot-hour quota = 4 slots × 24 h.
+pub const DEFAULT_SLOTS_PER_JOB: f32 = 4.0;
+
+/// Backwards-compat alias kept for pinning callers; new code should
+/// use the per-job `allocated_slots` from `PaidJob`.
+pub const SLOTS_PER_JOB: f32 = DEFAULT_SLOTS_PER_JOB;
+
+/// Always-keep axiom names: every paid slice retains these regardless
+/// of the conjecture's identifier set, because chain-replay almost
+/// always needs sign + non-negativity priors and the classical-
+/// mechanics postulate set is small and broadly useful.
+const ALWAYS_KEEP_AXIOMS: &[&str] = &[
+    // SR sign axioms (registered by load_special_relativity_upstream).
+    "c_positive",
+    "mass_nonneg",
+    "energy_nonneg",
+    // Classical mechanics postulates — kinematic primitives.
+    // Names mirror nasrudin_derive::postulates_classical.
+    "newton_second_law",
+    "momentum_definition",
+    "kinetic_energy_definition",
+    "work_definition",
+];
 
 /// Per-chunk generation count. Small chunks keep heartbeat granularity
 /// high without GA overhead (each chunk is ~few seconds of work on a
 /// 32-pop, 10-gen chunk).
 const GENS_PER_CHUNK: usize = 10;
+
+/// Walk an `Expr` and collect every `Var(name)`. Used by the axiom-
+/// subsetting pass to find which identifiers the user's hunch
+/// mentions.
+fn collect_vars(expr: &nasrudin_core::Expr, out: &mut std::collections::HashSet<String>) {
+    use nasrudin_core::Expr;
+    match expr {
+        Expr::Var(name) => {
+            out.insert(name.clone());
+        }
+        Expr::App(f, x) => {
+            collect_vars(f, out);
+            collect_vars(x, out);
+        }
+        Expr::Lam(_, ty, body)
+        | Expr::Pi(_, ty, body)
+        | Expr::Let(_, ty, body) => {
+            collect_vars(ty, out);
+            collect_vars(body, out);
+        }
+        Expr::BinOp(_, a, b) => {
+            collect_vars(a, out);
+            collect_vars(b, out);
+        }
+        Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => {
+            collect_vars(e, out);
+        }
+        Expr::Sum { body, lower, upper, .. } | Expr::Prod { body, lower, upper, .. } => {
+            collect_vars(body, out);
+            collect_vars(lower, out);
+            collect_vars(upper, out);
+        }
+        Expr::Integral { body, lower, upper, .. } => {
+            collect_vars(body, out);
+            if let Some(l) = lower {
+                collect_vars(l, out);
+            }
+            if let Some(u) = upper {
+                collect_vars(u, out);
+            }
+        }
+        Expr::Limit { body, approaching, .. } => {
+            collect_vars(body, out);
+            collect_vars(approaching, out);
+        }
+        Expr::Lit(_, _) | Expr::Const(_) => {}
+    }
+}
+
+/// Build a restricted `AxiomStore` containing only axioms whose
+/// canonical-form mentions at least one identifier from
+/// `wanted_idents`, plus the `ALWAYS_KEEP_AXIOMS` core. Returns the
+/// full store unchanged when `wanted_idents` is empty or the
+/// intersection is too small to be useful (< 4 axioms).
+fn subset_store_for_hunch(
+    full: &AxiomStore,
+    wanted_idents: &std::collections::HashSet<String>,
+) -> AxiomStore {
+    if wanted_idents.is_empty() {
+        return clone_store(full);
+    }
+    let always: std::collections::HashSet<&str> =
+        ALWAYS_KEEP_AXIOMS.iter().copied().collect();
+    let mut out = AxiomStore::new();
+    let mut kept = 0usize;
+    for ax in full.iter() {
+        let always_keep = always.contains(ax.name.as_str());
+        let mentions = {
+            let canon = ax.statement.to_canonical();
+            wanted_idents
+                .iter()
+                .any(|ident| canon.contains(&format!("v:{ident}")))
+        };
+        if always_keep || mentions {
+            out.register(ax.clone());
+            kept += 1;
+        }
+    }
+    if kept < 4 {
+        // Subsetting was too aggressive (e.g. exotic identifiers in
+        // the hunch don't appear in any axiom). Fall back to the full
+        // store rather than starve the GA.
+        return clone_store(full);
+    }
+    out
+}
+
+/// `AxiomStore` doesn't impl `Clone` directly, so iterate-and-register.
+fn clone_store(s: &AxiomStore) -> AxiomStore {
+    let mut out = AxiomStore::new();
+    for ax in s.iter() {
+        out.register(ax.clone());
+    }
+    out
+}
 
 /// Run a paid slice end-to-end. Returns `Ok(())` for both proved and
 /// budget-exhausted endings — those are normal terminal states. `Err`

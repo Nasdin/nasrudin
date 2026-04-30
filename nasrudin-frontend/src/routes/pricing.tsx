@@ -18,6 +18,8 @@ interface Tier {
   /** Phase 1 sells Researcher self-serve. Other tiers route to the
    *  sales-contact flow until org subscriptions ship. */
   priceKey: 'researcher_monthly' | 'researcher_annual' | null;
+  /** When set, the CTA opens a mailto: instead of /api/billing/checkout. */
+  mailto?: string;
   featured?: boolean;
   popular?: boolean;
   features: string[];
@@ -63,27 +65,6 @@ const TIERS: Tier[] = [
       'Point the GA at your own conjecture',
       '10,000 API requests / day',
       'Unlimited library, folders, private notes',
-      'Email digest of new theorems in your domains',
-    ],
-  },
-  {
-    name: 'Team',
-    tagline: 'For research groups: pooled searches, shared library.',
-    monthlyPrice: '$57',
-    annualPrice: '$45.60',
-    period: '/ month',
-    monthlySub: '3 seats included · +$19/seat · billed monthly',
-    annualSub: '3 seats included · +$15.20/seat · billed annually',
-    cta: 'Talk to us',
-    ctaClass: 'btn-secondary',
-    priceKey: null,
-    features: [
-      'Everything in Researcher, per seat',
-      '50 targeted searches / month (pooled)',
-      '50,000 API requests / day (pooled)',
-      'Shared library & citation graphs',
-      'Google / Microsoft sign-in',
-      'Bulk .lean exports',
     ],
   },
   {
@@ -94,11 +75,12 @@ const TIERS: Tier[] = [
     period: '/ month',
     monthlySub: '10 seats included · +$99/seat · billed monthly',
     annualSub: '10 seats included · +$79.20/seat · billed annually',
-    cta: 'Contact sales',
+    cta: 'Contact us',
     ctaClass: 'btn-secondary',
     priceKey: null,
+    mailto: 'contact@nasrudin.org',
     features: [
-      'Everything in Team, per seat',
+      'Everything in Researcher, per seat',
       '200 targeted searches / month (pooled)',
       '250,000 API requests / day (pooled)',
       'SAML SSO',
@@ -170,6 +152,10 @@ function Check() {
 }
 
 async function startCheckout(tier: Tier, annual: boolean) {
+  if (tier.mailto) {
+    window.location.href = `mailto:${tier.mailto}?subject=${encodeURIComponent(`Nasrudin ${tier.name} inquiry`)}`;
+    return;
+  }
   if (!tier.priceKey) return;
   const key = annual
     ? (tier.priceKey.replace('_monthly', '_annual') as 'researcher_annual')

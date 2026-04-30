@@ -38,7 +38,7 @@ nasrudin-embed = { path = "../embed" }
 nasrudin-llm = { path = "../llm" }
 sea-orm = { workspace = true }
 axum = { workspace = true }
-axum-extra = { workspace = true }
+axum-extra = { workspace = true, features = ["typed-header", "cookie"] }
 axum-login = { workspace = true }
 tower-sessions = { workspace = true }
 password-auth = { workspace = true }

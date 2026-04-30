@@ -26,3 +26,11 @@ pub async fn reap_dead_leases(db: &DatabaseConnection) -> Result<u64, DbErr> {
     let r = db.execute_raw(stmt).await?;
     Ok(r.rows_affected())
 }
+
+/// Mark workers as inactive if they haven't been seen recently.
+/// Uses a 60-second threshold to match the "active workers last 60s"
+/// metric displayed on the landing page. Returns rows_affected.
+pub async fn mark_stale_workers(db: &DatabaseConnection) -> Result<u64, DbErr> {
+    let result = nasrudin_pg::query::workers::mark_stale(db, chrono::Duration::seconds(60)).await?;
+    Ok(result.rows_affected)
+}

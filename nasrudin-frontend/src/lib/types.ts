@@ -71,6 +71,18 @@ export interface TheoremListResponse {
   total_capped: boolean;
 }
 
+/** Database statistics from `GET /api/stats`. */
+export interface DbStats {
+  total_theorems: number;
+  total_verified: number;
+  total_rejected: number;
+  total_pending: number;
+  total_axioms: number;
+  max_depth: number;
+  max_generation: number;
+  domain_counts: Record<string, number>;
+}
+
 export interface AuthUser {
   id: string;
   email: string;

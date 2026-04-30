@@ -3,6 +3,7 @@ pub mod api_usage;
 pub mod billing;
 pub mod cluster_steering;
 pub mod conjecture_jobs;
+pub mod library;
 pub mod me_workers;
 pub mod saved_searches;
 pub mod search;

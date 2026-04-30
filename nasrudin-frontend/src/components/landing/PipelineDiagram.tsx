@@ -165,7 +165,52 @@ function PipelineCandidates() {
   );
 }
 
-function PipelineLean() {
+interface PipelineDiagramProps {
+  totalAxioms: number;
+  totalVerified: number;
+  acceptanceRate: string;
+}
+
+function PipelineDB({ totalVerified }: { totalVerified: number }) {
+  return (
+    <svg viewBox="0 0 600 80" width="100%" height="80" style={{ display: 'block' }}>
+      <title>RocksDB corpus</title>
+      {[0, 1, 2].map((i) => (
+        <g key={i} transform={`translate(${i * 70}, 0)`}>
+          <ellipse
+            cx="60"
+            cy="22"
+            rx="44"
+            ry="6"
+            fill="var(--paper-100)"
+            stroke="var(--paper-300)"
+          />
+          <path
+            d="M16,22 L16,58 A44,6 0 0 0 104,58 L104,22"
+            fill="var(--paper-50)"
+            stroke="var(--paper-300)"
+          />
+          <ellipse
+            cx="60"
+            cy="40"
+            rx="44"
+            ry="6"
+            fill="none"
+            stroke="var(--paper-300)"
+            strokeDasharray="2 2"
+          />
+        </g>
+      ))}
+      <text x="320" y="44" fontSize="11" fill="var(--ink-700)" fontFamily="var(--font-mono">
+        RocksDB · {totalVerified.toLocaleString()} verified
+      </text>
+      <line x1="500" y1="42" x2="580" y2="42" stroke="var(--ink-300)" strokeWidth="1" />
+      <circle cx="580" cy="42" r="3" fill="var(--olive-500)" />
+    </svg>
+  );
+}
+
+function PipelineLean({ acceptanceRate }: { acceptanceRate: string }) {
   return (
     <svg viewBox="0 0 600 80" width="100%" height="80" style={{ display: 'block' }}>
       <title>Lean 4 verification</title>
@@ -200,8 +245,8 @@ function PipelineLean() {
       >
         QED
       </text>
-      <text x="376" y="52" fontSize="10" fill="var(--ink-500)" fontFamily="var(--font-mono)">
-        accept-rate ≈ 1.7%
+      <text x="376" y="52" fontSize="10" fill="var(--ink-500)" fontFamily="var(--font-mono">
+        accept-rate ≈ {acceptanceRate}%
       </text>
       <line
         x1="450"
@@ -216,50 +261,11 @@ function PipelineLean() {
   );
 }
 
-function PipelineDB() {
-  return (
-    <svg viewBox="0 0 600 80" width="100%" height="80" style={{ display: 'block' }}>
-      <title>RocksDB corpus</title>
-      {[0, 1, 2].map((i) => (
-        <g key={i} transform={`translate(${i * 70}, 0)`}>
-          <ellipse
-            cx="60"
-            cy="22"
-            rx="44"
-            ry="6"
-            fill="var(--paper-100)"
-            stroke="var(--paper-300)"
-          />
-          <path
-            d="M16,22 L16,58 A44,6 0 0 0 104,58 L104,22"
-            fill="var(--paper-50)"
-            stroke="var(--paper-300)"
-          />
-          <ellipse
-            cx="60"
-            cy="40"
-            rx="44"
-            ry="6"
-            fill="none"
-            stroke="var(--paper-300)"
-            strokeDasharray="2 2"
-          />
-        </g>
-      ))}
-      <text x="320" y="44" fontSize="11" fill="var(--ink-700)" fontFamily="var(--font-mono)">
-        RocksDB · 247,118 verified
-      </text>
-      <line x1="500" y1="42" x2="580" y2="42" stroke="var(--ink-300)" strokeWidth="1" />
-      <circle cx="580" cy="42" r="3" fill="var(--olive-500)" />
-    </svg>
-  );
-}
-
-export function PipelineDiagram() {
+export function PipelineDiagram({ totalAxioms, totalVerified, acceptanceRate }: PipelineDiagramProps) {
   const stages = [
     {
       name: 'Mathematical axioms',
-      sub: '350,124 from Mathlib · 43 physics postulates',
+      sub: `${totalAxioms.toLocaleString()} from Mathlib · physics postulates`,
       viz: <PipelineSeed />,
     },
     { name: 'Rust GA engine', sub: 'combine · mutate · crossover', viz: <PipelineGA /> },
@@ -271,12 +277,12 @@ export function PipelineDiagram() {
     {
       name: 'Lean 4 verification',
       sub: 'grind · simp · omega · ring · linarith',
-      viz: <PipelineLean />,
+      viz: <PipelineLean acceptanceRate={acceptanceRate} />,
     },
     {
       name: 'RocksDB · global corpus',
       sub: 'server re-verifies before accepting',
-      viz: <PipelineDB />,
+      viz: <PipelineDB totalVerified={totalVerified} />,
     },
   ];
   return (

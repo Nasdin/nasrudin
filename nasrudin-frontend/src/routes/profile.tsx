@@ -16,7 +16,7 @@ import {
 export const Route = createFileRoute('/profile')({ component: ProfilePage });
 
 interface BillingMe {
-  plan_tier: 'free' | 'researcher' | 'team' | 'institution' | 'enterprise';
+  plan_tier: 'free' | 'researcher' | 'institution' | 'enterprise';
   current_period_end: string | null;
   targeted_searches_used: number;
   targeted_searches_limit: number;

@@ -4,6 +4,7 @@ import { AppHeader } from '~/components/platform/AppHeader';
 import { LineageList } from '~/components/theorem/LineageList';
 import { ProofBlock } from '~/components/theorem/ProofBlock';
 import { ReverifyButton } from '~/components/theorem/ReverifyButton';
+import { SaveButton } from '~/components/theorem/SaveButton';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import { useTheorem } from '~/lib/queries';
@@ -51,7 +52,10 @@ function TheoremView({ thm }: { thm: Theorem }) {
           <span>· thm:{idHex.slice(0, 8)}</span>
           <span>· gen {thm.generation ?? 0}</span>
         </div>
-        <h1 className="thm-name">{idHex}</h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <h1 className="thm-name" style={{ margin: 0 }}>{idHex}</h1>
+          <SaveButton theoremIdHex={idHex} />
+        </div>
         <div className="thm-statement-block">
           <div className="thm-statement-big">
             <MathExpr source={stmt} block />
