@@ -464,3 +464,77 @@ async fn count_capped(db: &impl ConnectionTrait, domain: Option<&str>) -> Result
         .context("count_capped probe")?;
     Ok(ids.len() as u64)
 }
+
+/// Count `Verified` theorems with `verified_at >= since`. Backs the
+/// landing-page "verified in last N hours" pulse counter — small windows
+/// (1h, 24h) hit the `(status, verified_at)` index range scan and stay
+/// well under a millisecond even on a 7-figure theorems table.
+pub async fn count_verified_since(
+    db: &impl ConnectionTrait,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<u64> {
+    use sea_orm::PaginatorTrait;
+    theorems::Entity::find()
+        .filter(theorems::Column::Status.eq("Verified"))
+        .filter(theorems::Column::VerifiedAt.gte(since.fixed_offset()))
+        .count(db)
+        .await
+        .context("count_verified_since")
+}
+
+/// Per-domain breakdown of `Verified` theorems with `verified_at >= since`,
+/// ordered by count desc. Backs the workers-page network breakdown chart.
+/// `(domain, count)` pairs; domains with zero in-window count are omitted.
+pub async fn count_verified_by_domain_since(
+    db: &impl ConnectionTrait,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<(String, i64)>> {
+    use sea_orm::{DatabaseBackend, FromQueryResult, Statement};
+
+    #[derive(FromQueryResult)]
+    struct Row {
+        domain: String,
+        cnt: i64,
+    }
+
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        SELECT domain, COUNT(*)::BIGINT AS cnt
+          FROM theorems
+         WHERE status = 'Verified'
+           AND verified_at >= $1
+         GROUP BY domain
+         ORDER BY cnt DESC
+        "#,
+        [since.fixed_offset().into()],
+    );
+    let rows = Row::find_by_statement(stmt)
+        .all(db)
+        .await
+        .context("count_verified_by_domain_since")?;
+    Ok(rows.into_iter().map(|r| (r.domain, r.cnt)).collect())
+}
+
+/// Most-recent `Verified` theorem's metadata for the "last verification Ks
+/// ago in [domain]" pulse line. Returns `None` when no theorems have been
+/// verified yet.
+pub async fn last_verified(
+    db: &impl ConnectionTrait,
+) -> Result<Option<(chrono::DateTime<chrono::FixedOffset>, String)>> {
+    use sea_orm::QuerySelect;
+    let row: Option<(Option<chrono::DateTime<chrono::FixedOffset>>, String)> =
+        theorems::Entity::find()
+            .filter(theorems::Column::Status.eq("Verified"))
+            .order_by_desc(theorems::Column::VerifiedAt)
+            .order_by_desc(theorems::Column::Id)
+            .select_only()
+            .column(theorems::Column::VerifiedAt)
+            .column(theorems::Column::Domain)
+            .limit(1)
+            .into_tuple()
+            .one(db)
+            .await
+            .context("last_verified")?;
+    Ok(row.and_then(|(va, d)| va.map(|v| (v, d))))
+}

@@ -1478,3 +1478,107 @@ a { color: inherit; }
 }
 
 .copy-btn:hover { background: var(--paper-100); }
+
+/* ─── PulseStrip / NetworkBreakdown ────────────────────────────────────── */
+
+.pulse-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-700);
+  background: var(--paper-50);
+  border: 1px solid var(--paper-300);
+  border-radius: 8px;
+}
+
+.pulse-strip .pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--olive-500);
+  animation: pulse 2.4s var(--ease-out) infinite;
+  flex-shrink: 0;
+}
+
+.pulse-strip .pulse-stat {
+  white-space: nowrap;
+}
+
+.pulse-strip .pulse-stat strong {
+  color: var(--ink-900);
+  font-weight: 600;
+}
+
+.pulse-strip .pulse-sep {
+  color: var(--ink-400);
+}
+
+.pulse-strip .pulse-domain {
+  color: var(--terracotta-700);
+  background: var(--paper-100);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.network-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.network-breakdown-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  color: var(--ink-500);
+  margin: 0;
+}
+
+.network-breakdown-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 60px;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.network-breakdown-domain {
+  color: var(--ink-700);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.network-breakdown-bar {
+  height: 6px;
+  background: var(--paper-200);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.network-breakdown-fill {
+  height: 100%;
+  background: var(--olive-500);
+  border-radius: 3px;
+  transition: width 0.4s var(--ease-out);
+}
+
+.network-breakdown-count {
+  color: var(--ink-900);
+  font-weight: 600;
+  text-align: right;
+}
+
+.network-breakdown-empty {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-500);
+  font-style: italic;
+}

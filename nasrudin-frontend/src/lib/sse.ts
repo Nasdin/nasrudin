@@ -20,6 +20,10 @@ export function useDiscoveryFeed(onEvent?: (e: MessageEvent) => void) {
     const handler = (event: MessageEvent) => {
       qc.invalidateQueries({ queryKey: ['theorems'] });
       qc.invalidateQueries({ queryKey: ['workers'] });
+      // Network pulse strip reads from this query — refresh the
+      // verified_24h / last_verified_at / by_domain_24h fields on every
+      // verification so the ticker stays live without a 60 s lag.
+      qc.invalidateQueries({ queryKey: ['stats', 'landing'] });
       onEvent?.(event);
     };
 

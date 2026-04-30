@@ -6,6 +6,7 @@ pub mod compute_feedback;
 pub mod directive_feedback;
 pub mod concept_search;
 pub mod conjecture;
+pub mod corpus_dump;
 pub mod embed;
 pub mod events;
 pub mod featured;

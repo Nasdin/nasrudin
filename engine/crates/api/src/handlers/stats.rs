@@ -17,11 +17,36 @@ use crate::state::AppState;
 const CACHE_TTL: Duration = Duration::from_secs(60);
 const ACTIVE_WINDOW_MIN: i64 = 5;
 
+/// Public landing/workers-page network pulse.
+///
+/// All counts come from the `theorems` mirror table; the cache TTL means the
+/// lifetime totals + 24h windows are at most 60 s stale. The `last_verified_*`
+/// fields drive the "last verification Ks ago" ticker — clients render the
+/// elapsed time client-side from `last_verified_at`, so even the cached value
+/// stays fresh-feeling between recomputes.
 #[derive(Clone, Debug, Serialize)]
 pub struct LandingStats {
     pub verified_theorems: u64,
     pub active_workers: u64,
     pub contributors: u64,
+    /// `Verified` theorems with `verified_at` in the last 24 hours.
+    pub verified_24h: u64,
+    /// `Verified` theorems with `verified_at` in the last hour.
+    pub verified_1h: u64,
+    /// ISO-8601 timestamp of the most recent `Verified` theorem, or `None`
+    /// when the corpus is empty. Clients format "Ks ago" off the wall clock.
+    pub last_verified_at: Option<String>,
+    /// Domain of that most-recent verification (e.g. `"special_relativity"`).
+    pub last_verified_domain: Option<String>,
+    /// Per-domain breakdown of the `verified_24h` count, ordered by count
+    /// descending. `(domain, count)` pairs.
+    pub by_domain_24h: Vec<DomainCount>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DomainCount {
+    pub domain: String,
+    pub count: u64,
 }
 
 impl LandingStats {
@@ -30,6 +55,11 @@ impl LandingStats {
             verified_theorems: 0,
             active_workers: 0,
             contributors: 0,
+            verified_24h: 0,
+            verified_1h: 0,
+            last_verified_at: None,
+            last_verified_domain: None,
+            by_domain_24h: Vec::new(),
         }
     }
 }
@@ -94,21 +124,46 @@ async fn compute(state: &Arc<AppState>) -> anyhow::Result<LandingStats> {
         .map(|s| s.total_theorems)
         .unwrap_or(0);
 
-    let (active_workers, contributors) = if let Some(ref pg) = state.pg {
-        let active = nasrudin_pg::query::workers::count_active_workers(
+    let mut stats = LandingStats {
+        verified_theorems,
+        ..LandingStats::zero()
+    };
+
+    if let Some(ref pg) = state.pg {
+        stats.active_workers = nasrudin_pg::query::workers::count_active_workers(
             pg,
             chrono::Duration::minutes(ACTIVE_WINDOW_MIN),
         )
         .await?;
-        let contrib = nasrudin_pg::query::workers::count_distinct_contributors(pg).await?;
-        (active, contrib)
-    } else {
-        (0, 0)
-    };
+        stats.contributors =
+            nasrudin_pg::query::workers::count_distinct_contributors(pg).await?;
 
-    Ok(LandingStats {
-        verified_theorems,
-        active_workers,
-        contributors,
-    })
+        let now = chrono::Utc::now();
+        let since_24h = now - chrono::Duration::hours(24);
+        let since_1h = now - chrono::Duration::hours(1);
+
+        stats.verified_24h =
+            nasrudin_pg::query::theorems::count_verified_since(pg, since_24h).await?;
+        stats.verified_1h =
+            nasrudin_pg::query::theorems::count_verified_since(pg, since_1h).await?;
+
+        let by_domain =
+            nasrudin_pg::query::theorems::count_verified_by_domain_since(pg, since_24h).await?;
+        stats.by_domain_24h = by_domain
+            .into_iter()
+            .map(|(domain, count)| DomainCount {
+                domain,
+                count: count.max(0) as u64,
+            })
+            .collect();
+
+        if let Some((verified_at, domain)) =
+            nasrudin_pg::query::theorems::last_verified(pg).await?
+        {
+            stats.last_verified_at = Some(verified_at.to_rfc3339());
+            stats.last_verified_domain = Some(domain);
+        }
+    }
+
+    Ok(stats)
 }

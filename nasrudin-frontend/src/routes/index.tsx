@@ -3,6 +3,7 @@ import { GAViz } from '~/components/landing/GAViz';
 import { HeroLiveTheorem } from '~/components/landing/HeroLiveTheorem';
 import { LandingFooter } from '~/components/landing/LandingFooter';
 import { PipelineDiagram } from '~/components/landing/PipelineDiagram';
+import { PulseStrip } from '~/components/landing/PulseStrip';
 import { RediscoveryGrid } from '~/components/landing/RediscoveryGrid';
 import { RunWorker } from '~/components/landing/RunWorker';
 import { TheoremBrowser } from '~/components/landing/TheoremBrowser';
@@ -58,6 +59,9 @@ function Landing() {
       <section className="hero">
         <div className="hero-pattern" />
         <div className="container-wide">
+          <div style={{ marginBottom: 32 }}>
+            <PulseStrip />
+          </div>
           <div className="hero-grid">
             <div>
               <div className="hero-eyebrow">

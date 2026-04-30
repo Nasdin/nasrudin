@@ -7,6 +7,8 @@ import {
   type SortingState,
 } from '@tanstack/react-table';
 import { useState } from 'react';
+import { NetworkBreakdown } from '~/components/landing/NetworkBreakdown';
+import { PulseStrip } from '~/components/landing/PulseStrip';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { useWorkers } from '~/lib/queries';
@@ -53,6 +55,10 @@ function WorkersPage() {
           </p>
         </div>
 
+        <div style={{ marginTop: 24, marginBottom: 24 }}>
+          <PulseStrip />
+        </div>
+
         <div className="stat-row stat-row-3" style={{ marginTop: 24, marginBottom: 32 }}>
           <div className="stat-cell">
             <div className="label">Workers · live</div>
@@ -71,6 +77,10 @@ function WorkersPage() {
             </div>
             <div className="delta">attribution is automatic</div>
           </div>
+        </div>
+
+        <div style={{ marginBottom: 32 }}>
+          <NetworkBreakdown />
         </div>
 
         <div className="lead-tabs" style={{ marginBottom: 16 }}>

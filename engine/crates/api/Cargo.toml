@@ -75,6 +75,7 @@ clap = { version = "4", features = ["derive"] }
 async-stripe = { version = "0.41", default-features = false, features = ["runtime-tokio-hyper-rustls", "checkout", "billing", "connect", "webhook-events"] }
 rocksdb = { workspace = true }
 tokio-util = { version = "0.7", features = ["io"] }
+bytes = { workspace = true }
 arc-swap = { workspace = true }
 dashmap = { workspace = true }
 async-trait = { workspace = true }

@@ -337,15 +337,15 @@ export function RunWorker() {
             <span className="install-req-num">ii.</span>
             <span className="install-req-name">
               Memory
-              <span>Lean 4 likes RAM. The Mathlib snapshot wants room.</span>
+              <span>Corpus is paged from RocksDB on disk. Lean elaboration is what wants headroom.</span>
             </span>
-            <span className="install-req-val">≥ 8 GB</span>
+            <span className="install-req-val">≥ 4 GB</span>
           </li>
           <li>
             <span className="install-req-num">iii.</span>
             <span className="install-req-name">
               Disk
-              <span>Local Mathlib cache + prover state.</span>
+              <span>Mathlib oleans + cold-tier corpus (~290 MB) + local prover state.</span>
             </span>
             <span className="install-req-val">≥ 20 GB</span>
           </li>

@@ -371,8 +371,8 @@ impl AxiomStore {
         let catalog: serde_json::Value =
             serde::Deserialize::deserialize(deser)?;
 
-        let mut count = 0;
-        let mut ast_count = 0;
+        let mut count: usize = 0;
+        let mut ast_count: usize = 0;
         if let Some(theorems) = catalog.get("theorems").and_then(|t| t.as_array()) {
             for thm in theorems {
                 let axiom = parse_catalog_theorem(thm, &mut ast_count);
@@ -451,9 +451,9 @@ impl AxiomStore {
         let mut batch_progress: u64 = 0;
         if let Some(theorems) = catalog.get("theorems").and_then(|t| t.as_array()) {
             for thm in theorems {
-                let mut local_ast = 0;
+                let mut local_ast: usize = 0;
                 let axiom = parse_catalog_theorem(thm, &mut local_ast);
-                ast_count += local_ast;
+                ast_count += local_ast as u64;
                 cold.put(&axiom)
                     .map_err(|e| anyhow::anyhow!("cold put {}: {e}", axiom.name))?;
                 total += 1;
@@ -793,7 +793,7 @@ impl AxiomStore {
 /// Shared by [`AxiomStore::load_from_catalog`] (PhysLean catalog,
 /// hot tier) and [`AxiomStore::hydrate_math_corpus_to_cold`] (Mathlib
 /// math-corpus, cold tier) — same wire shape, same parse rules.
-fn parse_catalog_theorem(thm: &serde_json::Value, ast_count: &mut u64) -> Axiom {
+fn parse_catalog_theorem(thm: &serde_json::Value, ast_count: &mut usize) -> Axiom {
     let name = thm.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
     let domain_str = thm.get("domain").and_then(|d| d.as_str()).unwrap_or("PureMath");
     let doc = thm

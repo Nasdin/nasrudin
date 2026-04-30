@@ -87,6 +87,16 @@ export interface LandingStats {
   verified_theorems: number;
   active_workers: number;
   contributors: number;
+  verified_24h: number;
+  verified_1h: number;
+  last_verified_at: string | null;
+  last_verified_domain: string | null;
+  by_domain_24h: DomainCount[];
+}
+
+export interface DomainCount {
+  domain: string;
+  count: number;
 }
 
 export interface AuthUser {
