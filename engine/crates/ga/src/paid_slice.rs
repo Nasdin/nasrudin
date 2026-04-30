@@ -222,13 +222,19 @@ pub async fn run_paid_slice(
     // form English, exotic notation, etc.) — fall back to v1 "first
     // verified theorem is the proof" semantics so the slice still
     // produces *something* for the user.
+    //
+    // While we're at it, walk the parsed Expr to collect the variable
+    // identifiers — feeds the axiom-subsetting pass below.
+    let mut wanted_idents: std::collections::HashSet<String> = Default::default();
     let target_hash: Option<[u8; 8]> =
         match nasrudin_core::parse::parse_latex(job.hunch.trim()) {
             Ok(expr) => {
+                collect_vars(&expr, &mut wanted_idents);
                 let h = nasrudin_core::canonical_ac_hash(&expr);
                 tracing::info!(
                     %job_id,
                     target_hash = hex::encode(h),
+                    idents = ?wanted_idents,
                     "paid slice target compiled from hunch"
                 );
                 Some(h)
@@ -244,11 +250,38 @@ pub async fn run_paid_slice(
             }
         };
 
+    // Conjecture-relative axiom subsetting: if we extracted identifiers
+    // from the hunch, narrow the GA's AxiomStore to axioms whose
+    // canonical statement mentions any of them (plus the always-keep
+    // core). Empty/exotic identifier sets fall back to the full store.
+    let scoped_store = subset_store_for_hunch(&store, &wanted_idents);
+    let scoped_store = Arc::new(scoped_store);
+    let original_size = store.iter().count();
+    let scoped_size = scoped_store.iter().count();
+    if wanted_idents.len() > 0 && scoped_size < original_size {
+        tracing::info!(
+            %job_id,
+            full = original_size,
+            scoped = scoped_size,
+            "paid slice scoped AxiomStore from hunch identifiers"
+        );
+    }
+
+    // Slot-hour accounting honors the per-job allocation. Falls back
+    // to DEFAULT_SLOTS_PER_JOB for backwards-compat with rows the
+    // server hasn't stamped yet.
+    let slot_count: f32 = job
+        .allocated_slots
+        .map(|s| s as f32)
+        .unwrap_or(DEFAULT_SLOTS_PER_JOB)
+        .max(1.0);
+
     tracing::info!(
         %job_id,
         hunch = job.hunch.chars().take(80).collect::<String>(),
         remaining_h = job.lake_slot_hours_remaining,
         target_compiled = target_hash.is_some(),
+        slot_count,
         "starting paid GA slice"
     );
 
@@ -256,7 +289,7 @@ pub async fn run_paid_slice(
         // Run one short chunk under the slice's config.
         let mut chunk_cfg = base_config.clone();
         chunk_cfg.generations = GENS_PER_CHUNK;
-        let report: DiscoveryReport = run_discovery(&store, &chunk_cfg, &mut rng);
+        let report: DiscoveryReport = run_discovery(&scoped_store, &chunk_cfg, &mut rng);
         cum_attempted += report.total_candidates as i32;
         cum_verified += report.verified.len() as i32;
 
@@ -308,7 +341,7 @@ pub async fn run_paid_slice(
         // delta (consumed_h_unsent) on the next tick; the server clamps
         // it server-side against the wallclock to defeat lying workers.
         let chunk_elapsed = last_heartbeat.elapsed().as_secs_f32();
-        consumed_h_unsent += (chunk_elapsed / 3600.0) * SLOTS_PER_JOB;
+        consumed_h_unsent += (chunk_elapsed / 3600.0) * slot_count;
 
         // Heartbeat at the cadence boundary (or every chunk if the
         // chunk took longer than the cadence — unlikely but cheap).

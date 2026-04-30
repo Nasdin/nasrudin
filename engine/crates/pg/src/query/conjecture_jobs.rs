@@ -48,6 +48,9 @@ pub async fn create(db: &DatabaseConnection, input: CreateInput) -> Result<Uuid,
         lake_slot_hours_consumed: Set(0.0),
         slice_priority: Set(5),
         tier: Set("researcher".into()),
+        // Default 4 — `atomic_claim_paid` overwrites this with the
+        // worker's reported `available_lake_slots` at claim time.
+        allocated_slots: Set(4),
     };
     am.insert(db).await?;
     Ok(id)
@@ -375,7 +378,13 @@ pub async fn requeue_expired_leases(db: &DatabaseConnection) -> Result<Vec<Uuid>
 pub async fn atomic_claim_paid(
     db: &DatabaseConnection,
     worker_id: &str,
+    available_lake_slots: i32,
 ) -> Result<Option<conjecture_jobs::Model>, DbErr> {
+    // Stamp `allocated_slots` from the worker's reported capacity at
+    // claim time. Floor 1 so a worker reporting 0 still has a valid
+    // sanity-cap denominator on heartbeat, and ceiling 64 to defeat
+    // a worker that lies about huge slot counts to inflate the cap.
+    let allocated = available_lake_slots.clamp(1, 64);
     let stmt = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
@@ -384,7 +393,8 @@ pub async fn atomic_claim_paid(
             claimed_at = NOW(),
             lease_expires_at = NOW() + INTERVAL '5 minutes',
             last_heartbeat_at = NOW(),
-            state = 'claimed'
+            state = 'claimed',
+            allocated_slots = $2
         WHERE id = (
             SELECT id FROM conjecture_jobs
             WHERE state = 'queued'
@@ -395,7 +405,7 @@ pub async fn atomic_claim_paid(
         )
         RETURNING *
         "#,
-        [worker_id.into()],
+        [worker_id.into(), allocated.into()],
     );
     let model = conjecture_jobs::Entity::find()
         .from_raw_sql(stmt)
@@ -417,7 +427,6 @@ pub async fn heartbeat_paid(
     cand_attempted_delta: i32,
     cand_verified_delta: i32,
     consumed_delta_requested: f32,
-    slots_held: f32,
 ) -> Result<Option<(f32, bool)>, DbErr> {
     let job = match get_by_id(db, id).await? {
         Some(j) => j,
@@ -427,12 +436,18 @@ pub async fn heartbeat_paid(
         return Ok(None);
     }
     // Sanity cap: max 2× the wallclock since last heartbeat × slot
-    // count. Defeats workers that report a huge fake delta.
+    // count. The slot count is the per-job `allocated_slots` stamped
+    // at claim time, so the cap follows the actual capacity committed
+    // to this conjecture instead of a cluster-wide fixed constant.
+    // Defeats workers that report a huge fake delta.
     let wallclock_s = job
         .last_heartbeat_at
         .map(|t| (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds() as f32)
         .unwrap_or(60.0);
-    let max_delta = 2.0 * (wallclock_s / 3600.0) * slots_held.max(1.0);
+    // Ord::max disambiguated — sea_orm::ExprTrait::max is also in scope
+    // via the wildcard `use sea_orm::*;` at the top of this file.
+    let slots_held = std::cmp::max(job.allocated_slots, 1) as f32;
+    let max_delta = 2.0 * (wallclock_s / 3600.0) * slots_held;
     let consumed_delta = consumed_delta_requested.clamp(0.0, max_delta);
     let new_consumed = job.lake_slot_hours_consumed + consumed_delta;
     let exhausted = new_consumed >= job.lake_slot_hours_quota as f32;

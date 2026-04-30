@@ -25,9 +25,20 @@ use crate::auth::WorkerAuth;
 use crate::jobs::JobEvent;
 use crate::state::AppState;
 
-/// Each paid job is currently allocated a fixed 4-slot footprint
-/// (matches the 96 slot-hour quota = 4 slots × 24h). Elastic per-job
-/// sizing is tracked as future work in the design spec.
+/// Floor on the slot footprint reserved for any paid job; the actual
+/// committed amount is `body.available_lake_slots` (clamped to
+/// [MIN_SLOTS_PER_JOB, MAX_SLOTS_PER_JOB]) and stamped onto
+/// `conjecture_jobs.allocated_slots` at claim time. The
+/// floor-satisfaction check + capacity counters use the committed
+/// number, so a small worker grabs a job at minimum-1 slots and a
+/// big worker grabs at its real capacity.
+const MIN_SLOTS_PER_JOB: u32 = 1;
+/// Hard cap to defeat workers reporting absurd slot counts.
+const MAX_SLOTS_PER_JOB: u32 = 64;
+/// Backwards-compat for any code still naming the legacy fixed
+/// constant. Reads as the historical default for out-of-band paths
+/// (release / mark_proved) where the row's allocated_slots is more
+/// authoritative anyway.
 const SLOTS_PER_JOB: u32 = 4;
 
 #[derive(Deserialize)]
@@ -53,11 +64,19 @@ pub async fn claim(
         .capacity
         .report_worker(&worker_id, body.available_lake_slots);
 
+    // Slots we'd commit to this claim. Clamp to the [MIN, MAX] range
+    // so a worker can't lie its way into a 0-slot or 1000-slot
+    // allocation. The committed number flows through to the floor
+    // check, the in-process counter, and the row's allocated_slots.
+    let committed_slots: u32 = body
+        .available_lake_slots
+        .clamp(MIN_SLOTS_PER_JOB, MAX_SLOTS_PER_JOB);
+
     // Explorer-floor check: do not award if doing so would push the
     // cluster's free explorer slots below the 10% / min-2 floor.
     let total = state.capacity.total_lake_slots();
     let already_paid = state.capacity.paid_slots();
-    if !crate::jobs::quota::floor_satisfied(total, already_paid + SLOTS_PER_JOB) {
+    if !crate::jobs::quota::floor_satisfied(total, already_paid + committed_slots) {
         return (StatusCode::NO_CONTENT, "explorer_floor_protected").into_response();
     }
 
@@ -68,9 +87,15 @@ pub async fn claim(
         }
     };
 
-    match nasrudin_pg::query::conjecture_jobs::atomic_claim_paid(pg, &worker_id).await {
+    match nasrudin_pg::query::conjecture_jobs::atomic_claim_paid(
+        pg,
+        &worker_id,
+        committed_slots as i32,
+    )
+    .await
+    {
         Ok(Some(job)) => {
-            state.capacity.add_paid_slots(SLOTS_PER_JOB);
+            state.capacity.add_paid_slots(committed_slots);
             let remaining =
                 crate::jobs::quota::quota_remaining_hours(
                     job.lake_slot_hours_quota,
@@ -92,6 +117,7 @@ pub async fn claim(
                     "suggestions": job.suggestions,
                     "lake_slot_hours_remaining": remaining,
                     "lease_expires_at": job.lease_expires_at,
+                    "allocated_slots": job.allocated_slots,
                     "heartbeat_url": format!("/api/jobs/{}/heartbeat", job.id),
                     "release_url": format!("/api/jobs/{}/release", job.id),
                     "mark_proved_url": format!("/api/jobs/{}/mark_proved", job.id),
@@ -132,6 +158,15 @@ pub async fn heartbeat(
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
 
+    // Resolve allocated_slots once so we know how many to release on
+    // budget exhaustion (the heartbeat helper reads it internally for
+    // the sanity-cap math; we duplicate the lookup here so the
+    // capacity counter stays in sync).
+    let allocated_slots: u32 =
+        match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
+            Ok(Some(j)) => (j.allocated_slots as u32).max(MIN_SLOTS_PER_JOB),
+            _ => SLOTS_PER_JOB,
+        };
     match nasrudin_pg::query::conjecture_jobs::heartbeat_paid(
         pg,
         id,
@@ -139,7 +174,6 @@ pub async fn heartbeat(
         body.candidates_attempted_delta,
         body.candidates_verified_delta,
         body.lake_slot_hours_consumed_delta,
-        SLOTS_PER_JOB as f32,
     )
     .await
     {
@@ -163,7 +197,7 @@ pub async fn heartbeat(
                     "budget_exhausted",
                 )
                 .await;
-                state.capacity.release_paid_slots(SLOTS_PER_JOB);
+                state.capacity.release_paid_slots(allocated_slots);
                 crate::handlers::research_jobs::emit_job_event(
                     &state,
                     id,
@@ -220,6 +254,11 @@ pub async fn release(
         Some(p) => p,
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
+    let allocated_slots: u32 =
+        match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
+            Ok(Some(j)) => (j.allocated_slots as u32).max(MIN_SLOTS_PER_JOB),
+            _ => SLOTS_PER_JOB,
+        };
     match nasrudin_pg::query::conjecture_jobs::release_paid_claim(
         pg,
         id,
@@ -230,7 +269,7 @@ pub async fn release(
     {
         Ok(0) => (StatusCode::FORBIDDEN, "not_your_lease").into_response(),
         Ok(_) => {
-            state.capacity.release_paid_slots(SLOTS_PER_JOB);
+            state.capacity.release_paid_slots(allocated_slots);
             crate::handlers::research_jobs::emit_job_event(
                 &state,
                 id,
@@ -268,6 +307,11 @@ pub async fn mark_proved(
         Some(p) => p,
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
+    let allocated_slots: u32 =
+        match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
+            Ok(Some(j)) => (j.allocated_slots as u32).max(MIN_SLOTS_PER_JOB),
+            _ => SLOTS_PER_JOB,
+        };
     match nasrudin_pg::query::conjecture_jobs::mark_paid_proved(
         pg,
         id,
@@ -278,7 +322,7 @@ pub async fn mark_proved(
     {
         Ok(0) => (StatusCode::FORBIDDEN, "not_your_lease").into_response(),
         Ok(_) => {
-            state.capacity.release_paid_slots(SLOTS_PER_JOB);
+            state.capacity.release_paid_slots(allocated_slots);
             crate::handlers::research_jobs::emit_job_event(
                 &state,
                 id,

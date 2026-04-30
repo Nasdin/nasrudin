@@ -74,6 +74,10 @@ arc-swap = { workspace = true }
 dashmap = { workspace = true }
 async-trait = { workspace = true }
 oauth2 = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
+# `time::Duration` is required by axum-extra cookie's `max_age` API
+# (which transitively re-exports the `cookie` crate; cookie itself uses
+# `time` for durations). Pinned to match the version in Cargo.lock.
+time = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

@@ -44,6 +44,11 @@ pub struct Model {
     pub slice_priority: i32,
     /// Plan ownership ("researcher" today; future tiers extend).
     pub tier: String,
+    /// Slots committed to this job at claim time (from the worker's
+    /// reported `available_lake_slots`). Drives the heartbeat sanity
+    /// cap on lake_slot_hours_consumed_delta. Default 4 for any rows
+    /// the server claimed before elastic sizing landed.
+    pub allocated_slots: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

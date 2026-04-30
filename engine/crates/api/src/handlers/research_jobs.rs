@@ -114,6 +114,9 @@ pub async fn create(
         lake_slot_hours_consumed: Set(0.0),
         slice_priority: Set(5),
         tier: Set("researcher".into()),
+        // Default 4 — `atomic_claim_paid` overwrites this with the
+        // claiming worker's reported available_lake_slots.
+        allocated_slots: Set(4),
     };
     if let Err(e) = am.insert(pg).await {
         // Refund the credit we just took so the user isn't charged
@@ -240,6 +243,10 @@ pub async fn cancel(
     }
 
     let was_in_flight = matches!(job.state.as_str(), "claimed" | "running" | "Running");
+    // Release the actual slot count this job had committed, not a
+    // fixed 4. `allocated_slots` is set at claim time from the
+    // worker's reported available_lake_slots.
+    let allocated_slots = (job.allocated_slots as u32).max(1);
     let _ = nasrudin_pg::query::conjecture_jobs::release_paid_claim(
         pg,
         id,
@@ -248,7 +255,7 @@ pub async fn cancel(
     )
     .await;
     if was_in_flight {
-        state.capacity.release_paid_slots(4);
+        state.capacity.release_paid_slots(allocated_slots);
     }
 
     let refund_eligible =
