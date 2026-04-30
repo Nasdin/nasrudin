@@ -521,6 +521,20 @@
 .result-side .verified-badge { margin-bottom: 8px; }
 
 /* ============================================================
+   LIBRARY
+   ============================================================ */
+.library-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) 1fr;
+  gap: 32px;
+  align-items: start;
+}
+.library-folders {
+  position: sticky;
+  top: 24px;
+}
+
+/* ============================================================
    PROFILE / DASHBOARD
    ============================================================ */
 .profile-head {
@@ -1404,6 +1418,11 @@
 
   .result-meta { flex-wrap: wrap; gap: 6px 12px; }
   .result-stmt { font-size: 19px; }
+
+  .library-grid { grid-template-columns: 1fr; gap: 20px; }
+  .library-folders { position: static; }
+  .saved-list li { grid-template-columns: 1fr auto; gap: 8px 12px; }
+  .saved-list .saved-date { display: none; }
 }
 
 @media (max-width: 480px) {

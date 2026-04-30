@@ -100,14 +100,7 @@ function LibraryPage() {
           </div>
 
           {tab === 'theorems' && (
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'minmax(180px, 220px) 1fr',
-                gap: 32,
-                alignItems: 'start',
-              }}
-            >
+            <div className="library-grid">
               <FolderSidebar
                 folders={allFolders}
                 active={folderFilter}
@@ -270,7 +263,7 @@ function FolderSidebar({
   };
 
   return (
-    <aside style={{ position: 'sticky', top: 24 }}>
+    <aside className="library-folders">
       <div className="overline" style={{ marginBottom: 8 }}>
         Folders
       </div>
