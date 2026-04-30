@@ -295,7 +295,12 @@ build-worker:
     (cd dist && tar czf "${PKG}.tar.gz" "${PKG}")
     echo "[worker] -> dist/${PKG}.tar.gz"
 
-# Tag a worker release `vX.Y.Z` (AI-summarized commits via claude CLI; CI builds Linux/macOS/Windows + publishes GitHub release)
+# Cross-compile worker for linux/darwin/windows + bundle (no GH Actions; all local)
+build-worker-all:
+    @deploy/scripts/build-worker-all.sh
+
+# Tag a worker release `vX.Y.Z`: AI-summarize commits, build all platforms locally,
+# create GitHub release with the binaries attached. No GH Actions.
 release-worker version:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -386,7 +391,7 @@ release-worker version:
     echo
 
     if [ -t 0 ]; then
-      read -r -p "[release] tag $TAG with these notes and push to origin? [y/N] " confirm
+      read -r -p "[release] tag $TAG, build all platforms locally, and publish to GitHub? [y/N] " confirm
     else
       confirm="n"
     fi
@@ -395,10 +400,32 @@ release-worker version:
       *) echo "[release] aborted (no tag created)"; exit 1 ;;
     esac
 
+    if ! command -v gh >/dev/null 2>&1; then
+      echo "error: 'gh' CLI required for local publish (brew install gh)" >&2
+      exit 1
+    fi
+
+    echo "[release] cross-compiling worker for linux/darwin/windows..."
+    deploy/scripts/build-worker-all.sh
+
+    echo "[release] creating annotated tag $TAG"
     git tag -a "$TAG" -F "$NOTES_FILE"
     git push origin "$TAG"
-    echo "[release] pushed $TAG; CI will build + publish at:"
-    echo "    https://github.com/Nasdin/nasrudin/actions"
+
+    echo "[release] uploading bundles to GitHub release $TAG"
+    shopt -s nullglob
+    files=( dist/worker-release/*.tar.gz dist/worker-release/*.zip dist/worker-release/*.sha256 )
+    if [ "${#files[@]}" -eq 0 ]; then
+      echo "error: no artifacts in dist/worker-release/" >&2
+      exit 1
+    fi
+    VERSION="{{version}}"
+    gh release create "$TAG" \
+      --title "Nasrudin Worker $VERSION" \
+      --notes-file "$NOTES_FILE" \
+      "${files[@]}"
+
+    echo "[release] published:"
     echo "    https://github.com/Nasdin/nasrudin/releases/tag/${TAG}"
 
 # ── Continuous Operation ───────────────────────────────────

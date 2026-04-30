@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
+import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import { useRecentTheorems } from '~/lib/queries';
@@ -162,7 +163,14 @@ function BrowserRow({
           {t.verification_tactic ?? `gen ${t.generation ?? '—'}`}
         </span>
         <span className="browser-dom">{DOMAIN_LABEL[t.domain] ?? t.domain}</span>
-        <span className="browser-status">{t.status === 'Verified' ? 'Verified' : t.status}</span>
+        <span className="browser-status">
+          <VerificationBadge
+            status={t.status}
+            tactic={t.verification_tactic}
+            rejectedReason={t.rejected_reason}
+            compact
+          />
+        </span>
         <span className="browser-chev">
           <svg
             width="14"

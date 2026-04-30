@@ -140,6 +140,14 @@ export interface Worker {
   theorems_produced_total?: number;
   uptime_seconds?: number;
   engine_git_sha?: string | null;
+  /** Reputation score in [0, 1]. EMA over the worker's lake-promotion
+   *  spot-check outcomes. ≥0.9 = trusted; <0.5 = ingest gated; <0.2 +
+   *  5 consecutive failures = auto-revoked. Optional because legacy
+   *  rows may not have it populated yet. */
+  reputation_score?: number;
+  spot_check_pass_count?: number;
+  spot_check_fail_count?: number;
+  auto_revoked_at?: string | null;
   /** Present only on the public list when the worker's api-key is linked to a user. */
   owner?: WorkerOwner | null;
 }

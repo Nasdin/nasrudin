@@ -89,11 +89,21 @@ stripe listen --forward-to localhost:3001/api/billing/webhook
 **For production:** create a real webhook endpoint in the live-mode dashboard
 pointing at `https://<host>/api/billing/webhook`. Subscribe to:
 
+Required (drive `users.plan_tier` + period rollover via `webhook::dispatch`):
+
 - `customer.subscription.created`
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
-- `invoice.paid`
+
+Archived for forensics in `billing_events` (dispatcher is a no-op for these,
+but they're useful when reconstructing what happened to a customer):
+
+- `customer.subscription.paused`
+- `customer.subscription.resumed`
+- `invoice.payment_succeeded` (interchangeable with `invoice.paid` —
+  Stripe fires both for the same condition)
 - `invoice.payment_failed`
+- `checkout.session.completed`
 
 Save the signing secret as `STRIPE_WEBHOOK_SECRET` in production env.
 

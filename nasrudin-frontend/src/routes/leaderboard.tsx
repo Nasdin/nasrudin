@@ -62,6 +62,7 @@ function LeaderboardPage() {
                 <th>Worker</th>
                 <th>Host</th>
                 <th style={{ textAlign: 'right' }}>Theorems</th>
+                <th style={{ textAlign: 'right' }}>Reputation</th>
                 <th style={{ textAlign: 'right' }}>Status</th>
                 <th style={{ textAlign: 'right' }}>Last seen</th>
               </tr>
@@ -81,6 +82,12 @@ function LeaderboardPage() {
                     {w.host ?? '—'}
                   </td>
                   <td className="num-cell">{w.theorems_contributed.toLocaleString()}</td>
+                  <td className="num-cell">
+                    <ReputationCell
+                      score={w.reputation_score}
+                      revoked={Boolean(w.auto_revoked_at)}
+                    />
+                  </td>
                   <td
                     className="num-cell"
                     style={{
@@ -133,5 +140,49 @@ function PodiumStep({
       <div className="lead-handle">{handle}</div>
       <div className="lead-num">{thm.toLocaleString()} thm</div>
     </div>
+  );
+}
+
+/// Reputation column. Colour-codes the EMA score and surfaces an
+/// auto-revoked badge when the worker has been kicked off ingest by
+/// the spot-check defence. `score` is undefined for legacy rows.
+function ReputationCell({ score, revoked }: { score: number | undefined; revoked: boolean }) {
+  if (revoked) {
+    return (
+      <span
+        title="Auto-revoked: 5 consecutive spot-check failures"
+        style={{
+          fontSize: 11,
+          padding: '2px 6px',
+          borderRadius: 999,
+          background: 'var(--danger-50, #fef2f2)',
+          color: 'var(--danger-700, #b91c1c)',
+          fontWeight: 600,
+          letterSpacing: 0.3,
+          textTransform: 'uppercase',
+        }}
+      >
+        Revoked
+      </span>
+    );
+  }
+  if (score === undefined) {
+    return <span style={{ color: 'var(--ink-400)' }}>—</span>;
+  }
+  const colour =
+    score >= 0.9 ? 'var(--olive-700)' : score >= 0.5 ? 'var(--ink-700)' : 'var(--danger-700)';
+  return (
+    <span
+      title={
+        score >= 0.9
+          ? 'Trusted contributor'
+          : score >= 0.5
+            ? 'On probation'
+            : 'Throttled — close to auto-revoke'
+      }
+      style={{ color: colour, fontVariantNumeric: 'tabular-nums' }}
+    >
+      {score.toFixed(2)}
+    </span>
   );
 }

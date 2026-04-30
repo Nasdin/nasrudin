@@ -215,7 +215,7 @@ function PipelineLean({ acceptanceRate }: { acceptanceRate: string }) {
     <svg viewBox="0 0 600 80" width="100%" height="80" style={{ display: 'block' }}>
       <title>Lean 4 verification</title>
       <rect x="20" y="24" width="220" height="34" rx="6" fill="var(--ink-900)" />
-      <text x="32" y="46" fontSize="11" fill="#E39F7E" fontFamily="var(--font-mono)">
+      <text x="32" y="46" fontSize="11" fill="var(--paper-50)" fontFamily="var(--font-mono)">
         by simp; ring; linarith
       </text>
       <line x1="240" y1="41" x2="320" y2="41" stroke="var(--ink-300)" strokeWidth="1" />

@@ -92,6 +92,35 @@ export function useRecentTheorems(limit = 20) {
   });
 }
 
+/// Manual "Verify with Lake" trigger (P-Task 4 endpoint). Enqueues the
+/// theorem at priority 0 and waits up to `wait_seconds` synchronously
+/// for the kernel verdict. Server returns:
+///   - 200 + `{status:"lake_verified", ...}` on success,
+///   - 410 + `{status:"rejected", reason}` on kernel reject (cascade
+///     ran for the descendants),
+///   - 202 on sync-wait timeout (promotion still in flight).
+export interface VerifyResponse {
+  status?: string;
+  reason?: string;
+  [key: string]: unknown;
+}
+export function useVerifyWithLake() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ idHex, waitSeconds }: { idHex: string; waitSeconds?: number }) =>
+      apiFetch<VerifyResponse>(`/api/theorems/${idHex}/verify`, {
+        method: 'POST',
+        body: JSON.stringify({ wait_seconds: waitSeconds ?? 30 }),
+      }),
+    onSuccess: (_data, vars) => {
+      // Refetch the affected theorem detail + the recent list so
+      // VerificationBadge re-renders.
+      qc.invalidateQueries({ queryKey: ['theorem', vars.idHex] });
+      qc.invalidateQueries({ queryKey: ['theorems', 'recent'] });
+    },
+  });
+}
+
 export function useTheorem(id: string) {
   return useQuery({
     queryKey: ['theorem', id],
@@ -273,13 +302,7 @@ export function useDeleteFolder() {
 export function usePatchFolder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      id,
-      patch,
-    }: {
-      id: string;
-      patch: { name?: string; color?: string | null };
-    }) =>
+    mutationFn: ({ id, patch }: { id: string; patch: { name?: string; color?: string | null } }) =>
       apiFetch<LibraryFolder>(`/api/me/library/folders/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
@@ -556,16 +579,19 @@ export function useCancelResearchJob() {
 export function useFeaturedDiscoveries() {
   return useQuery({
     queryKey: ['featured'],
-    queryFn: () => apiFetch<Array<{
-      formula: string;
-      name: string;
-      domain: string;
-      found: boolean;
-      cycle: string;
-      elapsed: string;
-      proof_lines?: number;
-      note: string;
-    }>>('/api/featured'),
+    queryFn: () =>
+      apiFetch<
+        Array<{
+          formula: string;
+          name: string;
+          domain: string;
+          found: boolean;
+          cycle: string;
+          elapsed: string;
+          proof_lines?: number;
+          note: string;
+        }>
+      >('/api/featured'),
     staleTime: 300_000, // 5 minutes
   });
 }
