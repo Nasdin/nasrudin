@@ -71,25 +71,32 @@ pub async fn snapshot_all(db: &DatabaseConnection) -> Result<Vec<Model>, DbErr> 
         .await
 }
 
-/// Smoothing weight applied to adjacent strength buckets when a
-/// pull lands. 0.3 = the neighbour absorbs 30% of the reward signal
-/// at 30% pull weight; lets the bandit generalise across buckets
-/// without separate contextual modelling. Pure UCB1 with no
-/// smoothing means a pull at bucket=2 leaves bucket=1 and bucket=3
-/// learning at half the rate; smoothing accelerates convergence
-/// across the full strength range. Set to 0.0 to disable.
-const NEIGHBOUR_SMOOTHING_WEIGHT: f64 = 0.3;
+/// 2D Gaussian kernel bandwidth (in arm units). Larger = more
+/// smoothing across nearby arms in the (strength_bucket,
+/// multiplier_choice) plane; smaller = tighter generalisation.
+/// 1.0 means a 1-arm step in either dimension halves the smoothing
+/// weight roughly (exp(-0.5) ≈ 0.61, but stochastic rounding makes
+/// it discrete in practice).
+const KERNEL_SIGMA: f64 = 1.0;
+
+/// Cap on the kernel weight; the centre arm always pulls at 1.0.
+/// Below this cutoff, the smoothing pull is skipped so we don't
+/// pay PG round-trips for vanishing weights. exp(-2² / 2·1²) ≈ 0.135
+/// so this cuts off arms ≥ 2 away in any single dimension.
+const KERNEL_MIN_WEIGHT: f64 = 0.10;
 
 /// Increment pulls + total_reward, set last_reward. Caller is
 /// responsible for the [0,1] clamp.
 ///
-/// Side effect: also nudges the SAME (island, action, choice) at
-/// adjacent strength_buckets (B-1, B+1) at fractional weight so the
-/// bandit gets free contextual generalisation across the strength
-/// dimension. The nudge increments fractional pulls/total_reward
-/// (stored as f64), so adjacent buckets converge faster on
-/// strength-correlated rewards. Smoothing is symmetric — a pull at
-/// the edges (B=0 or B=4) only nudges one neighbour.
+/// Side effect: applies a 2D Gaussian smoothing kernel over the
+/// (strength_bucket, multiplier_choice) plane — every arm within
+/// Manhattan distance ≤2 gets a stochastic-rounded fractional
+/// pull weighted by `exp(-d² / 2σ²)`. Lets the bandit generalise
+/// in BOTH dimensions: a pull at (B=2, C=3) nudges (B=1, C=3),
+/// (B=3, C=3), (B=2, C=2), (B=2, C=4), and even diagonals
+/// (B=1, C=2) etc. at smaller weight. Phase-B 1D smoothing was
+/// per-strength only; 2D extends to multiplier_choice too so the
+/// bandit converges across the full action surface.
 pub async fn record_pull(
     db: &DatabaseConnection,
     island_domain: &str,
@@ -98,6 +105,7 @@ pub async fn record_pull(
     multiplier_choice: i16,
     reward: f64,
 ) -> Result<(), DbErr> {
+    // Centre arm: full pull.
     record_one(
         db,
         island_domain,
@@ -109,20 +117,33 @@ pub async fn record_pull(
     )
     .await?;
 
-    if NEIGHBOUR_SMOOTHING_WEIGHT > 0.0 {
-        for nb in [strength_bucket - 1, strength_bucket + 1] {
-            if (0..5).contains(&nb) {
-                record_one(
-                    db,
-                    island_domain,
-                    action,
-                    nb,
-                    multiplier_choice,
-                    reward,
-                    NEIGHBOUR_SMOOTHING_WEIGHT,
-                )
-                .await?;
+    // 2D Gaussian kernel over the (bucket, choice) plane.
+    let two_sigma_sq = 2.0 * KERNEL_SIGMA * KERNEL_SIGMA;
+    for db_offset in -2i16..=2 {
+        for dc_offset in -2i16..=2 {
+            if db_offset == 0 && dc_offset == 0 {
+                continue;
             }
+            let nb_bucket = strength_bucket + db_offset;
+            let nb_choice = multiplier_choice + dc_offset;
+            if !(0..5).contains(&nb_bucket) || !(0..5).contains(&nb_choice) {
+                continue;
+            }
+            let d_sq = (db_offset as f64).powi(2) + (dc_offset as f64).powi(2);
+            let weight = (-d_sq / two_sigma_sq).exp();
+            if weight < KERNEL_MIN_WEIGHT {
+                continue;
+            }
+            record_one(
+                db,
+                island_domain,
+                action,
+                nb_bucket,
+                nb_choice,
+                reward,
+                weight,
+            )
+            .await?;
         }
     }
     Ok(())
