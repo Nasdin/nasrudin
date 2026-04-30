@@ -1,10 +1,17 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type SortingState,
+} from '@tanstack/react-table';
 import { type CSSProperties, useState } from 'react';
 import { CreateKeyDialog, RevealKeyModal } from '~/components/apikeys/CreateKeyDialog';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { useApiKeys, useMe, useMyWorkers, useRevokeApiKey } from '~/lib/queries';
-import type { NewApiKey, Worker } from '~/lib/types';
+import type { ApiKeySummary, NewApiKey, Worker } from '~/lib/types';
 
 export const Route = createFileRoute('/api-keys')({ component: ApiKeysPage });
 
@@ -15,6 +22,7 @@ function ApiKeysPage() {
   const revoke = useRevokeApiKey();
   const [createOpen, setCreateOpen] = useState(false);
   const [revealed, setRevealed] = useState<NewApiKey | null>(null);
+  const [sorting, setSorting] = useState<SortingState>([]);
 
   if (me.isPending) return null;
   if (!me.data) throw redirect({ to: '/signin' });
@@ -22,6 +30,133 @@ function ApiKeysPage() {
   const keys = data?.keys ?? [];
   const workers = workersResp?.workers ?? [];
   const workerByName = new Map(workers.map((w) => [w.id, w]));
+
+  const columns: ColumnDef<ApiKeySummary>[] = [
+    {
+      accessorKey: 'name',
+      header: 'Label',
+      cell: (info) => <span className="handle-cell">{info.getValue() as string}</span>,
+    },
+    {
+      accessorKey: 'kind',
+      header: 'Kind',
+      cell: (info) => {
+        const kind = info.getValue() as string;
+        return (
+          <span
+            style={{
+              fontSize: 11,
+              letterSpacing: 'var(--tracking-allcaps)',
+              textTransform: 'uppercase',
+              fontWeight: 600,
+              color: kind === 'worker' ? 'var(--terracotta-700)' : 'var(--olive-700)',
+            }}
+          >
+            {kind}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'prefix',
+      header: 'Prefix',
+      cell: (info) => (
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+          {info.getValue() as string}…
+        </span>
+      ),
+    },
+    {
+      id: 'workerStatus',
+      header: 'Worker status',
+      cell: (info) => {
+        const row = info.row.original;
+        const linkedWorker = row.kind === 'worker' ? workerByName.get(row.name) : undefined;
+        const status = linkedWorker ? String(linkedWorker.status).toLowerCase() : null;
+        const color =
+          status === 'active'
+            ? 'var(--olive-700)'
+            : status === 'inactive'
+              ? 'var(--saffron-700)'
+              : 'var(--ink-500)';
+        if (row.kind !== 'worker') {
+          return (
+            <span style={{ color: 'var(--ink-400)', fontStyle: 'italic' }}>n/a</span>
+          );
+        }
+        if (!linkedWorker) {
+          return <span style={{ color: 'var(--ink-400)' }}>not yet seen</span>;
+        }
+        return (
+          <span
+            style={{
+              color,
+              textTransform: 'uppercase',
+              letterSpacing: 'var(--tracking-allcaps)',
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          >
+            {status}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'theorems',
+      header: 'Theorems',
+      cell: (info) => {
+        const row = info.row.original;
+        const linkedWorker = row.kind === 'worker' ? workerByName.get(row.name) : undefined;
+        return (
+          <span className="num-cell">
+            {linkedWorker ? linkedWorker.theorems_contributed.toLocaleString() : '—'}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'last_used_at',
+      header: 'Last used',
+      cell: (info) => {
+        const lastUsed = info.getValue() as string | null;
+        return (
+          <span className="num-cell" style={{ color: 'var(--ink-500)' }}>
+            {lastUsed ? new Date(lastUsed).toLocaleString() : 'never'}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'actions',
+      header: '',
+      cell: (info) => {
+        const row = info.row.original;
+        return (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={async () => {
+              if (confirm(`Revoke key "${row.name}"?`)) {
+                await revoke.mutateAsync(row.id);
+                refetch();
+              }
+            }}
+          >
+            Revoke
+          </button>
+        );
+      },
+    },
+  ];
+
+  const table = useReactTable({
+    data: keys,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    onSortingChange: setSorting,
+    state: { sorting },
+  });
 
   return (
     <div className="app">
@@ -81,97 +216,55 @@ function ApiKeysPage() {
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <table className="lead-table">
               <thead>
-                <tr>
-                  <th>Label</th>
-                  <th>Kind</th>
-                  <th>Prefix</th>
-                  <th style={{ textAlign: 'right' }}>Worker status</th>
-                  <th style={{ textAlign: 'right' }}>Theorems</th>
-                  <th style={{ textAlign: 'right' }}>Last used</th>
-                  <th style={{ textAlign: 'right' }} />
-                </tr>
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <tr key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <th
+                        key={header.id}
+                        style={{
+                          textAlign: header.column.id === 'actions' ? 'right' : 'left',
+                          cursor: header.column.getCanSort() ? 'pointer' : 'default',
+                        }}
+                        onClick={header.column.getToggleSortingHandler()}
+                      >
+                        {header.isPlaceholder
+                          ? null
+                          : header.column.columnDef.header}
+                        {header.column.getIsSorted() === 'asc' ? ' ↑' : null}
+                        {header.column.getIsSorted() === 'desc' ? ' ↓' : null}
+                      </th>
+                    ))}
+                  </tr>
+                ))}
               </thead>
               <tbody>
-                {keys.map((k) => {
-                  const linkedWorker = k.kind === 'worker' ? workerByName.get(k.name) : undefined;
-                  return (
-                    <tr key={k.id}>
-                      <td className="handle-cell">{k.name}</td>
-                      <td>
-                        <span
+                {table.getRowModel().rows.map((row) => (
+                  <tr key={row.id}>
+                    {row.getVisibleCells().map((cell) => {
+                      const isActions = cell.column.id === 'actions';
+                      const isTheorems = cell.column.id === 'theorems';
+                      const isWorkerStatus = cell.column.id === 'workerStatus';
+                      const isLastUsed = cell.column.id === 'last_used_at';
+                      return (
+                        <td
+                          key={cell.id}
+                          className={isActions || isTheorems || isWorkerStatus || isLastUsed ? 'num-cell' : ''}
                           style={{
-                            fontSize: 11,
-                            letterSpacing: 'var(--tracking-allcaps)',
-                            textTransform: 'uppercase',
-                            fontWeight: 600,
-                            color:
-                              k.kind === 'worker' ? 'var(--terracotta-700)' : 'var(--olive-700)',
+                            textAlign: isActions ? 'right' : 'left',
                           }}
                         >
-                          {k.kind}
-                        </span>
-                      </td>
-                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{k.prefix}…</td>
-                      <WorkerStatusCell worker={linkedWorker} kind={k.kind} />
-                      <td className="num-cell">
-                        {linkedWorker ? linkedWorker.theorems_contributed.toLocaleString() : '—'}
-                      </td>
-                      <td className="num-cell" style={{ color: 'var(--ink-500)' }}>
-                        {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : 'never'}
-                      </td>
-                      <td className="num-cell">
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={async () => {
-                            if (confirm(`Revoke key "${k.name}"?`)) {
-                              await revoke.mutateAsync(k.id);
-                              refetch();
-                            }
-                          }}
-                        >
-                          Revoke
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
 
-        {workers.length > 0 && (
-          <section style={{ marginTop: 56 }}>
-            <h3 className="section-h" style={{ fontSize: 24, marginBottom: 8 }}>
-              Your devices on the network
-            </h3>
-            <p style={{ color: 'var(--ink-500)', fontSize: 14, marginBottom: 24 }}>
-              Live snapshot of every worker your account is running. Each row corresponds to a
-              worker-kind API key and is publicly visible on{' '}
-              <Link to="/workers">the workers page →</Link>
-            </p>
-            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <table className="lead-table">
-                <thead>
-                  <tr>
-                    <th>Device</th>
-                    <th>Host</th>
-                    <th style={{ textAlign: 'right' }}>Status</th>
-                    <th style={{ textAlign: 'right' }}>Generation</th>
-                    <th style={{ textAlign: 'right' }}>Theorems</th>
-                    <th style={{ textAlign: 'right' }}>Last verified</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {workers.map((w) => (
-                    <MyWorkerRow key={w.id} w={w} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
+        {workers.length > 0 && <WorkersTable workers={workers} />}
 
         <UsageGuide />
 
@@ -197,41 +290,166 @@ function ApiKeysPage() {
   );
 }
 
-function WorkerStatusCell({ worker, kind }: { worker: Worker | undefined; kind: string }) {
-  if (kind !== 'worker') {
-    return (
-      <td className="num-cell" style={{ color: 'var(--ink-400)', fontStyle: 'italic' }}>
-        n/a
-      </td>
-    );
-  }
-  if (!worker) {
-    return (
-      <td className="num-cell" style={{ color: 'var(--ink-400)' }}>
-        not yet seen
-      </td>
-    );
-  }
-  const status = String(worker.status).toLowerCase();
-  const color =
-    status === 'active'
-      ? 'var(--olive-700)'
-      : status === 'inactive'
-        ? 'var(--saffron-700)'
-        : 'var(--ink-500)';
+function WorkersTable({ workers }: { workers: Worker[] }) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+
+  const columns: ColumnDef<Worker>[] = [
+    {
+      accessorKey: 'id',
+      header: 'Device',
+      cell: (info) => {
+        const w = info.row.original;
+        const status = String(w.status).toLowerCase();
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background:
+                  status === 'active'
+                    ? 'var(--olive-500)'
+                    : status === 'inactive'
+                      ? 'var(--saffron-500)'
+                      : 'var(--paper-300)',
+                boxShadow: status === 'active' ? '0 0 0 3px var(--olive-50)' : 'none',
+              }}
+            />
+            <span className="handle-cell">{w.id}</span>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: 'host',
+      header: 'Host',
+      cell: (info) => {
+        const host = info.getValue() as string | null;
+        return (
+          <span style={{ color: 'var(--ink-500)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            {host ?? '—'}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: (info) => {
+        const w = info.row.original;
+        const status = String(w.status).toLowerCase();
+        const color =
+          status === 'active'
+            ? 'var(--olive-700)'
+            : status === 'inactive'
+              ? 'var(--saffron-700)'
+              : 'var(--ink-500)';
+        return (
+          <span
+            className="num-cell"
+            style={{
+              color,
+              textTransform: 'uppercase',
+              letterSpacing: 'var(--tracking-allcaps)',
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          >
+            {status}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'generation',
+      header: 'Generation',
+      cell: (info) => {
+        const w = info.row.original;
+        return (
+          <span className="num-cell">gen {(w.current_generation ?? 0).toLocaleString()}</span>
+        );
+      },
+    },
+    {
+      accessorKey: 'theorems_contributed',
+      header: 'Theorems',
+      cell: (info) => (
+        <span className="num-cell">{(info.getValue() as number).toLocaleString()}</span>
+      ),
+    },
+    {
+      id: 'lastVerified',
+      header: 'Last verified',
+      cell: (info) => {
+        const w = info.row.original;
+        return (
+          <span className="num-cell" style={{ color: 'var(--ink-500)' }}>
+            {w.last_contribution_at ? new Date(w.last_contribution_at).toLocaleString() : '—'}
+          </span>
+        );
+      },
+    },
+  ];
+
+  const table = useReactTable({
+    data: workers,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    onSortingChange: setSorting,
+    state: { sorting },
+  });
+
   return (
-    <td
-      className="num-cell"
-      style={{
-        color,
-        textTransform: 'uppercase',
-        letterSpacing: 'var(--tracking-allcaps)',
-        fontSize: 11,
-        fontWeight: 600,
-      }}
-    >
-      {status}
-    </td>
+    <section style={{ marginTop: 56 }}>
+      <h3 className="section-h" style={{ fontSize: 24, marginBottom: 8 }}>
+        Your devices on the network
+      </h3>
+      <p style={{ color: 'var(--ink-500)', fontSize: 14, marginBottom: 24 }}>
+        Live snapshot of every worker your account is running. Each row corresponds to a
+        worker-kind API key and is publicly visible on{' '}
+        <Link to="/workers">the workers page →</Link>
+      </p>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <table className="lead-table">
+          <thead>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <th
+                    key={header.id}
+                    style={{
+                      textAlign: 'right',
+                      cursor: header.column.getCanSort() ? 'pointer' : 'default',
+                    }}
+                    onClick={header.column.getToggleSortingHandler()}
+                  >
+                    {header.isPlaceholder ? null : header.column.columnDef.header}
+                    {header.column.getIsSorted() === 'asc' ? ' ↑' : null}
+                    {header.column.getIsSorted() === 'desc' ? ' ↓' : null}
+                  </th>
+                ))}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.map((row) => (
+              <tr key={row.id}>
+                {row.getVisibleCells().map((cell) => (
+                  <td
+                    key={cell.id}
+                    className="num-cell"
+                    style={{ textAlign: 'right' }}
+                  >
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

@@ -9,7 +9,8 @@ export function GAViz() {
     if (rows.length === 0) return;
     const t = setInterval(() => setGen((g) => (g + 1) % rows.length), 1400);
     return () => clearInterval(t);
-  }, [rows.length]);
+    // rows comes from a static fixture import, length never changes at runtime.
+  }, []);
 
   if (rows.length === 0) {
     return (
