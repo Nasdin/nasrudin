@@ -117,7 +117,7 @@ function ApiDocsPage() {
                 <Link to="/api-keys">API keys page</Link>. Never embed keys client-side.
               </p>
               <pre className="code-block">
-                <span className="kw">curl</span> https://api.nasrudin.dev/v1/theorems/9f3a2c8e \
+                <span className="kw">curl</span> https://api.nasrudin.org/v1/theorems/9f3a2c8e \
                 {'\n'} -H <span className="str">"Authorization: Bearer nsk_live_a98c…"</span>
               </pre>
             </section>
@@ -138,7 +138,7 @@ function ApiDocsPage() {
                     lang: 'curl',
                     code: (
                       <>
-                        <span className="kw">curl</span> https://api.nasrudin.dev/v1/theorems/
+                        <span className="kw">curl</span> https://api.nasrudin.org/v1/theorems/
                         <span className="str">9f3a2c8e</span> \{'\n'} -H{' '}
                         <span className="str">"Authorization: Bearer $NSR_KEY"</span>
                       </>
@@ -184,7 +184,7 @@ function ApiDocsPage() {
               <pre className="code-block">
                 <span className="kw">curl</span>{' '}
                 <span className="str">
-                  "https://api.nasrudin.dev/v1/search?q=commutator&domain=quantum&limit=20"
+                  "https://api.nasrudin.org/v1/search?q=commutator&domain=quantum&limit=20"
                 </span>{' '}
                 \{'\n'} -H <span className="str">"Authorization: Bearer $NSR_KEY"</span>
               </pre>
@@ -202,7 +202,7 @@ function ApiDocsPage() {
               </p>
               <pre className="code-block">
                 <span className="kw">const</span> es = <span className="kw">new</span> EventSource(
-                <span className="str">"https://api.nasrudin.dev/v1/stream?domain=quantum"</span>);
+                <span className="str">"https://api.nasrudin.org/v1/stream?domain=quantum"</span>);
                 {'\n'}es.onmessage = (e) =&gt; <span className="kw">console</span>.log(
                 <span className="kw">JSON</span>.parse(e.data));
               </pre>

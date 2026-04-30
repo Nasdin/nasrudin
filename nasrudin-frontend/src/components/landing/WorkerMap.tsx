@@ -41,20 +41,9 @@ const LAND_DOTS: ReadonlyArray<{ x: number; y: number }> = (() => {
   return dots;
 })();
 
-const FALLBACK_PINS: Pin[] = [
-  { x: 620, y: 160, status: 'ok', label: 'Tokyo' },
-  { x: 432, y: 130, status: 'ok', label: 'Berlin' },
-  { x: 220, y: 165, status: 'ok', label: 'Austin' },
-  { x: 408, y: 220, status: 'ok', label: 'Lagos' },
-  { x: 432, y: 100, status: 'ok', label: 'Oslo' },
-  { x: 280, y: 290, status: 'idle', label: 'São Paulo' },
-  { x: 558, y: 215, status: 'off', label: 'Bengaluru' },
-  { x: 690, y: 320, status: 'ok', label: 'Sydney' },
-];
-
 export function WorkerMap() {
   const workers = useWorkers();
-  const livePins: Pin[] =
+  const pins: Pin[] =
     workers.data
       ?.map<Pin | null>((w) => {
         const key = w.host?.toLowerCase().replace(/[^a-z]/g, '') ?? '';
@@ -71,7 +60,6 @@ export function WorkerMap() {
         };
       })
       .filter((p): p is Pin => p !== null) ?? [];
-  const pins: Pin[] = livePins.length > 0 ? livePins : FALLBACK_PINS;
 
   return (
     <div className="network-grid">
