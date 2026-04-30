@@ -731,9 +731,12 @@ async fn main() -> anyhow::Result<()> {
         let auth_backend = auth::Backend::new(pg_conn.clone());
         let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
 
-        // Auth-strict: brute-force protection (5 req/min, burst 5)
-        // Routes added back in T8/T9 (POST /api/auth/firebase-session).
+        // Auth-strict: brute-force protection (5 req/min, burst 5).
         let auth_strict = Router::new()
+            .route(
+                "/api/auth/firebase-session",
+                axum::routing::post(auth::firebase_session),
+            )
             .layer(GovernorLayer::new(rate_limit::auth_strict()));
 
         // Auth-session: lightweight session ops (30 req/min, burst 10)
