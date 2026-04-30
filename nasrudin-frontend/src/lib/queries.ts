@@ -8,10 +8,13 @@ import type {
   ConjectureView,
   CreateConjectureRequest,
   CreateConjectureResponse,
+  CreateResearchJobRequest,
+  CreateResearchJobResponse,
   LlmKeysListResponse,
   MeProfile,
   MeStats,
   NewApiKey,
+  ResearchJob,
   SavedSearch,
   SearchRequest,
   SearchResponse,
@@ -322,6 +325,69 @@ export function useStartConjecture(id: string) {
   });
 }
 
+// --- Paid Researcher tier (/api/research/jobs) ---
+
+export const researchJobsQueryKey = ['research-jobs'] as const;
+
+export function useResearchJobs() {
+  return useQuery<{ jobs: ResearchJob[] }>({
+    queryKey: researchJobsQueryKey,
+    queryFn: () => apiFetch<{ jobs: ResearchJob[] }>('/api/research/jobs'),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useResearchJob(id: string | null) {
+  return useQuery<ResearchJob>({
+    queryKey: ['research-job', id],
+    queryFn: () => apiFetch<ResearchJob>(`/api/research/jobs/${id}`),
+    enabled: !!id,
+    refetchInterval: (q) => {
+      // Stop polling once the job hits a terminal state — SSE feeds
+      // live updates anyway.
+      const data = q.state.data as ResearchJob | undefined;
+      if (!data) return 5_000;
+      const terminal = ['proved', 'budget_exhausted', 'cancelled', 'Complete'];
+      return terminal.includes(data.state) ? false : 10_000;
+    },
+  });
+}
+
+export function useCreateResearchJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateResearchJobRequest) =>
+      apiFetch<CreateResearchJobResponse>('/api/research/jobs', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: researchJobsQueryKey });
+      qc.invalidateQueries({ queryKey: meProfileQueryKey });
+    },
+  });
+}
+
+export function useCancelResearchJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<{ cancelled: true; refunded: boolean }>(`/api/research/jobs/${id}/cancel`, {
+        method: 'POST',
+      }),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: researchJobsQueryKey });
+      qc.invalidateQueries({ queryKey: ['research-job', id] });
+      qc.invalidateQueries({ queryKey: meProfileQueryKey });
+    },
+  });
+}
+
 // --- live event streams (SSE) ---
 
-export { useConjectureStream, useDiscoveryFeed, useStatsStream } from './sse';
+export {
+  useConjectureStream,
+  useDiscoveryFeed,
+  useResearchJobStream,
+  useStatsStream,
+} from './sse';

@@ -14,6 +14,7 @@ import { Route as SponsorRouteImport } from './routes/sponsor'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SearchRouteImport } from './routes/search'
+import { Route as ResearchRouteImport } from './routes/research'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as LibraryRouteImport } from './routes/library'
@@ -26,6 +27,7 @@ import { Route as ApiDocsRouteImport } from './routes/api-docs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TheoremIdRouteImport } from './routes/theorem.$id'
 import { Route as SearchConceptRouteImport } from './routes/search.concept'
+import { Route as ResearchIdRouteImport } from './routes/research.$id'
 import { Route as ConjectureIdRouteImport } from './routes/conjecture.$id'
 
 const WorkersRoute = WorkersRouteImport.update({
@@ -51,6 +53,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const SearchRoute = SearchRouteImport.update({
   id: '/search',
   path: '/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResearchRoute = ResearchRouteImport.update({
+  id: '/research',
+  path: '/research',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfileRoute = ProfileRouteImport.update({
@@ -113,6 +120,11 @@ const SearchConceptRoute = SearchConceptRouteImport.update({
   path: '/concept',
   getParentRoute: () => SearchRoute,
 } as any)
+const ResearchIdRoute = ResearchIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ResearchRoute,
+} as any)
 const ConjectureIdRoute = ConjectureIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -130,12 +142,14 @@ export interface FileRoutesByFullPath {
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
+  '/research': typeof ResearchRouteWithChildren
   '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/sponsor': typeof SponsorRoute
   '/workers': typeof WorkersRoute
   '/conjecture/$id': typeof ConjectureIdRoute
+  '/research/$id': typeof ResearchIdRoute
   '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
@@ -150,12 +164,14 @@ export interface FileRoutesByTo {
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
+  '/research': typeof ResearchRouteWithChildren
   '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/sponsor': typeof SponsorRoute
   '/workers': typeof WorkersRoute
   '/conjecture/$id': typeof ConjectureIdRoute
+  '/research/$id': typeof ResearchIdRoute
   '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
@@ -171,12 +187,14 @@ export interface FileRoutesById {
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
+  '/research': typeof ResearchRouteWithChildren
   '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/sponsor': typeof SponsorRoute
   '/workers': typeof WorkersRoute
   '/conjecture/$id': typeof ConjectureIdRoute
+  '/research/$id': typeof ResearchIdRoute
   '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
 }
@@ -193,12 +211,14 @@ export interface FileRouteTypes {
     | '/library'
     | '/pricing'
     | '/profile'
+    | '/research'
     | '/search'
     | '/settings'
     | '/signin'
     | '/sponsor'
     | '/workers'
     | '/conjecture/$id'
+    | '/research/$id'
     | '/search/concept'
     | '/theorem/$id'
   fileRoutesByTo: FileRoutesByTo
@@ -213,12 +233,14 @@ export interface FileRouteTypes {
     | '/library'
     | '/pricing'
     | '/profile'
+    | '/research'
     | '/search'
     | '/settings'
     | '/signin'
     | '/sponsor'
     | '/workers'
     | '/conjecture/$id'
+    | '/research/$id'
     | '/search/concept'
     | '/theorem/$id'
   id:
@@ -233,12 +255,14 @@ export interface FileRouteTypes {
     | '/library'
     | '/pricing'
     | '/profile'
+    | '/research'
     | '/search'
     | '/settings'
     | '/signin'
     | '/sponsor'
     | '/workers'
     | '/conjecture/$id'
+    | '/research/$id'
     | '/search/concept'
     | '/theorem/$id'
   fileRoutesById: FileRoutesById
@@ -254,6 +278,7 @@ export interface RootRouteChildren {
   LibraryRoute: typeof LibraryRoute
   PricingRoute: typeof PricingRoute
   ProfileRoute: typeof ProfileRoute
+  ResearchRoute: typeof ResearchRouteWithChildren
   SearchRoute: typeof SearchRouteWithChildren
   SettingsRoute: typeof SettingsRoute
   SigninRoute: typeof SigninRoute
@@ -297,6 +322,13 @@ declare module '@tanstack/react-router' {
       path: '/search'
       fullPath: '/search'
       preLoaderRoute: typeof SearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/research': {
+      id: '/research'
+      path: '/research'
+      fullPath: '/research'
+      preLoaderRoute: typeof ResearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/profile': {
@@ -383,6 +415,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SearchConceptRouteImport
       parentRoute: typeof SearchRoute
     }
+    '/research/$id': {
+      id: '/research/$id'
+      path: '/$id'
+      fullPath: '/research/$id'
+      preLoaderRoute: typeof ResearchIdRouteImport
+      parentRoute: typeof ResearchRoute
+    }
     '/conjecture/$id': {
       id: '/conjecture/$id'
       path: '/$id'
@@ -403,6 +442,18 @@ const ConjectureRouteChildren: ConjectureRouteChildren = {
 
 const ConjectureRouteWithChildren = ConjectureRoute._addFileChildren(
   ConjectureRouteChildren,
+)
+
+interface ResearchRouteChildren {
+  ResearchIdRoute: typeof ResearchIdRoute
+}
+
+const ResearchRouteChildren: ResearchRouteChildren = {
+  ResearchIdRoute: ResearchIdRoute,
+}
+
+const ResearchRouteWithChildren = ResearchRoute._addFileChildren(
+  ResearchRouteChildren,
 )
 
 interface SearchRouteChildren {
@@ -427,6 +478,7 @@ const rootRouteChildren: RootRouteChildren = {
   LibraryRoute: LibraryRoute,
   PricingRoute: PricingRoute,
   ProfileRoute: ProfileRoute,
+  ResearchRoute: ResearchRouteWithChildren,
   SearchRoute: SearchRouteWithChildren,
   SettingsRoute: SettingsRoute,
   SigninRoute: SigninRoute,

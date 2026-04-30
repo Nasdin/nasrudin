@@ -316,11 +316,7 @@ export interface ConceptSearchResponse {
   embed_available: boolean;
 }
 
-export type ConjectureEventKind =
-  | 'state_change'
-  | 'progress'
-  | 'candidate_verified'
-  | 'complete';
+export type ConjectureEventKind = 'state_change' | 'progress' | 'candidate_verified' | 'complete';
 
 /** Shape of one event in the SSE stream. */
 export interface ConjectureSseEvent {
@@ -329,3 +325,58 @@ export interface ConjectureSseEvent {
   payload: unknown;
   at: string;
 }
+
+// --- Paid Researcher tier (/api/research/jobs) -----------------------------
+
+/** Mirrors `nasrudin_pg::entity::conjecture_jobs::Model`. */
+export interface ResearchJob {
+  id: string;
+  owner_id: string;
+  state: string; // queued | claimed | running | proved | budget_exhausted | cancelled
+  outcome: string | null;
+  hunch: string;
+  domain_hint: string | null;
+  candidates_attempted: number;
+  candidates_verified: number;
+  verified_theorem_ids: number[][] | null;
+  lake_slot_hours_quota: number;
+  lake_slot_hours_consumed: number;
+  slice_priority: number;
+  tier: string;
+  created_at: string;
+  completed_at: string | null;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  lease_expires_at: string | null;
+  last_heartbeat_at: string | null;
+}
+
+export interface CreateResearchJobRequest {
+  hunch: string;
+  domain_hint?: string | null;
+}
+
+export interface CreateResearchJobResponse {
+  job_id: string;
+  state: string;
+}
+
+/**
+ * Per-job SSE event shape. Mirrors `physics_api::jobs::JobEvent` —
+ * the `kind` discriminator + payload fields land flat in the JSON
+ * body (serde tag = "kind", rename_all = "snake_case").
+ */
+export type ResearchJobEvent =
+  | { kind: 'job_state'; state: string }
+  | {
+      kind: 'progress';
+      candidates_attempted: number;
+      candidates_verified: number;
+      best_fitness: number;
+      best_chain_length: number;
+      lake_slot_hours_consumed: number;
+    }
+  | { kind: 'theorem_verified'; theorem_id_hex: string; statement_latex: string }
+  | { kind: 'proved'; lean_url: string }
+  | { kind: 'budget_exhausted'; best_partial_summary: string; refund_credits: number }
+  | { kind: 'cancelled' };
