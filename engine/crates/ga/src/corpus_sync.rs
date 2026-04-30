@@ -78,7 +78,7 @@ const BATCH_SIZE: usize = 1000;
 /// Meta-CF key under which we persist the last-seen
 /// `/api/corpus/dump` ETag. Stored alongside the official corpus
 /// meta keys (`count`, `hydrated_at`, `version`) under the
-/// `CF_CORPUS_META` column family.
+/// `CF_CORPUS_META` column family via `CorpusBackend::meta_put`.
 ///
 /// Worker-only — the API server doesn't read or write this; it has
 /// its own etag-derivation logic in the corpus_dump handler.
@@ -130,52 +130,32 @@ pub fn open_local(path: &Path) -> Result<CorpusDb> {
         .with_context(|| format!("open standalone CorpusDb at {}", path.display()))
 }
 
-/// Read the persisted server-ETag from the worker's CorpusDb meta CF,
-/// if any. Returns `None` on a fresh DB or if the key was never set.
-///
-/// The CorpusBackend trait doesn't expose meta-key reads, so we
-/// piggyback on the `is_hydrated()` semantics: store the etag bytes
-/// alongside the official meta keys via a side-channel `WriteBatch`
-/// after a successful hydration. If the worker restarts before
-/// `finish_hydration` fires, the etag is missing and the next boot
-/// will re-hydrate (correct: we can't trust a partial dump).
+/// Read the persisted server-ETag from the worker's CorpusDb
+/// `CF_CORPUS_META` column family, if any. Returns `None` on a fresh
+/// DB or if the key was never set (first boot, or hydration was
+/// interrupted before [`persist_etag`] fired).
 fn load_persisted_etag(corpus: &CorpusDb) -> Option<String> {
-    // We use the existing put hook by encoding the etag inside an
-    // empty axiom whose *name* is the special key. Cleaner: extend
-    // CorpusBackend with a meta-get/put. But since CorpusBackend is
-    // owned by the parallel agent and we want to avoid cross-cutting
-    // their commit, we maintain a parallel `etag_state` file next to
-    // the rocks dir instead.
-    //
-    // One filesystem read at boot — negligible.
-    let path = etag_state_path(corpus);
-    std::fs::read_to_string(&path).ok().filter(|s| !s.is_empty())
+    match corpus.meta_get(ETAG_META_KEY) {
+        Ok(Some(bytes)) => String::from_utf8(bytes).ok().filter(|s| !s.is_empty()),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "load_persisted_etag: meta_get failed");
+            None
+        }
+    }
 }
 
-/// Persist the latest server-ETag so the next boot can short-circuit
-/// via `If-None-Match`. Best-effort: a write failure isn't fatal,
-/// just means the next boot will re-hydrate unnecessarily.
+/// Persist the latest server-ETag into `CF_CORPUS_META` so the next
+/// boot can short-circuit via `If-None-Match`. Best-effort: a write
+/// failure isn't fatal, just means the next boot will re-hydrate
+/// unnecessarily.
 fn persist_etag(corpus: &CorpusDb, etag: &str) {
-    let path = etag_state_path(corpus);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Err(e) = std::fs::write(&path, etag) {
+    if let Err(e) = corpus.meta_put(ETAG_META_KEY, etag.as_bytes()) {
         tracing::warn!(
             error = %e,
-            path = %path.display(),
             "persist etag failed; next boot will re-hydrate"
         );
     }
-}
-
-/// Sidecar path for the persisted etag — `<rocks_dir>/.worker_etag`.
-/// Lives next to the RocksDB files but isn't a column family, so
-/// CorpusDb iteration / count don't see it.
-fn etag_state_path(_corpus: &CorpusDb) -> std::path::PathBuf {
-    // We don't expose the rocks path through CorpusDb's public API.
-    // Re-resolve via the same env logic the worker boot uses.
-    resolve_local_path().join(".worker_etag")
 }
 
 /// Hydrate the worker's cold tier from `GET /api/corpus/dump`.
@@ -340,11 +320,19 @@ pub async fn hydrate_from_server(
 }
 
 fn flush_batch(corpus: &CorpusDb, batch: &mut Vec<Axiom>) -> Result<()> {
-    for axiom in batch.drain(..) {
-        corpus
-            .put(&axiom)
-            .with_context(|| format!("CorpusBackend::put {}", axiom.name))?;
+    if batch.is_empty() {
+        return Ok(());
     }
+    // WAL-disabled bulk write: 1 fsync for the whole batch instead of
+    // ~1000. On a Pi SD card this shaves minutes off cold-tier
+    // hydration. Crash-safety is provided by `finish_hydration`
+    // writing `count`/`hydrated_at` WITH the WAL after every batch
+    // lands; if we crash here, the next boot sees no `count` meta
+    // key and re-hydrates from scratch (idempotent — name-keyed).
+    corpus
+        .put_many(batch, /* wal_disabled */ true)
+        .context("CorpusBackend::put_many")?;
+    batch.clear();
     Ok(())
 }
 

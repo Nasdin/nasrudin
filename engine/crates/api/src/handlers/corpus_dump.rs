@@ -122,8 +122,18 @@ pub async fn corpus_dump(
     // unless an admin re-hydrates with a schema bump; count changes
     // only on admin reload. Stable enough that ~99% of worker boots
     // hit 304 after the first hydration.
+    //
+    // We read the version from CF_CORPUS_META at request time rather
+    // than hardcoding, so a future schema bump (set via
+    // `CorpusBackend::meta_put("version", ...)` during a re-hydration)
+    // automatically invalidates worker caches without code change.
     let count = cold.count().unwrap_or(0);
-    let version = "1"; // matches `CorpusDb::finish_hydration`'s "version" key.
+    let version = cold
+        .meta_get("version")
+        .ok()
+        .flatten()
+        .and_then(|b| String::from_utf8(b).ok())
+        .unwrap_or_else(|| "1".to_string());
     let etag = format!("\"{count}-{version}\"");
 
     if let Some(client_etag) = headers

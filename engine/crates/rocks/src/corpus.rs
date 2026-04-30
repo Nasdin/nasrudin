@@ -83,9 +83,36 @@ pub trait CorpusBackend: Send + Sync {
     /// Insert a single axiom (writes both `CF_CORPUS_AXIOM` and the
     /// `CF_CORPUS_DOMAIN` index in one atomic `WriteBatch`).
     /// Idempotent — re-inserting the same name overwrites the value.
-    /// Used by the streaming hydrator and by tests; the hot path is
+    /// Used by tests and ad-hoc registrations; the hot path is
     /// read-only so the GA never calls this.
+    ///
+    /// **Each call performs a WAL fsync.** For bulk hydration use
+    /// [`Self::put_many`] which writes a whole batch in one fsync,
+    /// ~10× faster on slow storage (Pi SD card).
     fn put(&self, axiom: &Axiom) -> Result<()>;
+
+    /// Bulk-insert a batch of axioms in **one atomic `WriteBatch`**.
+    /// All `CF_CORPUS_AXIOM` writes + all `CF_CORPUS_DOMAIN` index
+    /// writes commit together with a single fsync at the end.
+    ///
+    /// `wal_disabled = true` skips the WAL entirely for the batch —
+    /// safe during hydration because `finish_hydration` writes the
+    /// `count` meta key WITH the WAL after all data lands; if we
+    /// crash mid-hydration the cold tier on next boot has no
+    /// `count`/`hydrated_at` and we re-hydrate from scratch (the
+    /// dump is idempotent). On a Pi SD card this turns ~1000 fsyncs
+    /// per batch into one — minutes-of-hydration → seconds.
+    fn put_many(&self, axioms: &[Axiom], wal_disabled: bool) -> Result<()>;
+
+    /// Read a meta-CF key. Used for ETag persistence (worker side)
+    /// and version probing (server side). Bytes are returned as-is;
+    /// callers parse to UTF-8 / integer / etc. as needed.
+    fn meta_get(&self, key: &str) -> Result<Option<Vec<u8>>>;
+
+    /// Write a meta-CF key. Companion to [`Self::meta_get`].
+    /// Single-key fsync — fine for infrequent writes (one per
+    /// hydration completion, one per ETag refresh).
+    fn meta_put(&self, key: &str, value: &[u8]) -> Result<()>;
 
     /// Mark the cold tier hydrated and persist the running count.
     /// Called by the hydrator at end-of-stream so subsequent boots
@@ -329,6 +356,69 @@ impl CorpusBackend for CorpusDb {
         batch.put_cf(&domain_cf, &dkey, b"");
 
         self.db.write(batch).context("write corpus batch")?;
+        Ok(())
+    }
+
+    fn put_many(&self, axioms: &[Axiom], wal_disabled: bool) -> Result<()> {
+        if axioms.is_empty() {
+            return Ok(());
+        }
+        let axiom_cf = self
+            .db
+            .cf_handle(CF_CORPUS_AXIOM)
+            .context("Missing corpus_axiom CF")?;
+        let domain_cf = self
+            .db
+            .cf_handle(CF_CORPUS_DOMAIN)
+            .context("Missing corpus_domain CF")?;
+
+        let mut batch = WriteBatch::default();
+        for axiom in axioms {
+            let value = bincode::serialize(axiom)
+                .with_context(|| format!("serialize corpus axiom {}", axiom.name))?;
+            batch.put_cf(&axiom_cf, axiom.name.as_bytes(), &value);
+
+            let domain_str = domain_to_key(&axiom.domain);
+            let dkey = Self::domain_key(&domain_str, &axiom.name);
+            batch.put_cf(&domain_cf, &dkey, b"");
+        }
+
+        if wal_disabled {
+            // WAL disabled: durability is provided by `finish_hydration`'s
+            // count/hydrated_at write at the end of the stream. If we
+            // crash here, count/hydrated_at are missing and the next
+            // boot re-hydrates (idempotent). This trades crash-recovery
+            // granularity for ~10× hydration speed on slow SD cards.
+            let mut opts = rocksdb::WriteOptions::default();
+            opts.disable_wal(true);
+            self.db
+                .write_opt(batch, &opts)
+                .context("write corpus batch (no-WAL)")?;
+        } else {
+            self.db.write(batch).context("write corpus batch")?;
+        }
+        Ok(())
+    }
+
+    fn meta_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        let cf = self
+            .db
+            .cf_handle(CF_CORPUS_META)
+            .context("Missing corpus_meta CF")?;
+        Ok(self
+            .db
+            .get_cf(&cf, key.as_bytes())
+            .context("get corpus_meta key")?)
+    }
+
+    fn meta_put(&self, key: &str, value: &[u8]) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_CORPUS_META)
+            .context("Missing corpus_meta CF")?;
+        self.db
+            .put_cf(&cf, key.as_bytes(), value)
+            .context("put corpus_meta key")?;
         Ok(())
     }
 
