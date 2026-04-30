@@ -113,3 +113,36 @@ pub async fn refund_research_credit(
     let r = db.execute_raw(stmt).await?;
     Ok(r.rows_affected())
 }
+
+/// Grant `credits` research credits to the Stripe customer's user iff
+/// the new `cycle_start` advances past the user's recorded
+/// `plan_cycle_start` — i.e. it's a fresh billing period, not just a
+/// payment-method update or other no-op `subscription.updated`. This
+/// makes the webhook idempotent for repeated updates within the same
+/// period: Stripe can resend the same subscription event N times and
+/// we still grant credits exactly once per period.
+///
+/// The grant *sets* (not adds) so the user always has exactly `credits`
+/// at the start of a fresh period — lose-it-or-use-it semantics
+/// matching `targeted_searches_per_period`. Returns rows affected
+/// (1 = granted, 0 = same period or no matching customer).
+pub async fn grant_research_credits_on_period_advance(
+    db: &DatabaseConnection,
+    stripe_customer_id: &str,
+    new_cycle_start: chrono::DateTime<chrono::Utc>,
+    credits: i32,
+) -> Result<u64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE users SET research_credits = $3 \
+         WHERE stripe_customer_id = $1 \
+           AND (plan_cycle_start IS NULL OR plan_cycle_start < $2)",
+        [
+            stripe_customer_id.into(),
+            new_cycle_start.fixed_offset().into(),
+            credits.into(),
+        ],
+    );
+    let r = db.execute_raw(stmt).await?;
+    Ok(r.rows_affected())
+}

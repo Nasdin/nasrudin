@@ -80,6 +80,38 @@ pub async fn dispatch(
             let period_end =
                 chrono::DateTime::<chrono::Utc>::from_timestamp(sub.current_period_end, 0)
                     .unwrap_or_else(chrono::Utc::now);
+            // Credits grant runs BEFORE apply_subscription_active so
+            // it can read the user's PREVIOUS plan_cycle_start to
+            // detect a fresh period. apply_subscription_active then
+            // overwrites plan_cycle_start with the new value.
+            let credits = tier.quotas().research_credits_per_period as i32;
+            if credits > 0 {
+                match nasrudin_pg::query::users::grant_research_credits_on_period_advance(
+                    pg,
+                    &customer_id,
+                    cycle_start,
+                    credits,
+                )
+                .await
+                {
+                    Ok(1) => tracing::info!(
+                        customer = %customer_id,
+                        tier = %tier.as_db(),
+                        credits,
+                        "research_credits granted (new billing period)"
+                    ),
+                    Ok(_) => tracing::debug!(
+                        customer = %customer_id,
+                        "research_credits unchanged (same billing period — Stripe sub.updated for non-period-advance reason)"
+                    ),
+                    Err(e) => tracing::warn!(
+                        customer = %customer_id,
+                        error = %e,
+                        "research_credits grant failed (continuing — subscription state still applies)"
+                    ),
+                }
+            }
+
             nasrudin_pg::query::billing::apply_subscription_active(
                 pg,
                 &customer_id,

@@ -44,26 +44,34 @@ impl PlanTier {
                 api_per_day: 1_000,
                 targeted_searches_per_period: 0,
                 library_max: 50,
+                research_credits_per_period: 0,
             },
             Self::Researcher => Quotas {
                 api_per_day: 10_000,
                 targeted_searches_per_period: 10,
                 library_max: u32::MAX,
+                // One credit = one paid conjecture (96 lake-slot-hours
+                // each). 10/period matches targeted_searches_per_period
+                // and the pricing-page promise.
+                research_credits_per_period: 10,
             },
             Self::Team => Quotas {
                 api_per_day: 50_000,
                 targeted_searches_per_period: 50,
                 library_max: u32::MAX,
+                research_credits_per_period: 50,
             },
             Self::Institution => Quotas {
                 api_per_day: 250_000,
                 targeted_searches_per_period: 200,
                 library_max: u32::MAX,
+                research_credits_per_period: 200,
             },
             Self::Enterprise => Quotas {
                 api_per_day: u32::MAX,
                 targeted_searches_per_period: u32::MAX,
                 library_max: u32::MAX,
+                research_credits_per_period: u32::MAX,
             },
         }
     }
@@ -74,6 +82,10 @@ pub struct Quotas {
     pub api_per_day: u32,
     pub targeted_searches_per_period: u32,
     pub library_max: u32,
+    /// Number of paid Researcher conjectures granted at the start of
+    /// each billing period. Lose-it-or-use-it (mirrors
+    /// `targeted_searches_per_period`).
+    pub research_credits_per_period: u32,
 }
 
 /// The start of the user's current quota period. Paid users get the
