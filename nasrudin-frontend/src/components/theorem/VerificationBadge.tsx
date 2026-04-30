@@ -69,7 +69,6 @@ function styleOf(s: Props): BadgeStyle {
         dot: 'var(--blue-500, #3b82f6)',
         hint: 'A worker lake-built this locally; server lake confirmation pending.',
       };
-    case 'chain_replay':
     default:
       return {
         label: 'Chain-verified',
