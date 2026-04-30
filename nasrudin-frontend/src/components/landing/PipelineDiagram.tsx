@@ -1,3 +1,125 @@
+function PipelineSteering() {
+  return (
+    <svg viewBox="0 0 600 80" width="100%" height="80" style={{ display: 'block' }}>
+      <title>LLM steerer + reinforcement-learning bandits</title>
+      <defs>
+        <marker
+          id="arr-steer"
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto"
+        >
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--terracotta-500)" />
+        </marker>
+      </defs>
+
+      {/* LLM box on the left */}
+      <rect
+        x="20"
+        y="22"
+        width="92"
+        height="36"
+        rx="6"
+        fill="var(--ink-900)"
+        stroke="var(--ink-900)"
+      />
+      <text
+        x="66"
+        y="38"
+        textAnchor="middle"
+        fontSize="10"
+        fill="var(--paper-50)"
+        fontFamily="var(--font-mono)"
+        fontWeight="600"
+      >
+        LLM
+      </text>
+      <text
+        x="66"
+        y="51"
+        textAnchor="middle"
+        fontSize="9"
+        fill="var(--paper-200)"
+        fontFamily="var(--font-mono)"
+      >
+        Kimi K2.5
+      </text>
+
+      {/* Three bandit chips on the right */}
+      {(['UCB1 K', 'directive', 'compute'] as const).map((label, i) => (
+        <g key={label}>
+          <rect
+            x={250 + i * 100}
+            y="14"
+            width="86"
+            height="22"
+            rx="4"
+            fill="var(--olive-50)"
+            stroke="var(--olive-500)"
+            strokeWidth="0.8"
+          />
+          <text
+            x={293 + i * 100}
+            y="29"
+            textAnchor="middle"
+            fontSize="10"
+            fill="var(--olive-700)"
+            fontFamily="var(--font-mono)"
+          >
+            {label}
+          </text>
+        </g>
+      ))}
+      <text x="250" y="50" fontSize="9" fill="var(--ink-500)" fontFamily="var(--font-mono)">
+        UCB1 + LinUCB · γ=0.7 traces · novelty bonus
+      </text>
+
+      {/* Arrow LLM → bandits */}
+      <line
+        x1="112"
+        y1="35"
+        x2="246"
+        y2="25"
+        stroke="var(--terracotta-500)"
+        strokeWidth="1.4"
+        markerEnd="url(#arr-steer)"
+      >
+        <animate attributeName="opacity" values="0.4;1;0.4" dur="2.6s" repeatCount="indefinite" />
+      </line>
+
+      {/* Reward feedback loop bottom */}
+      <path
+        d="M 580 70 Q 320 75 60 70"
+        fill="none"
+        stroke="var(--olive-500)"
+        strokeWidth="1.2"
+        strokeDasharray="3 3"
+        markerEnd="url(#arr-steer)"
+      >
+        <animate
+          attributeName="stroke-dashoffset"
+          values="0;-12"
+          dur="1.5s"
+          repeatCount="indefinite"
+        />
+      </path>
+      <text
+        x="320"
+        y="68"
+        textAnchor="middle"
+        fontSize="9"
+        fill="var(--olive-700)"
+        fontFamily="var(--font-mono)"
+      >
+        reward feedback
+      </text>
+    </svg>
+  );
+}
+
 function PipelineSeed() {
   const dots = Array.from({ length: 28 });
   return (
@@ -261,12 +383,21 @@ function PipelineLean({ acceptanceRate }: { acceptanceRate: string }) {
   );
 }
 
-export function PipelineDiagram({ totalAxioms, totalVerified, acceptanceRate }: PipelineDiagramProps) {
+export function PipelineDiagram({
+  totalAxioms,
+  totalVerified,
+  acceptanceRate,
+}: PipelineDiagramProps) {
   const stages = [
     {
       name: 'Mathematical axioms',
       sub: `${totalAxioms.toLocaleString()} from Mathlib · physics postulates`,
       viz: <PipelineSeed />,
+    },
+    {
+      name: 'LLM steerer + RL bandits',
+      sub: 'Kimi K2.5 emits intent · 4 online bandits learn the knobs',
+      viz: <PipelineSteering />,
     },
     { name: 'Rust GA engine', sub: 'combine · mutate · crossover', viz: <PipelineGA /> },
     {

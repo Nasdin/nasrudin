@@ -7,20 +7,36 @@ Named after [Nasrudin](https://en.wikipedia.org/wiki/Nasreddin), the wise fool o
 ## How It Works
 
 ```
-Mathematical Axioms (350K+ from Mathlib) + Physics Postulates (~43 axioms)
+Mathematical Axioms (Mathlib full corpus) + Physics Postulates (~43)
         |
-   Rust GA Engine (combine, mutate, crossover expressions)
+        v
+[ LLM Steerer (Kimi K2.5) ]  <-- emits SteeringConfig every 10 min:
+        |                         domain weights, mutation knobs,
+        |                         per-cluster directives, target proposals
+        v
+[ Reinforcement Learning layer ]  <-- four UCB1/LinUCB bandits learn:
+        |                              · K (clusters per island)
+        |                              · per-cluster directive multipliers
+        |                              · test-time compute scaling
+        |                              · contextual generalisation across
+        |                                (strength, choice) via LinUCB
+        v
+   Rust GA Engine (island model · combine · mutate · crossover)
         |
    Candidate Theorems
         |
-   Lean4 Formal Verifier (grind, simp, omega, ring, ...)
+   Lean4 Formal Verifier (grind · simp · omega · ring · linarith)
         |
    Verified Theorems --> RocksDB
         |
    Server re-verifies --> Accepted into global theorem database
+        |
+        +----> Reward signal feeds back to bandits + LLM prompt
+                (per-cluster fitness deltas, γ-discounted over 3 chunks,
+                 plus intrinsic-motivation novelty bonus)
 ```
 
-Nasrudin doesn't know what physics looks like. It generates candidate mathematical statements by combining and mutating existing theorems, then uses Lean4 to formally prove or reject them. Over time, the system builds up a corpus of verified mathematical truths -- some of which turn out to be real physics.
+Nasrudin doesn't know what physics looks like. It generates candidate mathematical statements by combining and mutating existing theorems, then uses Lean4 to formally prove or reject them. An LLM steers the search and four bandits learn online which knobs work — no offline training pipeline, no GPU, just CPU. Over time, the system builds up a corpus of verified mathematical truths, with the steering loop continuously self-tuning toward more productive directions. Some of those truths turn out to be real physics; the longer it runs, the more original the discoveries.
 
 Every theorem carries its full Lean4 proof. Academics can inspect proofs in the web UI, download any theorem as a standalone `.lean` file, and independently re-verify it with `lake build` -- no trust in the server required.
 
@@ -113,6 +129,28 @@ Each cycle's *outcome* (theorems verified, actual domain distribution, cascade r
 **Validation & safety.** Every emitted `SteeringConfig` is range-checked (domain weights sum to 1, mutation rate ∈ [0.05, 0.30], population size ∈ [32, 512], etc.). On any failure — Gradient outage, parse error, validator reject — the daemon transparently falls back to the last-known-good config and flags the row in `cluster_steering`. The cluster keeps running with stale-but-validated steering indefinitely.
 
 The Gradient API key (`GRADIENT_API_KEY`) is server-owned and lives only in the daemon's environment. It is never exposed to clients and is distinct from the per-user encrypted-key flow used by the FunSearch-style conjecture creator.
+
+## Reinforcement-Learning Layer
+
+The LLM emits *intent* (which clusters to focus on, when to spend more compute, which physics targets to chase). Four bandits handle the *numerical optimisation* — given the LLM's intent, which actual multiplier values produce more verified discoveries. The bandits train online from worker reward signals, no GPU, no offline pipeline:
+
+| Bandit | What it learns | Action space | Storage |
+|---|---|---|---|
+| **K-bandit** (UCB1) | Number of K-means clusters per island | K ∈ {2,3,4,5,6,7,8,10,12} | `cluster_bandit_arms` |
+| **Directive bandit** (UCB1 + LinUCB) | Multiplier per (action, strength) for each LLM directive | 9 × 5 × 4 actions per island | `cluster_directive_arms` + `cluster_directive_linucb` |
+| **Compute bandit** (UCB1) | Population_size & generations multiplier | {0.5×, 0.75×, 1×, 1.5×, 3×, 3.5×, 4×, 4.5×, 5×} | `cluster_compute_arms` |
+
+All bandits use **UCB1** for exploration vs exploitation. The directive bandit also runs a **pure-Rust LinUCB** contextual layer (hand-coded 6×6 ridge regression) that generalises across the (strength, choice) plane — a pull at strength=0.5 informs neighbouring strengths via Bayesian linear regression, not just the discrete arm. Updates are rank-1, ~120 flops, microseconds per pull.
+
+**Reward attribution** uses **eligibility traces with γ=0.7 over a 3-chunk horizon**: each directive applies → its matched cluster's mean fitness is sampled at chunks N, N+1, N+2 → the γ-discounted return drives the bandit. This averages out single-chunk noise. **Intrinsic motivation** adds a capped novelty bonus (≤0.10) for directives applied to rarely-seen cluster lineages, encouraging exploration of new structural patterns.
+
+**Online action expansion.** When a bandit's outermost arm dominates with high confidence (≥30 pulls, ≥0.65 mean reward), the next-finer-grained arm is materialised lazily — the action space grows past the spec author's initial guess.
+
+**Self-curriculum.** The LLM proposes physics targets via `soft_targets` with stable `target_id` strings; targets persist in `llm_proposed_targets` with a {open → proving → proved | abandoned} lifecycle. Subsequent cycles surface in-flight targets in the prompt so the LLM tracks its own curriculum across days, not just the 10-cycle history.
+
+**Replay buffer.** Every reward observation is also written to `directive_pull_events` (raw event log, 30-day retention). The aggregate path keeps the live bandit responsive; the event log preserves per-pull data for any future offline analysis.
+
+The system is fully autonomous: every `/api/directive-feedback` POST trains the model inline as a side effect, no scheduled jobs, no batch training, no manual ops. As you swap in stronger LLMs over time (`STEERER_MODEL` env var), the intent quality improves and the bandits' job gets easier — the curriculum compounds, the corpus grows, and the search converges on more original physics.
 
 ## Project Structure
 
