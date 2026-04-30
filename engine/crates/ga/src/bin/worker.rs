@@ -750,6 +750,82 @@ async fn main() {
             }
         }
 
+        // ── Test-time compute scaling bandit ───────────────────────
+        // Read compute_directives, UCB1-pick a population_size /
+        // generations multiplier per matched directive, apply
+        // chunk-wide. Compute is not per-cluster; one matched
+        // directive scales the whole island's chunk. Multiple
+        // matched directives compose multiplicatively (capped).
+        // Records pulls via `pending_compute_pulls` so the bandit
+        // can reward attribution at chunk end based on the chunk's
+        // discoveries-per-pop ratio (higher = compute well-spent).
+        let mut pending_compute_pulls: Vec<(String, u8, u8, f64)> = Vec::new();
+        let canonical_domain_for_compute: &str = match domain.as_str() {
+            "sr" => "special_relativity",
+            "em" => "electromagnetism",
+            "qm" => "quantum_mechanics",
+            "thermo" => "thermodynamics",
+            "cm" => "classical_mechanics",
+            "gr" => "general_relativity",
+            other => other,
+        };
+        if let Some(steering_val) = last_steering.as_ref() {
+            let compute_dirs = steering_val
+                .get("config")
+                .and_then(|c| c.get("compute_directives"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let mut compute_mult: f32 = 1.0;
+            for d in compute_dirs.iter() {
+                let scope_dom = d
+                    .get("island_domain")
+                    .and_then(|v| v.as_str());
+                if let Some(dom) = scope_dom {
+                    if dom != canonical_domain_for_compute {
+                        continue;
+                    }
+                }
+                let strength = d
+                    .get("strength")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0)
+                    as f32;
+                let strength_bucket = (strength.clamp(0.0, 1.0) * 5.0)
+                    .floor()
+                    .min(4.0) as u8;
+                let arms = compute_arms_for_slot(
+                    steering_val,
+                    canonical_domain_for_compute,
+                    strength_bucket,
+                );
+                let multiplier_choice = pick_multiplier_choice(&arms, strength);
+                let mult_value = lookup_compute_multiplier(multiplier_choice);
+                compute_mult *= mult_value;
+                pending_compute_pulls.push((
+                    canonical_domain_for_compute.to_string(),
+                    strength_bucket,
+                    multiplier_choice,
+                    chunk_config.population_size as f64,
+                ));
+                tracing::info!(
+                    strength_bucket,
+                    multiplier_choice,
+                    mult_value,
+                    "applied compute directive (test-time scaling)"
+                );
+            }
+            // Cap the chunk-wide compute scaling so a stack of
+            // 2.0× directives can't blow past the runtime's pop /
+            // generation budget. Bounds match the GA's defaults.
+            let scaled_pop =
+                (chunk_config.population_size as f32 * compute_mult).clamp(32.0, 512.0);
+            let scaled_gens =
+                (chunk_config.generations as f32 * compute_mult).clamp(8.0, 2000.0);
+            chunk_config.population_size = scaled_pop as usize;
+            chunk_config.generations = scaled_gens as usize;
+        }
+
         // ── Per-cluster directive routing (v1.5 + v2) ──────────────
         // When connected to the API, externally seed the population
         // and cluster the seeds so per-cluster directives can route
@@ -1134,6 +1210,47 @@ async fn main() {
                             "posted directive_feedback batch (γ-discounted)"
                         );
                     }
+                }
+            }
+
+            // Compute-bandit reward attribution: a single chunk-wide
+            // signal — `discoveries_per_pop` (verified-theorem yield
+            // per individual). Higher-throughput chunks reward the
+            // compute multiplier that produced them; the bandit
+            // converges on multipliers that turn extra compute into
+            // proportionally more discoveries. AlphaProof-style
+            // test-time-compute scaling: spend more where it pays.
+            if !pending_compute_pulls.is_empty()
+                && let Some(api_cfg_for_cluster) = api_cfg.as_ref()
+            {
+                let pop_used = chunk_config.population_size.max(1) as f64;
+                let yield_per_pop = report.verified.len() as f64 / pop_used;
+                // Map to [0, 1]: assume 0.05 verified/individual is
+                // a strong chunk; saturate above. Tunable.
+                let reward = (yield_per_pop / 0.05).clamp(0.0, 1.0);
+                let mut feedback_batch: Vec<serde_json::Value> = Vec::new();
+                for (dom, bucket, choice, _pop_at_apply) in
+                    pending_compute_pulls.iter()
+                {
+                    feedback_batch.push(serde_json::json!({
+                        "island_domain": dom,
+                        "strength_bucket": bucket,
+                        "multiplier_choice": choice,
+                        "reward": reward,
+                    }));
+                }
+                if let Err(e) =
+                    post_compute_feedback(api_cfg_for_cluster, &feedback_batch).await
+                {
+                    tracing::debug!(error=%e,
+                        "compute_feedback post failed (non-blocking)");
+                } else {
+                    tracing::info!(
+                        n = feedback_batch.len(),
+                        reward,
+                        yield_per_pop,
+                        "posted compute_feedback batch"
+                    );
                 }
             }
         }
@@ -1736,6 +1853,73 @@ fn lookup_action_multiplier(action: &str, choice: u8) -> f32 {
         "kill" => [0.00, 0.10, 0.20, 0.30, 0.50][i],
         _ => 1.0,
     }
+}
+
+/// Compute-scaling multiplier table. Mirrors
+/// `directive_bandit::COMPUTE_MULTIPLIERS` server-side.
+fn lookup_compute_multiplier(choice: u8) -> f32 {
+    let i = (choice as usize).min(4);
+    [0.50, 0.75, 1.00, 1.50, 3.00][i]
+}
+
+/// Look up the 5 compute arms for a (island, strength_bucket) slot
+/// from the seed payload's `compute_arms` snapshot.
+fn compute_arms_for_slot(
+    seed_value: &serde_json::Value,
+    island_domain: &str,
+    strength_bucket: u8,
+) -> Vec<(u8, i64, f64)> {
+    let Some(snapshot) = seed_value
+        .get("compute_arms")
+        .and_then(|v| v.get("snapshot"))
+        .and_then(|v| v.as_array())
+    else {
+        return vec![];
+    };
+    for slot in snapshot {
+        if slot.get("island_domain").and_then(|v| v.as_str()) == Some(island_domain)
+            && slot.get("strength_bucket").and_then(|v| v.as_i64())
+                == Some(strength_bucket as i64)
+        {
+            return slot
+                .get("arms")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|a| {
+                    let choice = a.get("multiplier_choice").and_then(|v| v.as_u64())? as u8;
+                    let pulls = a.get("pulls").and_then(|v| v.as_i64())?;
+                    let mean = a.get("mean_reward").and_then(|v| v.as_f64())?;
+                    Some((choice, pulls, mean * pulls as f64))
+                })
+                .collect();
+        }
+    }
+    vec![]
+}
+
+/// POST a batch of compute-bandit reward observations to
+/// /api/directive-feedback. Reuses the same endpoint with
+/// action="compute" so the server-side handler can route to
+/// `cluster_compute_arms` based on the action sentinel.
+async fn post_compute_feedback(
+    cfg: &ApiSubmitConfig,
+    feedback: &[serde_json::Value],
+) -> anyhow::Result<()> {
+    if feedback.is_empty() {
+        return Ok(());
+    }
+    let body = serde_json::json!({ "feedback": feedback });
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/compute-feedback", cfg.api_url))
+        .bearer_auth(&cfg.worker_key)
+        .json(&body)
+        .send()
+        .await?;
+    resp.error_for_status()?;
+    Ok(())
 }
 
 /// POST a batch of (arm_key, reward) tuples to /api/directive-feedback.

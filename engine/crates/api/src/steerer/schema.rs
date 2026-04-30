@@ -51,6 +51,11 @@ pub struct SteeringConfig {
     /// cluster by `centroid_skeleton_hash` from the previous chunk.
     #[serde(default)]
     pub cluster_directives: Vec<ClusterDirective>,
+    /// Test-time compute-scaling directives. Empty in scope=B.
+    /// Each directive's strength is bucketed and the compute bandit
+    /// picks a `population_size` / `generations` multiplier.
+    #[serde(default)]
+    pub compute_directives: Vec<ComputeDirective>,
     /// Free-form rationale (≤500 chars). Stored for the next cycle
     /// to read; never affects worker behaviour.
     pub rationale: String,
@@ -107,6 +112,21 @@ impl Default for MutationKnobs {
     }
 }
 
+/// Test-time compute scaling directive. Distinct from
+/// `cluster_directives` because compute is a chunk-wide knob, not
+/// per-cluster. The LLM emits one per island it wants to scale
+/// (Some(island_domain)) or one with `island_domain=None` to scale
+/// every island uniformly. Strength is bucketed worker-side and the
+/// compute bandit picks a population_size / generations multiplier
+/// from the learned arm table — AlphaProof-style test-time-compute
+/// scaling at the steering layer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ComputeDirective {
+    /// `None` = apply to every island; `Some(domain)` = scoped.
+    pub island_domain: Option<String>,
+    pub strength: f32,
+}
+
 /// Per-cluster directive emitted by the LLM. Addresses a cluster by
 /// the `centroid_skeleton_hash` it observed in the previous chunk's
 /// ClusterSummary, NOT by `cluster_id` — k-means renumbers clusters
@@ -153,6 +173,10 @@ pub enum SteeringValidationError {
     BHasClusterDirectives,
     #[error("cluster directive strength must be in [0.0, 1.0]")]
     BadDirectiveStrength,
+    #[error("scope=B must have empty compute_directives")]
+    BHasComputeDirectives,
+    #[error("compute directive strength must be in [0.0, 1.0]")]
+    BadComputeStrength,
     #[error("scope=B must have empty hard_targets")]
     BHasHardTargets,
     #[error("scope=B must have null mutation_knobs")]
@@ -203,10 +227,18 @@ impl SteeringConfig {
             if !self.cluster_directives.is_empty() {
                 return Err(SteeringValidationError::BHasClusterDirectives);
             }
+            if !self.compute_directives.is_empty() {
+                return Err(SteeringValidationError::BHasComputeDirectives);
+            }
         }
         for d in &self.cluster_directives {
             if !(0.0..=1.0).contains(&d.strength) {
                 return Err(SteeringValidationError::BadDirectiveStrength);
+            }
+        }
+        for d in &self.compute_directives {
+            if !(0.0..=1.0).contains(&d.strength) {
+                return Err(SteeringValidationError::BadComputeStrength);
             }
         }
         if let Some(k) = &self.mutation_knobs {
@@ -261,6 +293,7 @@ pub fn default_config() -> SteeringConfig {
         mutation_knobs: Some(MutationKnobs::default()),
         mutation_priors: HashMap::new(),
         cluster_directives: vec![],
+        compute_directives: vec![],
         rationale: "default cold-start config".into(),
     }
 }

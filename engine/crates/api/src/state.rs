@@ -135,6 +135,11 @@ pub struct AppState {
     /// `select_multiplier` to pick the multiplier_choice for each
     /// cluster_directive that lands.
     pub directive_arms: Arc<arc_swap::ArcSwap<DirectiveArmsSnapshot>>,
+    /// Snapshot of the compute-scaling bandit arm table. Workers
+    /// fetch via `/api/seed` and pick a population_size /
+    /// generations multiplier for each compute_directive that
+    /// lands. Refreshed each steerer cycle.
+    pub compute_arms: Arc<arc_swap::ArcSwap<ComputeArmsSnapshot>>,
     /// Aggregate cluster-capacity tracker (sum of last-seen lake
     /// slots per worker, plus a counter of slots currently committed
     /// to paid `conjecture_jobs`). Drives the explorer-floor check in
@@ -244,6 +249,25 @@ pub struct DirectiveArmsSnapshot {
 pub struct DirectiveArmRow {
     pub island_domain: String,
     pub action: String,
+    pub strength_bucket: i16,
+    pub multiplier_choice: i16,
+    pub pulls: i64,
+    pub total_reward: f64,
+}
+
+/// Compute-scaling bandit arm snapshot. Same shape as
+/// `DirectiveArmsSnapshot` minus the per-action dimension —
+/// compute is a single global knob keyed only on
+/// (island_domain, strength_bucket, multiplier_choice).
+#[derive(Debug, Clone, Default)]
+pub struct ComputeArmsSnapshot {
+    pub arms: Vec<ComputeArmRow>,
+    pub etag: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComputeArmRow {
+    pub island_domain: String,
     pub strength_bucket: i16,
     pub multiplier_choice: i16,
     pub pulls: i64,

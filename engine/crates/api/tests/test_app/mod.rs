@@ -168,6 +168,9 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
     physics_api::steerer::directive_bandit::ensure_all_arms(&pg)
         .await
         .ok()?;
+    physics_api::steerer::directive_bandit::ensure_all_compute_arms(&pg)
+        .await
+        .ok()?;
 
     let rocks_dir = tempfile::tempdir().ok()?;
     let rocks = Arc::new(TheoremDb::new(rocks_dir.path().to_str()?).ok()?);
@@ -224,6 +227,9 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         )),
         directive_arms: Arc::new(arc_swap::ArcSwap::from_pointee(
             physics_api::state::DirectiveArmsSnapshot::default(),
+        )),
+        compute_arms: Arc::new(arc_swap::ArcSwap::from_pointee(
+            physics_api::state::ComputeArmsSnapshot::default(),
         )),
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),

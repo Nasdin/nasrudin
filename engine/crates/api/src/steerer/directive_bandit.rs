@@ -24,6 +24,12 @@ pub const BOOST_MULTIPLIERS: [f32; 5] = [1.00, 1.25, 1.50, 1.75, 2.00];
 pub const EXPLOIT_MULTIPLIERS: [f32; 5] = [1.00, 1.25, 1.50, 1.75, 2.00];
 pub const DIVERSIFY_FRACTIONS: [f32; 5] = [0.00, 0.10, 0.20, 0.30, 0.50];
 pub const KILL_FRACTIONS: [f32; 5] = [0.00, 0.10, 0.20, 0.30, 0.50];
+/// Compute-scaling multipliers for the test-time-compute bandit.
+/// Applied to chunk_config.population_size AND chunk_config.generations
+/// (the two compute knobs the GA respects). Range covers
+/// 0.5×→3× total compute. The 1.0× choice exists so the bandit can
+/// learn that scaling DOWN from baseline is sometimes optimal.
+pub const COMPUTE_MULTIPLIERS: [f32; 5] = [0.50, 0.75, 1.00, 1.50, 3.00];
 
 pub const ACTIONS: &[ClusterAction] = &[
     ClusterAction::Boost,
@@ -115,6 +121,31 @@ pub fn compute_reward(fitness_delta: f32) -> f64 {
 /// pulls. Linearly maps strength ∈ [0, 1] across the 5-entry table.
 pub fn strength_to_static_choice(strength: f32) -> u8 {
     bucketize_strength(strength)
+}
+
+/// Resolve a compute multiplier_choice index to its concrete value.
+/// Out-of-range choice saturates at index 4 (the 3.0× cap).
+pub fn lookup_compute_multiplier(choice: u8) -> f32 {
+    COMPUTE_MULTIPLIERS[(choice as usize).min(4)]
+}
+
+/// Materialise every (island_domain, strength_bucket,
+/// multiplier_choice) row in `cluster_compute_arms` at zero stats.
+/// Idempotent. 6 × 5 × 5 = 150 rows.
+pub async fn ensure_all_compute_arms(
+    db: &DatabaseConnection,
+) -> Result<(), sea_orm::DbErr> {
+    for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
+        for bucket in 0..STRENGTH_BUCKETS as i16 {
+            for choice in 0..MULTIPLIER_CHOICES as i16 {
+                nasrudin_pg::query::cluster_compute_arms::ensure_arm(
+                    db, domain, bucket, choice,
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Materialise every (island_domain, action, strength_bucket,

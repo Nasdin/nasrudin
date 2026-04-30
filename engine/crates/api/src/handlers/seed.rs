@@ -27,7 +27,39 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::state::{AppState, DirectiveArmsSnapshot, SeedCacheKey};
+use crate::state::{AppState, ComputeArmsSnapshot, DirectiveArmsSnapshot, SeedCacheKey};
+
+/// Compact the compute-arm snapshot into per-(island, strength_bucket)
+/// slots with the 5 multiplier_choice arms inlined. ~30 slots × 120 B
+/// ≈ 4 KB plain, ~1 KB gzipped.
+fn compute_arms_compact(snap: &ComputeArmsSnapshot) -> Vec<serde_json::Value> {
+    use std::collections::BTreeMap;
+    type SlotKey = (String, i16);
+    let mut by_slot: BTreeMap<SlotKey, Vec<serde_json::Value>> = BTreeMap::new();
+    for r in &snap.arms {
+        let key = (r.island_domain.clone(), r.strength_bucket);
+        let mean = if r.pulls > 0 {
+            r.total_reward / r.pulls as f64
+        } else {
+            0.0
+        };
+        by_slot.entry(key).or_default().push(serde_json::json!({
+            "multiplier_choice": r.multiplier_choice,
+            "pulls": r.pulls,
+            "mean_reward": mean,
+        }));
+    }
+    by_slot
+        .into_iter()
+        .map(|((domain, bucket), arms)| {
+            serde_json::json!({
+                "island_domain": domain,
+                "strength_bucket": bucket,
+                "arms": arms,
+            })
+        })
+        .collect()
+}
 
 /// Convert the flat per-arm snapshot into a per-slot rollup with the
 /// 5 multiplier_choice arms inlined. Cuts JSON size from
@@ -288,6 +320,7 @@ pub async fn seed(
     let steering_snap = state.steering.load();
     let cc_snap = state.cluster_config.load();
     let arms_snap = state.directive_arms.load();
+    let compute_snap = state.compute_arms.load();
     let body = serde_json::json!({
         "axioms": axioms,
         "seed_theorems": seed_theorems,
@@ -303,6 +336,10 @@ pub async fn seed(
         "directive_arms": {
             "snapshot": directive_arms_compact(&arms_snap),
             "etag": format!("{:016x}", arms_snap.etag),
+        },
+        "compute_arms": {
+            "snapshot": compute_arms_compact(&compute_snap),
+            "etag": format!("{:016x}", compute_snap.etag),
         },
     });
     let body_str = serde_json::to_string(&body)

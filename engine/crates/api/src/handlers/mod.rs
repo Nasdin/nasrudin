@@ -2,6 +2,7 @@ pub mod admin;
 pub mod api_keys;
 pub mod billing;
 pub mod cluster_report;
+pub mod compute_feedback;
 pub mod directive_feedback;
 pub mod concept_search;
 pub mod conjecture;

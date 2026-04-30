@@ -191,6 +191,39 @@ pub async fn run_one_cycle(
             etag: directive_etag,
         }));
 
+    // Compute-scaling bandit snapshot. Same pattern as the directive
+    // arms; ~150 rows so the full read each cycle is cheap.
+    let compute_rows_raw = nasrudin_pg::query::cluster_compute_arms::snapshot_all(db)
+        .await
+        .unwrap_or_default();
+    let compute_rows: Vec<crate::state::ComputeArmRow> = compute_rows_raw
+        .into_iter()
+        .map(|m| crate::state::ComputeArmRow {
+            island_domain: m.island_domain,
+            strength_bucket: m.strength_bucket,
+            multiplier_choice: m.multiplier_choice,
+            pulls: m.pulls,
+            total_reward: m.total_reward,
+        })
+        .collect();
+    let compute_etag = {
+        let mut buf = Vec::with_capacity(compute_rows.len() * 32);
+        for r in &compute_rows {
+            buf.extend_from_slice(r.island_domain.as_bytes());
+            buf.extend_from_slice(&r.strength_bucket.to_le_bytes());
+            buf.extend_from_slice(&r.multiplier_choice.to_le_bytes());
+            buf.extend_from_slice(&r.pulls.to_le_bytes());
+            buf.extend_from_slice(&r.total_reward.to_le_bytes());
+        }
+        xxhash_rust::xxh64::xxh64(&buf, 0)
+    };
+    state
+        .compute_arms
+        .store(Arc::new(crate::state::ComputeArmsSnapshot {
+            arms: compute_rows,
+            etag: compute_etag,
+        }));
+
     // 4. Build prompt.
     let history = load_history(db, HISTORY_N).await?;
     let demand = aggregate_demand(db, DEMAND_WINDOW).await.unwrap_or_default();
@@ -279,6 +312,7 @@ fn parse_and_validate(text: &str, expected_scope: &str) -> Result<SteeringConfig
         c.hard_targets.clear();
         c.mutation_knobs = None;
         c.cluster_directives.clear();
+        c.compute_directives.clear();
     }
     c.validate()?;
     Ok(c)

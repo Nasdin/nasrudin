@@ -453,6 +453,9 @@ async fn main() -> anyhow::Result<()> {
         directive_arms: Arc::new(arc_swap::ArcSwap::from_pointee(
             physics_api::state::DirectiveArmsSnapshot::default(),
         )),
+        compute_arms: Arc::new(arc_swap::ArcSwap::from_pointee(
+            physics_api::state::ComputeArmsSnapshot::default(),
+        )),
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
@@ -642,6 +645,17 @@ async fn main() -> anyhow::Result<()> {
                 per-cluster multipliers will fall back to static formula until next boot");
         } else {
             tracing::info!("Cluster directive bandit arms ensured");
+        }
+
+        // Compute-scaling bandit: 6 islands × 5 strength buckets ×
+        // 5 multiplier choices = 150 rows. Idempotent.
+        if let Err(e) =
+            physics_api::steerer::directive_bandit::ensure_all_compute_arms(pg).await
+        {
+            tracing::warn!(error=%e, "compute bandit ensure_all_compute_arms failed; \
+                test-time-compute scaling will fall back to baseline until next boot");
+        } else {
+            tracing::info!("Cluster compute bandit arms ensured");
         }
 
         // Hourly purge of cluster_reports older than 7 days. Bandit
@@ -1160,6 +1174,14 @@ async fn main() -> anyhow::Result<()> {
             .route(
                 "/api/directive-feedback",
                 axum::routing::post(handlers::directive_feedback::handler),
+            )
+            // Test-time-compute scaling bandit reward feedback.
+            // Workers POST a batch of (island, strength_bucket,
+            // multiplier_choice, reward) tuples after observing the
+            // chunk's discoveries-per-pop.
+            .route(
+                "/api/compute-feedback",
+                axum::routing::post(handlers::compute_feedback::handler),
             )
             // Phase E: conjecture worker endpoints (claim/heartbeat/submit/complete).
             // Each consumes from the same per-worker rate-limit bucket as /api/ingest.
