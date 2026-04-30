@@ -86,3 +86,4 @@ tempfile = "3"
 # test target avoids dragging the conflict into the main code.
 rsa = "0.9"
 rand_08 = { package = "rand", version = "0.8" }
+proptest = "1"
