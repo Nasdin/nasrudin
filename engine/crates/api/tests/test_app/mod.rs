@@ -217,6 +217,7 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         stripe_http: reqwest::Client::new(),
         stripe_base_url: "https://stripe.invalid".into(),
         stripe_secret: String::new(),
+        impersonation_signing_key: Some(b"test-signing-key-32-bytes-aaaaaaaa".to_vec()),
         trust_cache: physics_api::trust::TrustCache::new(
             std::time::Duration::from_secs(30),
             128,

@@ -177,6 +177,10 @@ pub struct AppState {
     /// `STRIPE_SECRET_KEY` env var, or empty string when unset (in
     /// which case the refund handler returns 503).
     pub stripe_secret: String,
+    /// HMAC signing key for impersonation tokens. Hex-decoded from
+    /// `IMPERSONATION_SIGNING_KEY`. `None` disables impersonation —
+    /// the start handler returns 503.
+    pub impersonation_signing_key: Option<Vec<u8>>,
 }
 
 /// Cache key for the `/api/seed` JSON response cache. Distinct

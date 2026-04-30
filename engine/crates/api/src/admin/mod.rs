@@ -5,4 +5,5 @@
 //! - `require_admin` — RequireAdmin extractor (session OR ADMIN_TOKEN bearer).
 
 pub mod audit;
+pub mod impersonation_expiry;
 pub mod require_admin;

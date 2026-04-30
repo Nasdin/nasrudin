@@ -4,6 +4,7 @@
 pub mod admin;
 pub mod auth;
 pub mod firebase_auth;
+pub mod impersonation;
 pub mod billing;
 pub mod cache;
 pub mod conjecture;

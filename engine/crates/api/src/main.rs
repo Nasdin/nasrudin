@@ -459,6 +459,10 @@ async fn main() -> anyhow::Result<()> {
         stripe_base_url: std::env::var("STRIPE_BASE_URL")
             .unwrap_or_else(|_| "https://api.stripe.com".into()),
         stripe_secret: std::env::var("STRIPE_SECRET_KEY").unwrap_or_default(),
+        impersonation_signing_key: std::env::var("IMPERSONATION_SIGNING_KEY")
+            .ok()
+            .and_then(|hex_key| hex::decode(hex_key.trim()).ok())
+            .filter(|b| b.len() >= 16),
         trust_cache: trust_cache.clone(),
         trust_invalidation_tx: trust_invalidation_tx.clone(),
         trusted_spot_check_rate,
@@ -511,6 +515,13 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Conjecture lease reaper spawned");
     } else {
         tracing::info!("Conjecture lease reaper disabled (no PostgreSQL)");
+    }
+
+    // Impersonation expiry tick — 60s. Marks ended_at + writes a
+    // system audit row for sessions whose expires_at has passed without
+    // a manual end.
+    if let Some(pg) = state.pg.clone() {
+        physics_api::admin::impersonation_expiry::spawn(pg);
     }
 
     // Refund reconciler. Walks `refund_records` rows still pending after
@@ -846,6 +857,14 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/admin/users/{id}/refund",
             post(handlers::admin::refund::refund),
+        )
+        .route(
+            "/api/admin/users/{id}/impersonate",
+            post(handlers::admin::impersonate::start),
+        )
+        .route(
+            "/api/admin/impersonate/end",
+            post(handlers::admin::impersonate::end_impersonation),
         )
         .route("/api/admin/audit", get(handlers::admin::audit_log::list))
         .route("/api/admin/stats", get(handlers::admin::stats::stats))
