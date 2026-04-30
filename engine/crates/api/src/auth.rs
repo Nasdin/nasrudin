@@ -16,7 +16,7 @@ pub struct AuthUser {
     pub id: Uuid,
     pub email: String,
     #[serde(skip)]
-    pub password_hash: String,
+    pub password_hash: Option<String>,
     pub display_name: Option<String>,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     pub plan_tier: String,
@@ -24,10 +24,27 @@ pub struct AuthUser {
     pub stripe_subscription_id: Option<String>,
     pub current_period_end: Option<chrono::DateTime<chrono::FixedOffset>>,
     pub plan_cycle_start: Option<chrono::DateTime<chrono::FixedOffset>>,
+    pub github_id: Option<i64>,
+    pub github_login: Option<String>,
+    /// Stable per-user secret used by axum-login's session_auth_hash.
+    /// For password users this is the hash bytes; for OAuth-only users it
+    /// is the github_id encoded as 8 big-endian bytes. Never serialised.
+    #[serde(skip)]
+    pub auth_hash_bytes: Vec<u8>,
 }
 
 impl AuthUser {
-    fn from_model(m: nasrudin_pg::entity::users::Model) -> Self {
+    pub fn from_model(m: nasrudin_pg::entity::users::Model) -> Self {
+        let auth_hash_bytes = if let Some(ref hash) = m.password_hash {
+            hash.as_bytes().to_vec()
+        } else if let Some(gid) = m.github_id {
+            gid.to_be_bytes().to_vec()
+        } else {
+            // Defensive: a user with neither password nor github_id should not
+            // exist. Use the user's UUID bytes so axum-login still gets a
+            // stable, non-empty value.
+            m.id.as_bytes().to_vec()
+        };
         Self {
             id: m.id,
             email: m.email,
@@ -39,6 +56,9 @@ impl AuthUser {
             stripe_subscription_id: m.stripe_subscription_id,
             current_period_end: m.current_period_end,
             plan_cycle_start: m.plan_cycle_start,
+            github_id: m.github_id,
+            github_login: m.github_login,
+            auth_hash_bytes,
         }
     }
 }
@@ -51,7 +71,7 @@ impl axum_login::AuthUser for AuthUser {
     }
 
     fn session_auth_hash(&self) -> &[u8] {
-        self.password_hash.as_bytes()
+        &self.auth_hash_bytes
     }
 }
 
@@ -106,11 +126,16 @@ impl AuthnBackend for Backend {
             return Ok(None);
         };
 
+        // OAuth-only users have no password — treat as auth failure rather
+        // than panicking. They must use the GitHub button to sign in.
+        let Some(stored_hash) = user.password_hash.clone() else {
+            return Ok(None);
+        };
+
         // Argon2 verification is CPU-intensive — run on blocking thread.
-        let hash = user.password_hash.clone();
         let password = creds.password;
         let valid = tokio::task::spawn_blocking(move || {
-            password_auth::verify_password(password, &hash).is_ok()
+            password_auth::verify_password(password, &stored_hash).is_ok()
         })
         .await?;
 
@@ -164,7 +189,7 @@ pub async fn register(
     let user = match nasrudin_pg::query::users::create_user(
         &db,
         &body.email,
-        &hash,
+        Some(hash.as_str()),
         body.display_name.as_deref(),
     )
     .await
