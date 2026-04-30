@@ -69,6 +69,12 @@ const SCHEMA_HINT: &str = r#"{
       "action": "boost"|"exploit"|"diversify"|"kill",
       "strength": <0..1> }
   ] -- empty in B,
+  "extension": <any JSON>     -- free-form pass-through. Use this to
+                                  experiment with directive shapes the
+                                  current daemon doesn't recognise yet
+                                  (proof plans, axiom hints, etc.).
+                                  Persisted in history; ignored by the
+                                  GA until a future version reads it,
   "rationale": "<= 500 chars"
 }"#;
 

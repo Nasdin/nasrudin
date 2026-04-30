@@ -62,6 +62,21 @@ pub struct SteeringConfig {
     /// default; the LLM emits these as it reasons about progress.
     #[serde(default)]
     pub target_status_updates: Vec<TargetStatusUpdate>,
+    /// Free-form pass-through field for forward compatibility with
+    /// future LLM emission shapes. The current daemon stores this
+    /// verbatim in `cluster_steering.config_json` and surfaces it
+    /// back to the LLM in the next cycle's `history_newest_first`,
+    /// so even without code changes the LLM can experiment with
+    /// new directive shapes (e.g. multi-step proof plans, axiom
+    /// dependency hints, novelty heuristics) and the system carries
+    /// them forward as conversational state. When subsequent
+    /// versions of the steerer / worker grow first-class support
+    /// for a field that lives here, they can read it directly
+    /// without breaking deserialisation of older configs. Bounded
+    /// at ~16 KB by the LLM's max_tokens budget; nothing else
+    /// validates it.
+    #[serde(default)]
+    pub extension: serde_json::Value,
     /// Free-form rationale (≤500 chars). Stored for the next cycle
     /// to read; never affects worker behaviour.
     pub rationale: String,
@@ -318,6 +333,7 @@ pub fn default_config() -> SteeringConfig {
         cluster_directives: vec![],
         compute_directives: vec![],
         target_status_updates: vec![],
+        extension: serde_json::Value::Null,
         rationale: "default cold-start config".into(),
     }
 }
