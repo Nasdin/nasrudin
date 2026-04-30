@@ -717,17 +717,8 @@ async fn main() -> anyhow::Result<()> {
         let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
 
         // Auth-strict: brute-force protection (5 req/min, burst 5)
+        // Routes added back in T8/T9 (POST /api/auth/firebase-session).
         let auth_strict = Router::new()
-            .route("/api/auth/register", axum::routing::post(auth::register))
-            .route("/api/auth/login", axum::routing::post(auth::login))
-            .route(
-                "/api/auth/github/start",
-                get(physics_api::auth_oauth::start),
-            )
-            .route(
-                "/api/auth/github/callback",
-                get(physics_api::auth_oauth::callback),
-            )
             .layer(GovernorLayer::new(rate_limit::auth_strict()));
 
         // Auth-session: lightweight session ops (30 req/min, burst 10)

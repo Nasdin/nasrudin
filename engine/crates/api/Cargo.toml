@@ -82,4 +82,8 @@ jsonwebtoken = "9"
 
 [dev-dependencies]
 tempfile = "3"
+# rsa + rand 0.8 (matched pair) for JWT test fixtures. rand 0.9 (workspace
+# default) breaks rsa's CryptoRngCore bound; pinning rand 0.8 just for the
+# test target avoids dragging the conflict into the main code.
 rsa = "0.9"
+rand_08 = { package = "rand", version = "0.8" }

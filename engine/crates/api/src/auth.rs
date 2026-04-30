@@ -15,8 +15,6 @@ use uuid::Uuid;
 pub struct AuthUser {
     pub id: Uuid,
     pub email: String,
-    #[serde(skip)]
-    pub password_hash: Option<String>,
     pub display_name: Option<String>,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     pub plan_tier: String,
@@ -24,31 +22,17 @@ pub struct AuthUser {
     pub stripe_subscription_id: Option<String>,
     pub current_period_end: Option<chrono::DateTime<chrono::FixedOffset>>,
     pub plan_cycle_start: Option<chrono::DateTime<chrono::FixedOffset>>,
-    pub github_id: Option<i64>,
-    pub github_login: Option<String>,
-    /// Stable per-user secret used by axum-login's session_auth_hash.
-    /// For password users this is the hash bytes; for OAuth-only users it
-    /// is the github_id encoded as 8 big-endian bytes. Never serialised.
-    #[serde(skip)]
-    pub auth_hash_bytes: Vec<u8>,
+    /// Firebase UID — the source-of-truth identity link. Exposed via
+    /// /api/auth/me so the frontend can assert "this is the user I think
+    /// it is" before issuing API calls.
+    pub firebase_uid: String,
 }
 
 impl AuthUser {
     pub fn from_model(m: nasrudin_pg::entity::users::Model) -> Self {
-        let auth_hash_bytes = if let Some(ref hash) = m.password_hash {
-            hash.as_bytes().to_vec()
-        } else if let Some(gid) = m.github_id {
-            gid.to_be_bytes().to_vec()
-        } else {
-            // Defensive: a user with neither password nor github_id should not
-            // exist. Use the user's UUID bytes so axum-login still gets a
-            // stable, non-empty value.
-            m.id.as_bytes().to_vec()
-        };
         Self {
             id: m.id,
             email: m.email,
-            password_hash: m.password_hash,
             display_name: m.display_name,
             created_at: m.created_at,
             plan_tier: m.plan_tier,
@@ -56,9 +40,7 @@ impl AuthUser {
             stripe_subscription_id: m.stripe_subscription_id,
             current_period_end: m.current_period_end,
             plan_cycle_start: m.plan_cycle_start,
-            github_id: m.github_id,
-            github_login: m.github_login,
-            auth_hash_bytes,
+            firebase_uid: m.firebase_uid,
         }
     }
 }
@@ -71,7 +53,10 @@ impl axum_login::AuthUser for AuthUser {
     }
 
     fn session_auth_hash(&self) -> &[u8] {
-        &self.auth_hash_bytes
+        // Stable per-user secret. firebase_uid never changes for a given
+        // user; if it ever does (provider unlink + relink edge case), all
+        // existing sessions invalidate, which is the correct behavior.
+        self.firebase_uid.as_bytes()
     }
 }
 
@@ -118,32 +103,13 @@ impl AuthnBackend for Backend {
 
     async fn authenticate(
         &self,
-        creds: Self::Credentials,
+        _creds: Self::Credentials,
     ) -> Result<Option<Self::User>, Self::Error> {
-        let user = nasrudin_pg::query::users::find_by_email(&self.db, &creds.email).await?;
-
-        let Some(user) = user else {
-            return Ok(None);
-        };
-
-        // OAuth-only users have no password — treat as auth failure rather
-        // than panicking. They must use the GitHub button to sign in.
-        let Some(stored_hash) = user.password_hash.clone() else {
-            return Ok(None);
-        };
-
-        // Argon2 verification is CPU-intensive — run on blocking thread.
-        let password = creds.password;
-        let valid = tokio::task::spawn_blocking(move || {
-            password_auth::verify_password(password, &stored_hash).is_ok()
-        })
-        .await?;
-
-        if valid {
-            Ok(Some(AuthUser::from_model(user)))
-        } else {
-            Ok(None)
-        }
+        // axum-login's AuthnBackend trait requires authenticate, but our
+        // session-issue path is firebase_session, which doesn't go through
+        // axum_login::AuthSession::authenticate(). We never call this
+        // method; return None to make accidental calls fail closed.
+        Ok(None)
     }
 
     async fn get_user(&self, user_id: &Uuid) -> Result<Option<Self::User>, Self::Error> {
@@ -158,84 +124,6 @@ pub type AuthSess = AuthSession<Backend>;
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-pub struct RegisterInput {
-    pub email: String,
-    pub password: String,
-    pub display_name: Option<String>,
-}
-
-/// `POST /api/auth/register`
-pub async fn register(
-    mut auth_session: AuthSess,
-    Json(body): Json<RegisterInput>,
-) -> impl IntoResponse {
-    // Hash the password (CPU-intensive).
-    let password = body.password.clone();
-    let hash =
-        match tokio::task::spawn_blocking(move || password_auth::generate_hash(password)).await {
-            Ok(h) => h,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": format!("hash error: {e}") })),
-                );
-            }
-        };
-
-    // Insert user into DB.
-    let db = auth_session.backend.db.clone();
-    let user = match nasrudin_pg::query::users::create_user(
-        &db,
-        &body.email,
-        Some(hash.as_str()),
-        body.display_name.as_deref(),
-    )
-    .await
-    {
-        Ok(model) => AuthUser::from_model(model),
-        Err(e) => {
-            let status = if e.to_string().contains("duplicate") || e.to_string().contains("unique")
-            {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            return (status, Json(serde_json::json!({ "error": format!("{e}") })));
-        }
-    };
-
-    // Auto-login after registration.
-    if let Err(e) = auth_session.login(&user).await {
-        tracing::error!("Auto-login after register failed: {e}");
-    }
-
-    (StatusCode::OK, Json(serde_json::to_value(&user).unwrap()))
-}
-
-/// `POST /api/auth/login`
-pub async fn login(mut auth_session: AuthSess, Json(body): Json<Credentials>) -> impl IntoResponse {
-    match auth_session.authenticate(body).await {
-        Ok(Some(user)) => {
-            if let Err(e) = auth_session.login(&user).await {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": format!("session error: {e}") })),
-                );
-            }
-            (StatusCode::OK, Json(serde_json::to_value(&user).unwrap()))
-        }
-        Ok(None) => (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Invalid email or password" })),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("{e}") })),
-        ),
-    }
-}
 
 /// `POST /api/auth/logout`
 pub async fn logout(mut auth_session: AuthSess) -> impl IntoResponse {

@@ -44,7 +44,7 @@ struct Keypair {
 }
 
 fn gen_keypair() -> Keypair {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand_08::thread_rng();
     let priv_key = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
     let priv_pem = priv_key
         .to_pkcs1_pem(LineEnding::LF)
@@ -114,7 +114,8 @@ async fn rejects_expired_token() {
     let kp = gen_keypair();
     let jwks = make_jwks(kp.decoding);
     let mut c = default_claims();
-    c.exp = now_secs() - 60;
+    // Beyond the 60s leeway in verify_id_token.
+    c.exp = now_secs() - 120;
     c.iat = now_secs() - 3600;
     let token = sign(&c, &kp.encoding);
     let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks).await.unwrap_err();
