@@ -73,6 +73,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 arc-swap = { workspace = true }
 dashmap = { workspace = true }
 async-trait = { workspace = true }
+oauth2 = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
 
 [dev-dependencies]
 tempfile = "3"

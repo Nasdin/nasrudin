@@ -2,6 +2,7 @@
 //! and integration tests.
 
 pub mod auth;
+pub mod auth_oauth;
 pub mod billing;
 pub mod cache;
 pub mod conjecture;

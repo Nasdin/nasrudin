@@ -140,6 +140,15 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("ADMIN_TOKEN unset — /api/admin/* endpoints disabled");
     }
 
+    let oauth_github = physics_api::state::GithubOAuthConfig::from_env();
+    if oauth_github.is_some() {
+        tracing::info!("GitHub OAuth configured");
+    } else {
+        tracing::info!(
+            "GITHUB_OAUTH_* env vars unset — /api/auth/github/* returns 503"
+        );
+    }
+
     // Cache layer (Phase A.5). Constructed unconditionally; per-flag
     // gating (NASRUDIN_CACHE_ATTEMPTS=1, etc.) happens at the call sites.
     let cache_ctx = match physics_api::cache::CacheCtx::build(&db) {
@@ -400,6 +409,7 @@ async fn main() -> anyhow::Result<()> {
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
+        oauth_github,
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
