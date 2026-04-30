@@ -2,7 +2,6 @@
 //! and integration tests.
 
 pub mod auth;
-pub mod auth_oauth;
 pub mod firebase_auth;
 pub mod billing;
 pub mod cache;

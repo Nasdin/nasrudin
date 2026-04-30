@@ -38,7 +38,7 @@ nasrudin-embed = { path = "../embed" }
 nasrudin-llm = { path = "../llm" }
 sea-orm = { workspace = true }
 axum = { workspace = true }
-axum-extra = { workspace = true, features = ["typed-header", "cookie"] }
+axum-extra = { workspace = true }
 axum-login = { workspace = true }
 tower-sessions = { workspace = true }
 password-auth = { workspace = true }
@@ -73,11 +73,6 @@ tokio-util = { version = "0.7", features = ["io"] }
 arc-swap = { workspace = true }
 dashmap = { workspace = true }
 async-trait = { workspace = true }
-oauth2 = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
-# `time::Duration` is required by axum-extra cookie's `max_age` API
-# (which transitively re-exports the `cookie` crate; cookie itself uses
-# `time` for durations). Pinned to match the version in Cargo.lock.
-time = "0.3"
 jsonwebtoken = "9"
 
 [dev-dependencies]
