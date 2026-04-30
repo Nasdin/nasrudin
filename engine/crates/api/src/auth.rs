@@ -151,6 +151,142 @@ pub async fn me(auth_session: AuthSess) -> impl IntoResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Firebase session-exchange
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct FirebaseSessionInput {
+    pub id_token: String,
+}
+
+/// `POST /api/auth/firebase-session`
+///
+/// Verifies a Firebase ID token (RS256 JWT against Google's JWKs),
+/// find-or-creates the matching `users` row keyed by `firebase_uid`, and
+/// issues an axum-login session cookie. The Firebase ID token is consumed
+/// once and not stored.
+///
+/// Strict-verification policy: rejects `email_verified == false` for the
+/// `password` provider only. Google-provider sign-ins pass through (Google
+/// guarantees the email is verified).
+pub async fn firebase_session(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::state::AppState>>,
+    mut auth_session: AuthSess,
+    Json(body): Json<FirebaseSessionInput>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+
+    let Some(ref project_id) = state.firebase_project_id else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "firebase_not_configured" })),
+        )
+            .into_response();
+    };
+
+    // 1. Verify the token.
+    let claims = match crate::firebase_auth::verify_id_token(
+        &body.id_token,
+        project_id,
+        &state.firebase_jwks,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let (code, msg) = match e {
+                crate::firebase_auth::VerifyError::Expired => ("token_expired", "id token expired"),
+                crate::firebase_auth::VerifyError::WrongAudience => {
+                    ("wrong_audience", "id token aud mismatch")
+                }
+                crate::firebase_auth::VerifyError::WrongIssuer => {
+                    ("wrong_issuer", "id token iss mismatch")
+                }
+                crate::firebase_auth::VerifyError::BadSignature => {
+                    ("bad_signature", "id token signature invalid")
+                }
+                crate::firebase_auth::VerifyError::MalformedToken(_) => {
+                    ("malformed_token", "id token malformed")
+                }
+                crate::firebase_auth::VerifyError::MissingClaim(c) => {
+                    tracing::warn!(claim = c, "firebase id token missing required claim");
+                    ("missing_claim", "id token missing required claim")
+                }
+                crate::firebase_auth::VerifyError::JwksFetch(_) => {
+                    return (
+                        StatusCode::BAD_GATEWAY,
+                        Json(serde_json::json!({ "error": "jwks_unavailable" })),
+                    )
+                        .into_response();
+                }
+            };
+            tracing::info!(error = msg, "firebase_session verify failed");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": code })),
+            )
+                .into_response();
+        }
+    };
+
+    // 2. Strict email-verification policy: only enforce for password provider.
+    if !claims.email_verified && claims.sign_in_provider == "password" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "email_not_verified" })),
+        )
+            .into_response();
+    }
+
+    // 3. Find or create user.
+    let db = auth_session.backend.db.clone();
+    let user_model = match nasrudin_pg::query::users::find_by_firebase_uid(&db, &claims.uid).await
+    {
+        Ok(Some(m)) => m,
+        Ok(None) => match nasrudin_pg::query::users::create_firebase_user(
+            &db,
+            &claims.uid,
+            &claims.email,
+            claims.name.as_deref(),
+        )
+        .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(error = %e, "create_firebase_user failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "user_create_failed" })),
+                )
+                    .into_response();
+            }
+        },
+        Err(e) => {
+            tracing::error!(error = %e, "find_by_firebase_uid failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "db_lookup_failed" })),
+            )
+                .into_response();
+        }
+    };
+
+    let auth_user = AuthUser::from_model(user_model);
+
+    // 4. Issue session cookie.
+    if let Err(e) = auth_session.login(&auth_user).await {
+        tracing::error!(error = %e, "axum-login session create failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "session_create_failed" })),
+        )
+            .into_response();
+    }
+
+    (StatusCode::OK, Json(serde_json::to_value(&auth_user).unwrap())).into_response()
+}
+
+// ---------------------------------------------------------------------------
 // AuthOrApiKey: cookie session OR `Authorization: Bearer nsk_live_…`
 // ---------------------------------------------------------------------------
 
