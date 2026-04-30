@@ -159,19 +159,38 @@ extract-mathlib-narrow: build-extract
         --output=output/math_corpus.json
 
 # Pull latest PhysLean + Mathlib upstreams, rebuild the dependency
-# closure, re-extract the corpus, then hot-reload the live API. New
-# upstream theorems flow into the GA's `IntroduceTheorem` candidate
-# pool without an API redeploy. Set `ADMIN_TOKEN` and `API_URL` in
-# the environment (defaults to localhost:3001).
+# closure, re-extract BOTH the PhysLean catalog (load-from-catalog) AND
+# the full Mathlib corpus (load-math-corpus), then hot-reload the live
+# API. New upstream theorems flow into the GA's `IntroduceTheorem`
+# candidate pool without an API redeploy.
+#
+# Set `ADMIN_TOKEN` and `API_URL` in the environment (defaults to
+# localhost:3001). Hot-reload is best-effort — the recipe still
+# completes if the API is offline.
+#
+# This is the one-command path for "I want the latest from upstream".
+# Run periodically (weekly?) to track Mathlib + PhysLean evolution.
 refresh-corpus:
+    @echo "[refresh-corpus] pulling latest PhysLean + Mathlib..."
     cd physlean-extract && lake update PhysLean
     cd physlean-extract && lake build PhysLean
+    @echo "[refresh-corpus] re-extracting PhysLean catalog..."
+    just extract-physlean
+    @echo "[refresh-corpus] re-extracting full Mathlib corpus (~5–10 min)..."
     just extract-mathlib
-    @echo "Hot-reloading API AxiomStore..."
+    @echo "[refresh-corpus] hot-reloading live API AxiomStore..."
     @curl -fsS -X POST \
         -H "Authorization: Bearer $${ADMIN_TOKEN:-changeme}" \
         "$${API_URL:-http://localhost:3001}/api/admin/reload_corpus" \
         | python3 -m json.tool || echo "(reload skipped — API not running or token wrong)"
+    @echo "[refresh-corpus] done. catalog + math_corpus now reflect upstream HEAD."
+
+# Update only the Mathlib + PhysLean sources (no extraction). Useful
+# when CI / a deploy job will run extraction itself. Same as the first
+# two steps of refresh-corpus.
+update-upstreams:
+    cd physlean-extract && lake update PhysLean
+    cd physlean-extract && lake build PhysLean
 
 # Generate .lean axiom files from PhysLean catalog
 generate-axioms:

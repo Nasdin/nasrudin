@@ -44,3 +44,13 @@ LOCK
 
 .env
 physlean-extract/output/math_corpus_full.json
+# Generated artifacts produced by `just extract-physlean` /
+# `just extract-mathlib`. The full `+all` math_corpus is ~290 MB which
+# exceeds GitHub's pre-receive size check; the catalog is ~12 MB. Both
+# regenerate from upstream PhysLean + Mathlib HEAD via
+# `just refresh-corpus`. Local dev: `just bootstrap` after cloning.
+# Deploy: `deploy/scripts/build-release.sh` auto-refreshes via its
+# freshness gate (STALE_AFTER_DAYS=14 default) and bakes them into the
+# tarball, so prod boot finds them at /opt/nasrudin/physlean-extract/output/.
+physlean-extract/output/math_corpus.json
+physlean-extract/output/catalog.json

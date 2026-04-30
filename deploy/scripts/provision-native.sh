@@ -88,6 +88,7 @@ log "creating nasrudin system user + dirs"
 id -u nasrudin >/dev/null 2>&1 \
   || useradd --system --create-home --home-dir /var/lib/nasrudin --shell /usr/sbin/nologin nasrudin
 install -d -o nasrudin -g nasrudin "$INSTALL" "$INSTALL/bin" "$INSTALL/frontend" "$INSTALL/prover" "$INSTALL/elan"
+install -d -o nasrudin -g nasrudin "$INSTALL/physlean-extract/output"
 install -d -o nasrudin -g nasrudin "$DATA" "$DATA/rocks" "$DATA/lake-cache"
 
 # ── 4. Stage application files ────────────────────────────────────────────
@@ -95,6 +96,12 @@ log "syncing artifact -> $INSTALL"
 rsync -a --delete "$STAGING/bin/"      "$INSTALL/bin/"
 rsync -a --delete "$STAGING/frontend/" "$INSTALL/frontend/"
 rsync -a --delete "$STAGING/prover/"   "$INSTALL/prover/"
+# physics-api at boot reads:
+#   <PROVER_ROOT>/../physlean-extract/output/{catalog,math_corpus}.json
+# i.e. /opt/nasrudin/physlean-extract/output/*. We sync without --delete
+# here so a later partial release (which omits the corpus, not yet
+# supported but defensible against) doesn't wipe a previously-staged copy.
+rsync -a "$STAGING/physlean-extract/" "$INSTALL/physlean-extract/"
 chown -R nasrudin:nasrudin "$INSTALL"
 
 # ── 5. .env generation ────────────────────────────────────────────────────

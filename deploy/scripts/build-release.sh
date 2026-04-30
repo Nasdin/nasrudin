@@ -24,6 +24,24 @@ OUT_DIR=dist/release
 TARBALL=dist/release.tar.gz
 BUILD_CACHE=dist/build-cache
 
+# ── Corpus freshness policy ──────────────────────────────────────────────
+# physics-api at boot reads catalog.json + math_corpus.json. We bake them
+# into the release tarball so the droplet doesn't need a Lean toolchain
+# at provision time. Mathlib + PhysLean evolve independently of this
+# repo, so a stale corpus on disk produces a deploy that's behind
+# upstream by however long since the last `just extract-mathlib` run.
+#
+# Defaults:
+#   STALE_AFTER_DAYS=14    refuse to ship if the corpus is older than this
+#   AUTO_REFRESH=1         when stale, auto-run `just refresh-corpus` to
+#                          pull latest upstreams + re-extract
+#
+# Override at the call site:
+#   AUTO_REFRESH=0 deploy/scripts/build-release.sh   # fail loudly instead
+#   STALE_AFTER_DAYS=1 deploy/scripts/build-release.sh # daily refresh
+STALE_AFTER_DAYS="${STALE_AFTER_DAYS:-14}"
+AUTO_REFRESH="${AUTO_REFRESH:-1}"
+
 if ! docker info >/dev/null 2>&1; then
   echo "[build] error: docker daemon not running" >&2
   exit 1
@@ -118,6 +136,73 @@ echo "[build] copying prover source..."
 cp -R prover/PhysicsGenerator "$OUT_DIR/prover/"
 cp prover/PhysicsGenerator.lean prover/lakefile.lean prover/lake-manifest.json prover/lean-toolchain "$OUT_DIR/prover/"
 [ -d prover/scripts ] && cp -R prover/scripts "$OUT_DIR/prover/" || true
+
+# ── 3.5. PhysLean catalog + math_corpus (with freshness gate) ────────────
+# physics-api at boot loads:
+#   <PROVER_ROOT>/../physlean-extract/output/catalog.json     (PhysLean axioms)
+#   <PROVER_ROOT>/../physlean-extract/output/math_corpus.json (Mathlib substrate)
+# Boot panics if math_corpus is missing or has <10 000 entries.
+# We bake them into the tarball so the droplet doesn't need a Lean toolchain
+# for cold start. The droplet's PROVER_ROOT is /opt/nasrudin/prover, so the
+# corpus lands at /opt/nasrudin/physlean-extract/output/.
+
+stale_after_seconds=$((STALE_AFTER_DAYS * 86400))
+needs_refresh=0
+
+if [ ! -f physlean-extract/output/catalog.json ] || \
+   [ ! -f physlean-extract/output/math_corpus.json ]; then
+  echo "[build] catalog or math_corpus missing — refresh required."
+  needs_refresh=1
+else
+  # Use the older of the two timestamps. `stat -f%m` (BSD/macOS),
+  # `stat -c%Y` (Linux). build-release.sh runs on the host, not in
+  # docker, so it sees host stat.
+  cat_mtime=$(stat -f%m physlean-extract/output/catalog.json 2>/dev/null \
+              || stat -c%Y physlean-extract/output/catalog.json)
+  cor_mtime=$(stat -f%m physlean-extract/output/math_corpus.json 2>/dev/null \
+              || stat -c%Y physlean-extract/output/math_corpus.json)
+  oldest=$(( cat_mtime < cor_mtime ? cat_mtime : cor_mtime ))
+  age=$(( $(date +%s) - oldest ))
+  age_days=$(( age / 86400 ))
+  echo "[build] corpus age: ${age_days} day(s) (limit: ${STALE_AFTER_DAYS})"
+  if [ "$age" -gt "$stale_after_seconds" ]; then
+    echo "[build] corpus exceeds STALE_AFTER_DAYS=${STALE_AFTER_DAYS} — refresh required."
+    needs_refresh=1
+  fi
+
+  # Size sanity check — a +all extraction yields ~290 MB, narrow ~14 MB.
+  # Anything under 5 MB suggests a truncated / failed extraction.
+  corpus_size=$(stat -f%z physlean-extract/output/math_corpus.json 2>/dev/null \
+                || stat -c%s physlean-extract/output/math_corpus.json)
+  if [ "$corpus_size" -lt 5000000 ]; then
+    echo "[build] math_corpus.json is only $corpus_size bytes — looks truncated."
+    needs_refresh=1
+  fi
+fi
+
+if [ "$needs_refresh" -eq 1 ]; then
+  if [ "$AUTO_REFRESH" -eq 1 ]; then
+    if ! command -v just >/dev/null 2>&1; then
+      echo "[build] error: just is not on PATH — install via 'cargo install just' or set AUTO_REFRESH=0 to opt out" >&2
+      exit 1
+    fi
+    if ! command -v lake >/dev/null 2>&1; then
+      echo "[build] error: lake is not on PATH — install via 'curl https://elan.lean-lang.org/elan-init.sh -sSf | sh' or set AUTO_REFRESH=0" >&2
+      exit 1
+    fi
+    echo "[build] auto-refreshing corpus from upstream (this takes ~5–10 min)..."
+    just refresh-corpus
+  else
+    echo "[build] error: corpus is stale or missing and AUTO_REFRESH=0 — run 'just refresh-corpus' first or unset AUTO_REFRESH=0" >&2
+    exit 1
+  fi
+fi
+
+echo "[build] copying PhysLean catalog + Mathlib math_corpus..."
+mkdir -p "$OUT_DIR/physlean-extract/output"
+cp physlean-extract/output/catalog.json "$OUT_DIR/physlean-extract/output/"
+cp physlean-extract/output/math_corpus.json "$OUT_DIR/physlean-extract/output/"
+echo "[build] catalog + corpus: $(du -sh "$OUT_DIR/physlean-extract/output/" | cut -f1)"
 
 # ── 4. Deploy assets ──────────────────────────────────────────────────────
 cp deploy/Caddyfile.native "$OUT_DIR/deploy/Caddyfile"
