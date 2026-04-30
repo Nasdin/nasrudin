@@ -16,6 +16,21 @@ pub use kmeans::{cluster_individuals, Centroid, ClusterAssignment};
 pub use summary::{compute_summaries, ClusterSummary};
 
 use nasrudin_derive::{Chain, RuleStep};
+use serde::{Deserialize, Serialize};
+
+/// Per-directive bookkeeping kept worker-local across a single chunk
+/// boundary. At chunk N the worker applies the directive and records
+/// this entry; at chunk N+1, after re-clustering, the worker matches
+/// `centroid_hash_at_apply` against the new clusters and emits reward
+/// feedback if a current cluster is within Hamming threshold.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerDirectiveEntry {
+    pub centroid_hash_at_apply: u64,
+    pub action: String,
+    pub strength_bucket: u8,
+    pub multiplier_choice: u8,
+    pub mean_fitness_at_apply: f32,
+}
 
 /// One-shot helper: feature-extract → k-means → summarise.
 ///
@@ -112,5 +127,22 @@ mod directive_tests {
         ];
         let m = match_directive_to_cluster(0xAAAA_AAAA_AAAA_AAAA, &centroids, 0.10);
         assert_eq!(m, Some(0));
+    }
+
+    #[test]
+    fn worker_directive_entry_round_trips_basic_fields() {
+        let e = WorkerDirectiveEntry {
+            centroid_hash_at_apply: 0xdead_beef_cafe_babe,
+            action: "boost".into(),
+            strength_bucket: 2,
+            multiplier_choice: 3,
+            mean_fitness_at_apply: 0.42,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let parsed: WorkerDirectiveEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.action, "boost");
+        assert_eq!(parsed.strength_bucket, 2);
+        assert_eq!(parsed.multiplier_choice, 3);
+        assert!((parsed.mean_fitness_at_apply - 0.42).abs() < 1e-6);
     }
 }

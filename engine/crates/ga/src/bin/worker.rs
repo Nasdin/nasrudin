@@ -511,6 +511,13 @@ async fn main() {
     // via `apply_steering_knobs` so the LLM cluster steerer's
     // mutation rate / population size land on the next chunk's GA.
     let mut last_steering: Option<serde_json::Value> = None;
+    // Per-chunk directive bookkeeping. Recorded at chunk N when the
+    // bandit picks a multiplier_choice; consumed at chunk N+1 to
+    // emit reward feedback if the matched cluster's hash is still
+    // close enough. `prev_directive_log` carries chunk N's records
+    // forward into chunk N+1.
+    let mut prev_directive_log: Vec<nasrudin_ga::clustering::WorkerDirectiveEntry> =
+        Vec::new();
 
     // Phase E: when research-mode is on, build the HTTP client once.
     let research_client = if research_mode {
@@ -793,6 +800,161 @@ async fn main() {
             {
                 tracing::debug!(error=%e, "cluster_report post failed (non-blocking)");
             }
+
+            // Reward attribution for the previous chunk's directives.
+            // Match each prev_directive_log entry's centroid hash against
+            // the current chunk's clusters; if matched within the Hamming
+            // threshold, the fitness delta becomes the bandit reward.
+            if !prev_directive_log.is_empty() {
+                let mut feedback_batch: Vec<serde_json::Value> = Vec::new();
+                let centroids_now: Vec<(u32, u64)> = summaries
+                    .iter()
+                    .map(|s| (s.cluster_id, s.centroid_skeleton_hash))
+                    .collect();
+                for entry in prev_directive_log.iter() {
+                    let Some(cid_now) =
+                        nasrudin_ga::clustering::match_directive_to_cluster(
+                            entry.centroid_hash_at_apply,
+                            &centroids_now,
+                            0.10,
+                        )
+                    else {
+                        // Hash drifted past threshold; reward unobservable.
+                        continue;
+                    };
+                    let new_mean = summaries
+                        .iter()
+                        .find(|s| s.cluster_id == cid_now)
+                        .map(|s| s.mean_fitness)
+                        .unwrap_or(entry.mean_fitness_at_apply);
+                    let delta = new_mean - entry.mean_fitness_at_apply;
+                    let reward = (delta + 0.5).clamp(0.0, 1.0) as f64;
+                    feedback_batch.push(serde_json::json!({
+                        "island_domain": canonical_domain,
+                        "action": entry.action,
+                        "strength_bucket": entry.strength_bucket,
+                        "multiplier_choice": entry.multiplier_choice,
+                        "reward": reward,
+                    }));
+                }
+                if !feedback_batch.is_empty() {
+                    if let Err(e) = post_directive_feedback(
+                        api_cfg_for_cluster,
+                        &feedback_batch,
+                    )
+                    .await
+                    {
+                        tracing::debug!(error=%e,
+                            "directive_feedback post failed (non-blocking)");
+                    } else {
+                        tracing::info!(
+                            n = feedback_batch.len(),
+                            "posted directive_feedback batch"
+                        );
+                    }
+                }
+            }
+
+            // Build the directive log for THIS chunk's directives. The
+            // log is consumed at chunk N+1 (above) to emit reward
+            // feedback. The matched directive's multiplier is recorded
+            // in chunk_config.cluster_multipliers so future chunks can
+            // honour it; cluster_assignments stays empty in v1, so the
+            // GA mutation site falls through to global rate — the
+            // reward signal still flows correctly because the bandit
+            // arm key is (action, strength_bucket, multiplier_choice),
+            // not per-individual.
+            let mut new_directive_log: Vec<
+                nasrudin_ga::clustering::WorkerDirectiveEntry,
+            > = Vec::new();
+            if let Some(steering_val) = last_steering.as_ref() {
+                let directives = steering_val
+                    .get("config")
+                    .and_then(|c| c.get("cluster_directives"))
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let centroids: Vec<(u32, u64)> = summaries
+                    .iter()
+                    .map(|s| (s.cluster_id, s.centroid_skeleton_hash))
+                    .collect();
+                for d in directives.iter() {
+                    let dom = d
+                        .get("island_domain")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if dom != canonical_domain {
+                        continue;
+                    }
+                    let hash = d
+                        .get("centroid_skeleton_hash")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let action = d
+                        .get("action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let strength = d
+                        .get("strength")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0)
+                        as f32;
+                    let strength_bucket =
+                        (strength.clamp(0.0, 1.0) * 5.0).floor().min(4.0) as u8;
+                    let Some(cid) =
+                        nasrudin_ga::clustering::match_directive_to_cluster(
+                            hash,
+                            &centroids,
+                            0.10,
+                        )
+                    else {
+                        continue;
+                    };
+                    let arms = directive_arms_for_slot(
+                        steering_val,
+                        canonical_domain,
+                        &action,
+                        strength_bucket,
+                    );
+                    let multiplier_choice = pick_multiplier_choice(&arms, strength);
+                    let mult_value = lookup_action_multiplier(&action, multiplier_choice);
+                    let m = chunk_config
+                        .cluster_multipliers
+                        .entry(cid)
+                        .or_default();
+                    match action.as_str() {
+                        "boost" => m.mutation_rate_mult = mult_value,
+                        "exploit" => m.elitism_mult = mult_value,
+                        "diversify" => m.diversify_fraction = mult_value,
+                        "kill" => m.kill_fraction = mult_value,
+                        _ => continue,
+                    }
+                    let mean_fitness_at_apply = summaries
+                        .iter()
+                        .find(|s| s.cluster_id == cid)
+                        .map(|s| s.mean_fitness)
+                        .unwrap_or(0.0);
+                    new_directive_log.push(
+                        nasrudin_ga::clustering::WorkerDirectiveEntry {
+                            centroid_hash_at_apply: hash,
+                            action: action.clone(),
+                            strength_bucket,
+                            multiplier_choice,
+                            mean_fitness_at_apply,
+                        },
+                    );
+                    tracing::info!(
+                        cluster_id = cid,
+                        action = %action,
+                        strength_bucket,
+                        multiplier_choice,
+                        mult_value,
+                        "applied cluster directive (bandit-picked multiplier)"
+                    );
+                }
+            }
+            prev_directive_log = new_directive_log;
         }
 
         total_candidates += report.total_candidates;
@@ -1305,6 +1467,110 @@ async fn post_cluster_report(
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{}/api/cluster-report", cfg.api_url))
+        .bearer_auth(&cfg.worker_key)
+        .json(&body)
+        .send()
+        .await?;
+    resp.error_for_status()?;
+    Ok(())
+}
+
+/// Look up the 5 arms for a (island, action, strength_bucket) slot
+/// from a seed payload's compact `directive_arms` snapshot. Returns
+/// an empty Vec if the slot isn't present (cold boot before the
+/// steerer cycle has run).
+fn directive_arms_for_slot(
+    seed_value: &serde_json::Value,
+    island_domain: &str,
+    action: &str,
+    strength_bucket: u8,
+) -> Vec<(u8, i64, f64)> {
+    let Some(snapshot) = seed_value
+        .get("directive_arms")
+        .and_then(|v| v.get("snapshot"))
+        .and_then(|v| v.as_array())
+    else {
+        return vec![];
+    };
+    for slot in snapshot {
+        if slot.get("island_domain").and_then(|v| v.as_str()) == Some(island_domain)
+            && slot.get("action").and_then(|v| v.as_str()) == Some(action)
+            && slot.get("strength_bucket").and_then(|v| v.as_i64())
+                == Some(strength_bucket as i64)
+        {
+            let arms = slot
+                .get("arms")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            return arms
+                .into_iter()
+                .filter_map(|a| {
+                    let choice = a.get("multiplier_choice").and_then(|v| v.as_u64())? as u8;
+                    let pulls = a.get("pulls").and_then(|v| v.as_i64())?;
+                    let mean = a.get("mean_reward").and_then(|v| v.as_f64())?;
+                    let total = mean * pulls as f64;
+                    Some((choice, pulls, total))
+                })
+                .collect();
+        }
+    }
+    vec![]
+}
+
+/// Pick a multiplier_choice for one (island, action, strength_bucket)
+/// slot. Cold-start: until the slot has ≥15 cumulative pulls across
+/// its 5 arms, fall back to the static linear strength→choice map so
+/// the bandit's first few cycles match the static-formula baseline.
+fn pick_multiplier_choice(arms: &[(u8, i64, f64)], strength: f32) -> u8 {
+    const COLD_START: i64 = 15;
+    let total: i64 = arms.iter().map(|(_, p, _)| *p).sum();
+    if arms.is_empty() || total < COLD_START {
+        return (strength.clamp(0.0, 1.0) * 5.0).floor().min(4.0) as u8;
+    }
+    if let Some((c, _, _)) = arms.iter().find(|(_, p, _)| *p == 0) {
+        return *c;
+    }
+    let ln_n = (total as f64).ln();
+    let mut best_choice = arms[0].0;
+    let mut best_score = f64::NEG_INFINITY;
+    for &(c, p, t) in arms {
+        let mean = if p > 0 { t / p as f64 } else { 0.0 };
+        let exploration = (2.0 * ln_n / p as f64).sqrt();
+        let score = mean + exploration;
+        if score > best_score {
+            best_score = score;
+            best_choice = c;
+        }
+    }
+    best_choice
+}
+
+fn lookup_action_multiplier(action: &str, choice: u8) -> f32 {
+    let i = (choice as usize).min(4);
+    match action {
+        "boost" => [1.00, 1.25, 1.50, 1.75, 2.00][i],
+        "exploit" => [1.00, 1.25, 1.50, 1.75, 2.00][i],
+        "diversify" => [0.00, 0.10, 0.20, 0.30, 0.50][i],
+        "kill" => [0.00, 0.10, 0.20, 0.30, 0.50][i],
+        _ => 1.0,
+    }
+}
+
+/// POST a batch of (arm_key, reward) tuples to /api/directive-feedback.
+/// Soft-fails — feedback drops are best-effort, missing pulls just
+/// slow the bandit's convergence.
+async fn post_directive_feedback(
+    cfg: &ApiSubmitConfig,
+    feedback: &[serde_json::Value],
+) -> anyhow::Result<()> {
+    if feedback.is_empty() {
+        return Ok(());
+    }
+    let body = serde_json::json!({ "feedback": feedback });
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/directive-feedback", cfg.api_url))
         .bearer_auth(&cfg.worker_key)
         .json(&body)
         .send()
