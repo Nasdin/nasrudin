@@ -238,7 +238,7 @@ async fn main() {
             _ => "",
         };
         match fetch_and_extend_store(&api_url, domain_param, &mut store).await {
-            Ok((axioms_added, theorems_added)) => {
+            Ok((axioms_added, theorems_added, _initial_steering)) => {
                 println!(
                     "▶ Seed-sync from {api_url}: +{axioms_added} new axioms, \
                      +{theorems_added} peer theorems folded into store"
@@ -490,6 +490,11 @@ async fn main() {
     let mut total_candidates = 0usize;
     let mut total_unique = 0usize;
     let mut current_rejected = rejected_canonicals.clone();
+    // Latest steering snapshot from `/api/seed`. Updated on every
+    // chunk-boundary re-sync; applied to the per-chunk DiscoveryConfig
+    // via `apply_steering_knobs` so the LLM cluster steerer's
+    // mutation rate / population size land on the next chunk's GA.
+    let mut last_steering: Option<serde_json::Value> = None;
 
     // Phase E: when research-mode is on, build the HTTP client once.
     let research_client = if research_mode {
@@ -656,18 +661,23 @@ async fn main() {
             // chunk. Soft-fail — search continues with current store
             // if the API is briefly unreachable.
             match fetch_and_extend_store(api_url, domain_param_for_resync, &mut store).await {
-                Ok((ax, th)) if ax + th > 0 => {
-                    println!(
-                        "▶ chunk {} re-sync: +{ax} new axioms, +{th} peer theorems  (store={})",
-                        chunk_i + 1,
-                        store.len()
-                    );
-                    nasrudin_derive::no_cheat_audit::audit_or_panic(
-                        &store,
-                        "worker chunk re-sync",
-                    );
+                Ok((ax, th, steering)) => {
+                    if ax + th > 0 {
+                        println!(
+                            "▶ chunk {} re-sync: +{ax} new axioms, +{th} peer theorems  (store={})",
+                            chunk_i + 1,
+                            store.len()
+                        );
+                        nasrudin_derive::no_cheat_audit::audit_or_panic(
+                            &store,
+                            "worker chunk re-sync",
+                        );
+                    }
+                    if steering.is_some() {
+                        last_steering = steering;
+                    }
                 }
-                _ => {}
+                Err(_) => {}
             }
             // Periodic rejected-canonical re-fetch.
             if let Ok(set) = fetch_rejected_canonicals(api_url).await {
@@ -678,11 +688,23 @@ async fn main() {
                 current_rejected = std::sync::Arc::new(set);
             }
         }
-        let chunk_config = DiscoveryConfig {
+        let mut chunk_config = DiscoveryConfig {
             generations: gens_per_chunk,
             rejected_canonicals: current_rejected.clone(),
             ..config.clone()
         };
+        // Apply LLM mutation knobs from the latest steering snapshot.
+        // No-op when steering is absent or `mutation_knobs=null`
+        // (mode B / steerer disabled / first chunk before re-sync).
+        if let Some(ref s) = last_steering {
+            if nasrudin_ga::steering_knobs::apply_steering_knobs(&mut chunk_config, s) {
+                tracing::debug!(
+                    rate = chunk_config.mutation_rate,
+                    pop = chunk_config.population_size,
+                    "chunk config patched from steering"
+                );
+            }
+        }
         let report = run_discovery(&store, &chunk_config, &mut rng);
         total_candidates += report.total_candidates;
         total_unique += report.unique_executable;
@@ -1243,11 +1265,15 @@ fn remove_module_file(prover_root: &Path, module_path: &str) -> std::io::Result<
 /// synthetic axiom named `theorem_<hex_id>`. Anything that fails to
 /// parse / replay is silently skipped — we trust only the math we can
 /// reproduce locally, not just whatever the API reports.
+/// Sync from `/api/seed`. Returns `(axioms_added, peer_theorems_added,
+/// steering_payload)`. `steering_payload` is the full JSON value of
+/// `body["steering"]` if the server included it, else `None`. The
+/// caller passes it to `apply_steering_knobs` to bias the next chunk.
 async fn fetch_and_extend_store(
     api_url: &str,
     domain: &str,
     store: &mut nasrudin_derive::AxiomStore,
-) -> anyhow::Result<(usize, usize)> {
+) -> anyhow::Result<(usize, usize, Option<serde_json::Value>)> {
     use nasrudin_core::Expr;
     use nasrudin_derive::{Axiom, Chain, DerivationContext, RuleStep, strategies::DerivationStrategy};
 
@@ -1325,15 +1351,13 @@ async fn fetch_and_extend_store(
         }
     }
 
-    // Cluster steering (Phase 3 of cluster-steerer plan). The server
-    // folds the live `SteeringConfig` into every `/api/seed` response
-    // alongside an etag. We log the etag + scope so operators can
-    // confirm hot-reload is happening; the GA-side application of
-    // `mutation_knobs.rate / population_size / suffix_bias /
-    // elitism_fraction` is wired into chain_engine in a follow-up
-    // (chain_engine consumes a `SteeringSnapshot` Arc once the
-    // refactor lands).
-    if let Some(steering) = body.get("steering") {
+    // Cluster steering. The server folds the live `SteeringConfig`
+    // into every `/api/seed` response alongside an etag; we log
+    // visibility info here and bubble the payload up to the chunk
+    // loop so it can call `apply_steering_knobs` on the next
+    // DiscoveryConfig.
+    let steering_payload = body.get("steering").cloned();
+    if let Some(ref steering) = steering_payload {
         let etag = steering
             .get("etag")
             .and_then(|v| v.as_str())
@@ -1346,7 +1370,7 @@ async fn fetch_and_extend_store(
         tracing::debug!(scope, etag, "worker received steering snapshot");
     }
 
-    Ok((axioms_added, theorems_added))
+    Ok((axioms_added, theorems_added, steering_payload))
 }
 
 /// Fetch the cluster's rejected-canonical-hash memo from

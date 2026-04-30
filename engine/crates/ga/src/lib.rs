@@ -22,6 +22,7 @@ pub mod paid_slice;
 pub mod population;
 pub mod research_client;
 pub mod selection;
+pub mod steering_knobs;
 pub mod target;
 
 pub use cache_bundle::CacheBundle;
