@@ -8,7 +8,7 @@ nasrudin-core = { path = "../core" }
 nasrudin-derive = { path = "../derive" }
 nasrudin-lean-bridge = { path = "../lean-bridge" }
 nasrudin-rocks = { path = "../rocks" }
-nasrudin-embed = { path = "../embed" }
+nasrudin-embed = { path = "../embed", default-features = false }
 rand = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

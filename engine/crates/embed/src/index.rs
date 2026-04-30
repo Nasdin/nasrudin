@@ -120,7 +120,8 @@ impl EmbeddingIndex {
         self.header
     }
 
-    /// Embed `text` then call [`Self::nearest`].
+    /// Embed `text` then call [`Self::nearest`]. Requires the `inference` feature.
+    #[cfg(feature = "inference")]
     pub fn nearest_text(
         &self,
         embedder: &crate::model::Embedder,
@@ -168,6 +169,7 @@ mod tests {
         assert_eq!(s, std::path::PathBuf::from("/tmp/corpus.embed.hnsw"));
     }
 
+    #[cfg(feature = "inference")]
     #[test]
     fn nearest_text_signature_compiles() {
         // Pure type-level test: confirm the signature lines up. Real

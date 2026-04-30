@@ -3,12 +3,20 @@ name = "nasrudin-embed"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["inference"]
+# `inference` pulls in fastembed (which links ONNX Runtime + libstdc++).
+# Disable via `default-features = false` in dependents that only need the
+# pure-Rust index/format types — e.g. the worker binary, which cross-
+# compiles via zigbuild and cannot link the C++ runtime.
+inference = ["dep:fastembed"]
+
 [dependencies]
 nasrudin-core = { path = "../core" }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-fastembed = { workspace = true }
+fastembed = { workspace = true, optional = true }
 instant-distance = { workspace = true }
 memmap2 = { workspace = true }
 blake3 = { workspace = true }
