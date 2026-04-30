@@ -57,8 +57,16 @@ const ELAN_UNIX =
 const ELAN_WIN =
   'iwr -useb https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 | iex';
 
+// Maps the platform-detection model (which uses canonical UA-friendly names
+// like "macos" and "aarch64") to the names used by build-worker-all.sh,
+// which uses Rust target conventions ("darwin" and "arm64" on macOS).
+function bundleSuffix(b: Build): string {
+  const osPart = b.os === 'macos' ? 'darwin' : b.os;
+  const archPart = b.os === 'macos' && b.arch === 'aarch64' ? 'arm64' : b.arch;
+  return `${osPart}-${archPart}`;
+}
 function bundleName(b: Build): string {
-  return `nasrudin-worker-${b.os}-${b.arch}`;
+  return `nasrudin-worker-${bundleSuffix(b)}`;
 }
 function downloadUrl(b: Build): string {
   return `${RELEASE_BASE}/${bundleName(b)}.${b.ext}`;
