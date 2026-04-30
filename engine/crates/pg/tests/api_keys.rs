@@ -15,7 +15,7 @@ async fn create_list_revoke_roundtrip() {
 
     let unique_token = Uuid::new_v4();
     let email = format!("apikey-test-{unique_token}@example.test");
-    let user = query::users::create_user(&db, &email, "stub-hash", None)
+    let user = query::users::create_user(&db, &email, Some("stub-hash"), None)
         .await
         .unwrap();
 

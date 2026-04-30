@@ -39,7 +39,7 @@ async fn fresh_db() -> Option<(DatabaseConnection, MutexGuard<'static, ()>)> {
 }
 
 async fn seed_owner(db: &DatabaseConnection) -> Uuid {
-    let m = u::create_user(db, "owner@test", "x", Some("Owner"))
+    let m = u::create_user(db, "owner@test", Some("x"), Some("Owner"))
         .await
         .unwrap();
     m.id
