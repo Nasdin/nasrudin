@@ -8,7 +8,9 @@
   background: var(--paper-50);
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
 }
+.app > * { min-width: 0; }
 
 .app-header {
   position: sticky;
@@ -679,6 +681,8 @@
 .lead-table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  width: 100%;
+  max-width: calc(100vw - 32px);
 }
 .lead-table-scroll .lead-table { min-width: 720px; }
 .stat-cell {
