@@ -511,6 +511,13 @@ async fn main() {
     // via `apply_steering_knobs` so the LLM cluster steerer's
     // mutation rate / population size land on the next chunk's GA.
     let mut last_steering: Option<serde_json::Value> = None;
+    // Eligibility-trace buffer for per-cluster directives. Each
+    // applied directive stays in flight for `TRACE_HORIZON` chunks
+    // and accumulates samples; the bandit reward is the γ-discounted
+    // return over that horizon. Replaces the single-shot reward path
+    // with a multi-chunk credit assignment more robust to noise.
+    let mut directive_traces: Vec<nasrudin_ga::clustering::DirectiveTrace> =
+        Vec::new();
 
     // Phase E: when research-mode is on, build the HTTP client once.
     let research_client = if research_mode {
@@ -756,9 +763,11 @@ async fn main() {
             "gr" => "general_relativity",
             other => other,
         };
-        let mut current_directive_log: Vec<
-            nasrudin_ga::clustering::WorkerDirectiveEntry,
-        > = Vec::new();
+        // Indices into `directive_traces` of new traces created this
+        // chunk. Used after the GA runs to observe sample[0] (the
+        // immediate post-evolution effect on each directive's
+        // matched cluster lineage).
+        let mut new_trace_indices: Vec<usize> = Vec::new();
         let mut seed_summaries: Vec<nasrudin_ga::clustering::ClusterSummary> =
             Vec::new();
 
@@ -908,22 +917,22 @@ async fn main() {
                     .find(|s| s.cluster_id == cid)
                     .map(|s| s.mean_fitness)
                     .unwrap_or(0.0);
-                current_directive_log.push(
-                    nasrudin_ga::clustering::WorkerDirectiveEntry {
-                        centroid_hash_at_apply: hash,
-                        action: action.clone(),
-                        strength_bucket,
-                        multiplier_choice,
-                        mean_fitness_at_apply,
-                    },
+                let trace = nasrudin_ga::clustering::DirectiveTrace::new(
+                    hash,
+                    action.clone(),
+                    strength_bucket,
+                    multiplier_choice,
+                    mean_fitness_at_apply,
                 );
+                directive_traces.push(trace);
+                new_trace_indices.push(directive_traces.len() - 1);
                 tracing::info!(
                     cluster_id = cid,
                     action = %action,
                     strength_bucket,
                     multiplier_choice,
                     mult_value,
-                    "applied cluster directive (per-individual)"
+                    "applied cluster directive (per-individual, trace started)"
                 );
             }
             // v1.5 chunk-wide aggregate: even individuals in
@@ -1002,55 +1011,100 @@ async fn main() {
                 tracing::debug!(error=%e, "cluster_report post failed (non-blocking)");
             }
 
-            // Reward attribution for THIS chunk's directives. The
-            // cluster_id assigned at seed time is preserved through
-            // crossover (parent → child), so we group the final
-            // population by the SEED cluster_id and compute mean
-            // fitness per group. That post-evolution mean minus the
-            // entry's `mean_fitness_at_apply` is the reward signal —
-            // no cross-chunk hash drift, no stale directive log.
-            if !current_directive_log.is_empty() {
+            // Eligibility-trace bookkeeping for THIS chunk:
+            //
+            //   1. Compute the per-cluster post-evolution mean from
+            //      the final population grouped by lineage cluster_id
+            //      (same-chunk lineage signal).
+            //   2. For each NEW trace started this chunk (sample[0]),
+            //      look up its lineage cluster's post mean.
+            //   3. For each ALREADY-IN-FLIGHT trace, hash-match
+            //      against the current chunk's centroid hashes to
+            //      find a successor cluster (cross-chunk identity).
+            //   4. Decrement chunks_remaining; finalise traces that
+            //      reach 0 by computing the γ-discounted reward and
+            //      posting it.
+            if !directive_traces.is_empty() {
                 use std::collections::HashMap;
                 let mut sums: HashMap<u32, (f64, u32)> = HashMap::new();
                 for (_, comps, _, cid) in &report.final_population {
                     let mean = (comps.iter().sum::<f32>() / 4.0) as f64;
-                    let entry = sums.entry(*cid).or_insert((0.0, 0));
-                    entry.0 += mean;
-                    entry.1 += 1;
+                    let e = sums.entry(*cid).or_insert((0.0, 0));
+                    e.0 += mean;
+                    e.1 += 1;
                 }
-                // Match each entry's hash to its seed-time cluster_id
-                // via the seed_summaries we computed earlier; that
-                // cluster_id then keys into `sums` for the post-
-                // evolution mean.
                 let seed_centroids: Vec<(u32, u64)> = seed_summaries
                     .iter()
                     .map(|s| (s.cluster_id, s.centroid_skeleton_hash))
                     .collect();
-                let mut feedback_batch: Vec<serde_json::Value> = Vec::new();
-                for entry in current_directive_log.iter() {
-                    let Some(seed_cid) =
-                        nasrudin_ga::clustering::match_directive_to_cluster(
-                            entry.centroid_hash_at_apply,
+                let now_centroids: Vec<(u32, u64)> = summaries
+                    .iter()
+                    .map(|s| (s.cluster_id, s.centroid_skeleton_hash))
+                    .collect();
+                let new_index_set: std::collections::HashSet<usize> =
+                    new_trace_indices.iter().copied().collect();
+                for (i, trace) in directive_traces.iter_mut().enumerate() {
+                    if trace.chunks_remaining == 0 {
+                        continue;
+                    }
+                    let sample = if new_index_set.contains(&i) {
+                        // sample[0]: lineage grouping from final_population
+                        // for the seed cluster the directive landed on.
+                        match nasrudin_ga::clustering::match_directive_to_cluster(
+                            trace.centroid_hash_at_apply,
                             &seed_centroids,
                             0.10,
-                        )
-                    else {
-                        continue;
+                        ) {
+                            Some(seed_cid) => sums
+                                .get(&seed_cid)
+                                .map(|(s, n)| (s / (*n as f64).max(1.0)) as f32)
+                                .unwrap_or(trace.mean_fitness_at_apply),
+                            None => trace.mean_fitness_at_apply,
+                        }
+                    } else {
+                        // sample[t≥1]: cross-chunk hash match against
+                        // the post-evolution clustering of this chunk.
+                        match nasrudin_ga::clustering::match_directive_to_cluster(
+                            trace.centroid_hash_at_apply,
+                            &now_centroids,
+                            0.10,
+                        ) {
+                            Some(cid) => summaries
+                                .iter()
+                                .find(|s| s.cluster_id == cid)
+                                .map(|s| s.mean_fitness)
+                                .unwrap_or(
+                                    *trace
+                                        .samples
+                                        .last()
+                                        .unwrap_or(&trace.mean_fitness_at_apply),
+                                ),
+                            None => *trace
+                                .samples
+                                .last()
+                                .unwrap_or(&trace.mean_fitness_at_apply),
+                        }
                     };
-                    let post_mean = sums
-                        .get(&seed_cid)
-                        .map(|(s, n)| s / (*n as f64).max(1.0))
-                        .unwrap_or(entry.mean_fitness_at_apply as f64);
-                    let delta = post_mean - entry.mean_fitness_at_apply as f64;
-                    let reward = (delta + 0.5).clamp(0.0, 1.0);
+                    trace.samples.push(sample);
+                    trace.chunks_remaining = trace.chunks_remaining.saturating_sub(1);
+                }
+
+                // Finalise traces that reached the horizon.
+                let mut feedback_batch: Vec<serde_json::Value> = Vec::new();
+                directive_traces.retain(|trace| {
+                    if trace.chunks_remaining > 0 {
+                        return true;
+                    }
+                    let reward = trace.discounted_reward();
                     feedback_batch.push(serde_json::json!({
                         "island_domain": canonical_domain,
-                        "action": entry.action,
-                        "strength_bucket": entry.strength_bucket,
-                        "multiplier_choice": entry.multiplier_choice,
+                        "action": trace.action,
+                        "strength_bucket": trace.strength_bucket,
+                        "multiplier_choice": trace.multiplier_choice,
                         "reward": reward,
                     }));
-                }
+                    false
+                });
                 if !feedback_batch.is_empty() {
                     if let Err(e) = post_directive_feedback(
                         api_cfg_for_cluster,
@@ -1063,7 +1117,8 @@ async fn main() {
                     } else {
                         tracing::info!(
                             n = feedback_batch.len(),
-                            "posted directive_feedback batch (same-chunk)"
+                            traces_in_flight = directive_traces.len(),
+                            "posted directive_feedback batch (γ-discounted)"
                         );
                     }
                 }

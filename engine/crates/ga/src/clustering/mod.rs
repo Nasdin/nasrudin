@@ -32,6 +32,86 @@ pub struct WorkerDirectiveEntry {
     pub mean_fitness_at_apply: f32,
 }
 
+/// Discount factor for the eligibility trace's discounted-return
+/// computation. 0.7 is a moderate decay — sample at chunk N+0 is
+/// fully credited, N+1 at 70%, N+2 at 49%. Lower γ would make the
+/// bandit more myopic; higher would over-credit late chunks where
+/// cluster identity has drifted further.
+pub const TRACE_GAMMA: f64 = 0.7;
+
+/// Number of chunks an eligibility trace stays in flight. After
+/// `TRACE_HORIZON` samples (one per chunk including the apply
+/// chunk), the trace's discounted return is computed and posted to
+/// the bandit. Higher horizons trade off responsiveness for
+/// stability of the reward signal.
+pub const TRACE_HORIZON: u8 = 3;
+
+/// In-flight eligibility trace for one applied directive. Replaces
+/// the single-shot `WorkerDirectiveEntry` reward path: instead of
+/// posting at chunk N+1, the worker keeps the trace alive for
+/// `TRACE_HORIZON` chunks, accumulating per-chunk samples (matched
+/// by `centroid_hash_at_apply`) and emitting a γ-discounted return.
+///
+/// `samples[0]` is observed at the same chunk the directive lands
+/// (computed from the final population grouped by lineage cluster_id).
+/// Subsequent `samples[t]` are observed at chunks N+t via Hamming
+/// hash matching against the new chunk's clusters.
+#[derive(Debug, Clone)]
+pub struct DirectiveTrace {
+    pub centroid_hash_at_apply: u64,
+    pub action: String,
+    pub strength_bucket: u8,
+    pub multiplier_choice: u8,
+    pub mean_fitness_at_apply: f32,
+    pub samples: Vec<f32>,
+    pub chunks_remaining: u8,
+}
+
+impl DirectiveTrace {
+    pub fn new(
+        centroid_hash_at_apply: u64,
+        action: String,
+        strength_bucket: u8,
+        multiplier_choice: u8,
+        mean_fitness_at_apply: f32,
+    ) -> Self {
+        Self {
+            centroid_hash_at_apply,
+            action,
+            strength_bucket,
+            multiplier_choice,
+            mean_fitness_at_apply,
+            samples: Vec::new(),
+            chunks_remaining: TRACE_HORIZON,
+        }
+    }
+
+    /// Compute the γ-discounted normalised return from accumulated
+    /// samples. Returns the bandit reward signal mapped into [0, 1]
+    /// via the same affine bias the single-shot path used.
+    ///
+    /// Empty `samples` → 0.5 (neutral); the trace was abandoned
+    /// without observing anything.
+    pub fn discounted_reward(&self) -> f64 {
+        if self.samples.is_empty() {
+            return 0.5;
+        }
+        let mut total = 0.0f64;
+        let mut weight_sum = 0.0f64;
+        for (t, s) in self.samples.iter().enumerate() {
+            let w = TRACE_GAMMA.powi(t as i32);
+            total += w * (*s - self.mean_fitness_at_apply) as f64;
+            weight_sum += w;
+        }
+        let normalized = if weight_sum > 0.0 {
+            total / weight_sum
+        } else {
+            0.0
+        };
+        (normalized + 0.5).clamp(0.0, 1.0)
+    }
+}
+
 /// One-shot helper: feature-extract → k-means → summarise.
 ///
 /// `chains_with_fitness` is `(chain, fitness_components, axiom_names)`
@@ -144,5 +224,40 @@ mod directive_tests {
         assert_eq!(parsed.strength_bucket, 2);
         assert_eq!(parsed.multiplier_choice, 3);
         assert!((parsed.mean_fitness_at_apply - 0.42).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trace_empty_samples_returns_neutral_reward() {
+        let t = DirectiveTrace::new(0, "boost".into(), 2, 3, 0.5);
+        assert!((t.discounted_reward() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trace_discounted_reward_weights_recent_samples_more() {
+        // apply_mean=0.0, samples=[0.5, 0.5, 0.5] → constant +0.5 delta
+        // Discounted normalised return = 0.5 → reward = 0.5 + 0.5 = 1.0 (clamped)
+        let mut t = DirectiveTrace::new(0, "boost".into(), 2, 3, 0.0);
+        t.samples = vec![0.5, 0.5, 0.5];
+        let r = t.discounted_reward();
+        assert!((r - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trace_normalises_uneven_lengths() {
+        // Single sample +0.3 → normalised = 0.3 → reward = 0.8
+        let mut t = DirectiveTrace::new(0, "boost".into(), 2, 3, 0.0);
+        t.samples = vec![0.3];
+        let r = t.discounted_reward();
+        assert!((r - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trace_clamps_extreme_values() {
+        let mut t = DirectiveTrace::new(0, "boost".into(), 2, 3, 0.0);
+        t.samples = vec![5.0, 5.0, 5.0];
+        assert_eq!(t.discounted_reward(), 1.0);
+        let mut t2 = DirectiveTrace::new(0, "boost".into(), 2, 3, 0.0);
+        t2.samples = vec![-5.0, -5.0, -5.0];
+        assert_eq!(t2.discounted_reward(), 0.0);
     }
 }
