@@ -160,6 +160,15 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         .await
         .ok()?;
 
+    // Materialise bandit arms so tests that exercise the steering
+    // cycle don't need to seed each (island, K) and (island, action,
+    // bucket, choice) row themselves. The production boot does this
+    // in main.rs; this is the test-harness equivalent.
+    physics_api::steerer::bandit::ensure_all_arms(&pg).await.ok()?;
+    physics_api::steerer::directive_bandit::ensure_all_arms(&pg)
+        .await
+        .ok()?;
+
     let rocks_dir = tempfile::tempdir().ok()?;
     let rocks = Arc::new(TheoremDb::new(rocks_dir.path().to_str()?).ok()?);
 
