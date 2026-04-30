@@ -47,6 +47,7 @@ fn compute_arms_compact(snap: &ComputeArmsSnapshot) -> Vec<serde_json::Value> {
             "multiplier_choice": r.multiplier_choice,
             "pulls": r.pulls,
             "mean_reward": mean,
+            "linucb_score": r.linucb_score,
         }));
     }
     by_slot

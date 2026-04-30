@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { useEffect, useMemo, useState } from 'react';
+import { API_BASE } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import { useRecentTheorems } from '~/lib/queries';
@@ -63,7 +64,9 @@ export function HeroLiveTheorem() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     let failures = 0;
-    const url = `${import.meta.env.VITE_API_URL ?? 'http://localhost:3001'}/api/events/discoveries`;
+    // Use the central API_BASE so the SSR build can't fork off a stale
+    // localhost fallback when VITE_API_URL slips through the env chain.
+    const url = `${API_BASE}/api/events/discoveries`;
     let es: EventSource | null;
     try {
       es = new EventSource(url, { withCredentials: true });

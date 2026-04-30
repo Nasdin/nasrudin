@@ -66,6 +66,40 @@ pub async fn handler(
             Ok(_) => applied += 1,
             Err(err) => tracing::warn!(error=%err, "compute_feedback record_pull failed"),
         }
+
+        // LinUCB rank-1 update (per-island compute bandit).
+        if let Ok(Some(row)) = nasrudin_pg::query::cluster_compute_linucb::get(
+            pg,
+            &e.island_domain,
+        )
+        .await
+        {
+            let mut a_flat = row.a_matrix;
+            let mut b_vec = row.b_vector;
+            let s_mid = (e.strength_bucket as f64 + 0.5) / 5.0;
+            let max_choice = std::cmp::min(
+                crate::steerer::directive_bandit::MAX_MULTIPLIER_CHOICES - 1,
+                8,
+            );
+            let x = crate::steerer::linucb::features(
+                s_mid,
+                e.multiplier_choice as u8,
+                max_choice,
+            );
+            crate::steerer::linucb::update_in_place(&mut a_flat, &mut b_vec, &x, reward);
+            if let Err(err) = nasrudin_pg::query::cluster_compute_linucb::save_update(
+                pg,
+                &e.island_domain,
+                a_flat,
+                b_vec,
+                row.pulls + 1,
+            )
+            .await
+            {
+                tracing::debug!(error=%err,
+                    "compute linucb save_update failed (non-blocking)");
+            }
+        }
     }
     (
         StatusCode::OK,

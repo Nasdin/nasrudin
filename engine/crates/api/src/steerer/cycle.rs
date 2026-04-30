@@ -257,14 +257,41 @@ pub async fn run_one_cycle(
     let compute_rows_raw = nasrudin_pg::query::cluster_compute_arms::snapshot_all(db)
         .await
         .unwrap_or_default();
+    let compute_linucb_rows =
+        nasrudin_pg::query::cluster_compute_linucb::snapshot_all(db)
+            .await
+            .unwrap_or_default();
+    let mut compute_linucb_map: std::collections::HashMap<String, (Vec<f64>, Vec<f64>, i64)> =
+        std::collections::HashMap::new();
+    for r in compute_linucb_rows {
+        compute_linucb_map.insert(r.island_domain, (r.a_matrix, r.b_vector, r.pulls));
+    }
     let compute_rows: Vec<crate::state::ComputeArmRow> = compute_rows_raw
         .into_iter()
-        .map(|m| crate::state::ComputeArmRow {
-            island_domain: m.island_domain,
-            strength_bucket: m.strength_bucket,
-            multiplier_choice: m.multiplier_choice,
-            pulls: m.pulls,
-            total_reward: m.total_reward,
+        .map(|m| {
+            let strength_mid = (m.strength_bucket as f64 + 0.5) / 5.0;
+            let linucb_score = compute_linucb_map
+                .get(&m.island_domain)
+                .filter(|(_, _, pulls)| {
+                    *pulls >= crate::steerer::linucb::LINUCB_WARMUP_PULLS
+                })
+                .and_then(|(a, b, _)| {
+                    crate::steerer::linucb::score(
+                        a,
+                        b,
+                        strength_mid,
+                        m.multiplier_choice as u8,
+                        max_choice,
+                    )
+                });
+            crate::state::ComputeArmRow {
+                island_domain: m.island_domain,
+                strength_bucket: m.strength_bucket,
+                multiplier_choice: m.multiplier_choice,
+                pulls: m.pulls,
+                total_reward: m.total_reward,
+                linucb_score,
+            }
         })
         .collect();
     let compute_etag = {

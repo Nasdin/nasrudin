@@ -85,7 +85,7 @@ ls -lh "$OUT_DIR/bin/"
 echo "[build] building frontend (pnpm install + build)..."
 pnpm install --frozen-lockfile --silent
 (cd nasrudin-frontend && \
-  VITE_API_URL="${VITE_API_URL:-https://api.nasrudin.org}" \
+  VITE_API_URL="https://api.nasrudin.org" \
   VITE_STRIPE_SPONSOR_PAYMENT_LINK="${VITE_STRIPE_SPONSOR_PAYMENT_LINK:-https://donate.stripe.com/aFaaEXg2KgjZeCibEHbsc00}" \
   VITE_FIREBASE_API_KEY="${VITE_FIREBASE_API_KEY:-}" \
   VITE_FIREBASE_AUTH_DOMAIN="${VITE_FIREBASE_AUTH_DOMAIN:-}" \

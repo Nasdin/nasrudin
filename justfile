@@ -129,12 +129,27 @@ build-extract:
 extract-physlean: build-extract
     cd physlean-extract && lake exe extract
 
-# Extract a wide Mathlib + PhysLean corpus to math_corpus.json. The
+# Extract the full Mathlib + PhysLean corpus to math_corpus.json. The
 # universal Lean→Expr translator emits a structured AST for every
 # walked theorem (curried `App` chains for unknown heads), so the GA
 # gets the full corpus as building blocks rather than a hand-curated
-# subset. PhysLean must be built once via `just build-extract`.
+# subset. `+all` skips the namespace-prefix filter entirely and relies
+# on the global skip-list (Lean.*, Std.*, Mathlib.Tactic.*, etc.). This
+# is the right default — Mathlib's *constants* mostly live in bare-name
+# namespaces (Algebra., Module., Ring., Topology., Combinatorics.,
+# MeasureTheory., LinearAlgebra., Polynomial., Filter., Finset., …)
+# rather than under a `Mathlib.X` prefix, so the older `+mathlib`
+# whitelist matched only `Real./Nat./Int./Rat./Complex.` and missed
+# everything else. PhysLean must be built once via `just build-extract`.
 extract-mathlib: build-extract
+    cd physlean-extract && lake exe extract \
+        --whitelist=+all \
+        --output=output/math_corpus.json
+
+# Legacy narrower whitelist — kept as a fast-path for development /
+# CI when the full +all corpus would be too slow. NOT recommended for
+# production: misses 90+% of Mathlib's algebraic and topological content.
+extract-mathlib-narrow: build-extract
     cd physlean-extract && lake exe extract \
         --whitelist=+phys,+mathlib \
         --output=output/math_corpus.json

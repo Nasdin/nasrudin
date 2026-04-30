@@ -39,6 +39,7 @@ mod m20260430_000021_cluster_compute_arms;
 mod m20260430_000022_expand_directive_arm_choices;
 mod m20260430_000023_llm_proposed_targets;
 mod m20260430_000024_cluster_directive_linucb;
+mod m20260430_000025_cluster_compute_linucb;
 mod m20260430_000028_theorems_trust_state;
 mod m20260430_000029_drop_email_outbox;
 
@@ -87,6 +88,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260430_000022_expand_directive_arm_choices::Migration),
             Box::new(m20260430_000023_llm_proposed_targets::Migration),
             Box::new(m20260430_000024_cluster_directive_linucb::Migration),
+            Box::new(m20260430_000025_cluster_compute_linucb::Migration),
             Box::new(m20260430_000028_theorems_trust_state::Migration),
             Box::new(m20260430_000029_drop_email_outbox::Migration),
         ]

@@ -279,6 +279,10 @@ pub struct ComputeArmRow {
     pub multiplier_choice: i16,
     pub pulls: i64,
     pub total_reward: f64,
+    /// Server-computed LinUCB contextual score, mirrors the
+    /// directive bandit. `None` until the per-island LinUCB row
+    /// reaches warmup.
+    pub linucb_score: Option<f64>,
 }
 
 impl AppState {

@@ -684,6 +684,17 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("LinUCB sufficient-statistics rows ensured");
         }
 
+        // Compute-bandit LinUCB rows (6 islands).
+        if let Err(e) =
+            physics_api::steerer::directive_bandit::ensure_all_compute_linucb_rows(pg)
+                .await
+        {
+            tracing::warn!(error=%e, "compute LinUCB ensure_all_compute_linucb_rows \
+                failed; compute scaling falls back to discrete UCB1");
+        } else {
+            tracing::info!("Compute LinUCB sufficient-statistics rows ensured");
+        }
+
         // Hourly purge of cluster_reports older than 7 days. Bandit
         // arms hold the long-running statistics; the per-chunk rows
         // are only needed for the most-recent prompt + reward window.

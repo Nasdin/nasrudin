@@ -321,6 +321,22 @@ pub async fn ensure_all_linucb_rows(
     Ok(())
 }
 
+/// Materialise the per-island LinUCB sufficient-statistics rows for
+/// the compute bandit. 6 rows; same A=λI, b=0 prior. Idempotent.
+pub async fn ensure_all_compute_linucb_rows(
+    db: &DatabaseConnection,
+) -> Result<(), sea_orm::DbErr> {
+    for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
+        nasrudin_pg::query::cluster_compute_linucb::ensure_row(
+            db,
+            domain,
+            crate::steerer::linucb::LINUCB_LAMBDA,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// Materialise every (island_domain, action, strength_bucket,
 /// multiplier_choice) row at zero stats. Idempotent — pre-existing
 /// rows are left alone. Called once at API boot, parallels

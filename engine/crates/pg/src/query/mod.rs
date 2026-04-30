@@ -8,6 +8,7 @@ pub mod impersonation;
 pub mod refund_records;
 pub mod cluster_bandit_arms;
 pub mod cluster_compute_arms;
+pub mod cluster_compute_linucb;
 pub mod cluster_directive_arms;
 pub mod cluster_directive_linucb;
 pub mod cluster_reports;

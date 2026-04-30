@@ -72,8 +72,13 @@ fn test_emit_lean_file_has_correct_structure() {
     let config = LeanEmitConfig::default();
     let lean = emit_lean_file(&ctx, &config);
 
-    // Structure checks
-    assert!(lean.contains("import Mathlib"), "missing Mathlib import");
+    // Structure checks. The emitter now uses `LeafImports` (a curated
+    // subset of Mathlib) instead of a bare `import Mathlib` to save
+    // elaborator scope; either form is acceptable.
+    assert!(
+        lean.contains("import Mathlib") || lean.contains("import PhysicsGenerator.LeafImports"),
+        "missing Mathlib import (or LeafImports)"
+    );
     assert!(
         lean.contains("import PhysicsGenerator.Basic"),
         "missing Basic import"

@@ -94,7 +94,14 @@ fn test_derive_rest_energy_generates_lean() {
     let result = engine.derive_rest_energy().unwrap();
 
     let lean = &result.lean_source;
-    assert!(lean.contains("import Mathlib"), "should import Mathlib");
+    // Emitter prefers `import PhysicsGenerator.LeafImports` (a curated
+    // subset that transitively brings in the Mathlib bits we need) over
+    // a bare `import Mathlib` because it cuts ~400k-decl elaborator
+    // scope to ~5k. Either form is acceptable.
+    assert!(
+        lean.contains("import Mathlib") || lean.contains("import PhysicsGenerator.LeafImports"),
+        "should import Mathlib (or LeafImports which brings it transitively)"
+    );
     assert!(lean.contains("ℝ"), "should use real numbers");
     assert!(lean.contains("rest_energy"), "should name the theorem");
     assert!(
