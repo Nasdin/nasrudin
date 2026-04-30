@@ -15,6 +15,14 @@ Environment=ROCKS_DB_PATH=/var/lib/nasrudin/rocks
 Environment=ELAN_HOME=/opt/nasrudin/elan
 Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
 Environment=CORS_ALLOWED_ORIGIN=https://nasrudin.org
+# Admin panel + trust bypass.
+Environment=TRUSTED_SPOT_CHECK_RATE=50
+Environment=NASRUDIN_LOCAL_SOCK_PATH=/run/nasrudin/api-local.sock
+Environment=STRIPE_BASE_URL=https://api.stripe.com
+# IMPERSONATION_SIGNING_KEY (64 hex bytes), ADMIN_TOKEN, STRIPE_*
+# come from /opt/nasrudin/.env via EnvironmentFile above.
+RuntimeDirectory=nasrudin
+RuntimeDirectoryMode=0755
 ExecStart=/opt/nasrudin/bin/physics-api
 Restart=on-failure
 RestartSec=10

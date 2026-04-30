@@ -269,6 +269,36 @@ Nasrudin is designed so anyone can contribute. When you run a worker:
 
 All theorem generation and verification happens on your hardware. The server only receives pre-verified results and confirms them.
 
+## Admin panel
+
+`https://nasrudin.org/admin` (gated by `users.is_admin`). After your
+first deploy, sign in once via Firebase, then promote yourself:
+
+```
+NASRUDIN_DATABASE_URL=postgres://... \
+  deploy/scripts/admin-bootstrap.sh you@example.com
+```
+
+Capabilities: user CRUD (plan tier, credits, trust toggle, per-key
+trust override), API-key revoke, conjecture-job cancel, Stripe refunds
+with reconciler crash recovery, user impersonation (HMAC-signed,
+15 min default), bulk operations with SSE progress, audit log,
+existing `reload_corpus` / `steering/force` endpoints. Every mutation
+writes a transactionally-bound audit row with required reason ≥ 10
+chars. Full runbook in [`docs/admin/runbook.md`](docs/admin/runbook.md).
+
+## Trust bypass
+
+`users.is_trusted = true` (or `api_keys.trust_override = true`) skips
+the redundant server-side `lake build` confirmation for that
+contributor's submissions. Sampled spot-check (1-in-N, env default 50)
+preserves cascade-reject and reputation-EMA safety.
+
+The local-droplet worker auto-trusts via a unix-domain socket at
+`/run/nasrudin/api-local.sock` — Caddy proxies only TCP, so the socket
+is private to processes on the host. The worker reads
+`NASRUDIN_API_URL=unix:///run/nasrudin/api-local.sock`.
+
 ## Paid Researcher Tier
 
 The $19/mo Researcher tier turns Nasrudin into a **research assistant**: hand the system a specific conjecture you can't prove, and a slice of the GA cluster will try to evolve a Lean 4 proof of that statement for up to 24 hours.
