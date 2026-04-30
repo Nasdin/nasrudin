@@ -140,12 +140,26 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("ADMIN_TOKEN unset — /api/admin/* endpoints disabled");
     }
 
-    let oauth_github = physics_api::state::GithubOAuthConfig::from_env();
-    if oauth_github.is_some() {
-        tracing::info!("GitHub OAuth configured");
+    let firebase_project_id = std::env::var("FIREBASE_PROJECT_ID")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let firebase_jwks = Arc::new(physics_api::firebase_auth::JwksCache::new());
+    if firebase_project_id.is_some() {
+        // Pre-warm the JWKs cache so the first sign-in doesn't pay a
+        // ~200ms HTTP round-trip latency. Failure here is non-fatal —
+        // the cache will lazily retry on first /api/auth/firebase-session
+        // call. We just log and continue.
+        let jwks_for_warm = Arc::clone(&firebase_jwks);
+        tokio::spawn(async move {
+            match jwks_for_warm.warm().await {
+                Ok(_) => tracing::info!("firebase JWKs pre-warmed"),
+                Err(e) => tracing::warn!(error = %e, "firebase JWKs pre-warm failed; will lazy-fetch"),
+            }
+        });
+        tracing::info!("Firebase Auth configured");
     } else {
         tracing::info!(
-            "GITHUB_OAUTH_* env vars unset — /api/auth/github/* returns 503"
+            "FIREBASE_PROJECT_ID unset — /api/auth/firebase-session returns 503"
         );
     }
 
@@ -409,7 +423,8 @@ async fn main() -> anyhow::Result<()> {
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
-        oauth_github,
+        firebase_project_id,
+        firebase_jwks,
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.

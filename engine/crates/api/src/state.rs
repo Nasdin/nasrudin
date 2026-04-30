@@ -141,37 +141,12 @@ pub struct AppState {
     >,
     /// 60-second cache backing `GET /api/stats/landing`.
     pub landing_stats: Arc<crate::handlers::stats::LandingStatsCache>,
-    /// GitHub OAuth config — `None` disables the GitHub sign-in routes.
-    pub oauth_github: Option<GithubOAuthConfig>,
-}
-
-/// GitHub OAuth credentials. `None` when any of the three env vars is
-/// unset — the start/callback handlers return 503 in that case so the
-/// rest of the API works without GitHub configured.
-#[derive(Clone)]
-pub struct GithubOAuthConfig {
-    pub client_id: String,
-    pub client_secret: String,
-    pub redirect_uri: String,
-}
-
-impl GithubOAuthConfig {
-    pub fn from_env() -> Option<Self> {
-        let client_id = std::env::var("GITHUB_OAUTH_CLIENT_ID")
-            .ok()
-            .filter(|s| !s.is_empty())?;
-        let client_secret = std::env::var("GITHUB_OAUTH_CLIENT_SECRET")
-            .ok()
-            .filter(|s| !s.is_empty())?;
-        let redirect_uri = std::env::var("GITHUB_OAUTH_REDIRECT_URI")
-            .ok()
-            .filter(|s| !s.is_empty())?;
-        Some(Self {
-            client_id,
-            client_secret,
-            redirect_uri,
-        })
-    }
+    /// Firebase project id (e.g. `"nasrudin"`). When `None`,
+    /// `/api/auth/firebase-session` returns 503 and email/Google sign-in
+    /// is unavailable. Other endpoints work normally.
+    pub firebase_project_id: Option<String>,
+    /// Lazily-fetched Google JWKs, used to verify Firebase ID tokens.
+    pub firebase_jwks: Arc<crate::firebase_auth::JwksCache>,
 }
 
 /// Cache key for the `/api/seed` JSON response cache. Distinct

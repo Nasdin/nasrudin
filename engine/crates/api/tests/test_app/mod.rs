@@ -167,7 +167,8 @@ pub async fn build() -> Option<TestApp> {
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
-        oauth_github: None,
+        firebase_project_id: Some("test-project".into()),
+        firebase_jwks: Arc::new(physics_api::firebase_auth::JwksCache::new()),
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the
