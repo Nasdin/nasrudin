@@ -78,6 +78,8 @@ oauth2 = { version = "4", default-features = false, features = ["reqwest", "rust
 # (which transitively re-exports the `cookie` crate; cookie itself uses
 # `time` for durations). Pinned to match the version in Cargo.lock.
 time = "0.3"
+jsonwebtoken = "9"
 
 [dev-dependencies]
 tempfile = "3"
+rsa = "0.9"
