@@ -1519,6 +1519,10 @@
   .activity-feed li { grid-template-columns: 1fr; gap: 4px; }
   .targeted-search-card { grid-template-columns: 1fr; padding: 20px; gap: 16px; }
 
+  .lead-step { padding: 20px 14px; }
+  .lead-rank { font-size: 28px; }
+  .lead-handle { font-size: 18px; }
+
   .pricing-hero { padding: 40px 0 20px; }
   .pricing-hero h1 { font-size: clamp(32px, 9vw, 44px); }
   .pricing-hero .lede { font-size: 16px; }

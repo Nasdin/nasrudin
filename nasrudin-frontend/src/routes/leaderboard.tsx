@@ -55,6 +55,7 @@ function LeaderboardPage() {
               />
             )}
           </div>
+          <div className="lead-table-scroll">
           <table className="lead-table">
             <thead>
               <tr>
@@ -106,6 +107,7 @@ function LeaderboardPage() {
               ))}
             </tbody>
           </table>
+          </div>
           {ranked.length === 0 && (
             <p style={{ color: 'var(--ink-500)', textAlign: 'center', padding: 64 }}>
               No workers have registered yet. Run a node to be the first.
