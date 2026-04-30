@@ -92,6 +92,7 @@ pub fn build_prompt(
     cluster_summaries: &[serde_json::Value],
     bandit_state: &serde_json::Value,
     k_per_island_next: &std::collections::HashMap<String, u32>,
+    in_flight_targets: &[serde_json::Value],
 ) -> String {
     let mode_note = if scope == "B" {
         "Mutation knobs are LOCKED for this cycle (≥1 paid Researcher \
@@ -111,11 +112,20 @@ pub fn build_prompt(
         "cluster_summaries": cluster_summaries,
         "bandit_state": bandit_state,
         "k_per_island_next": k_per_island_next,
+        "in_flight_targets": in_flight_targets,
         "instructions": format!("scope={scope}. {mode_note} \
             Cluster directives address clusters by `centroid_skeleton_hash` \
             from the cluster_summaries above. The bandit (not you) chose \
             k_per_island_next; cross-reference bandit_state to understand \
-            why. Emit SteeringConfig JSON only — no prose, no markdown fences."),
+            why. \
+            \n\nSelf-curriculum: in_flight_targets lists targets you've \
+            proposed in past cycles that are still open or proving. Inspect \
+            recent verified theorems in the cycle outcomes; if any matches \
+            an in-flight target, emit a target_status_updates entry to mark \
+            it proved (or abandoned, if the GA has demonstrably given up). \
+            Propose new soft_targets with stable target_id strings (suggest \
+            UUIDs or descriptive slugs) so future cycles can track them. \
+            \nEmit SteeringConfig JSON only — no prose, no markdown fences."),
     });
     serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into())
 }
@@ -128,13 +138,19 @@ mod tests {
         Vec<serde_json::Value>,
         serde_json::Value,
         std::collections::HashMap<String, u32>,
+        Vec<serde_json::Value>,
     ) {
-        (vec![], serde_json::json!({}), std::collections::HashMap::new())
+        (
+            vec![],
+            serde_json::json!({}),
+            std::collections::HashMap::new(),
+            vec![],
+        )
     }
 
     #[test]
     fn prompt_includes_scope_and_demand() {
-        let (cs, bs, kp) = empty_extras();
+        let (cs, bs, kp, ift) = empty_extras();
         let p = build_prompt(
             "C",
             &[],
@@ -148,6 +164,7 @@ mod tests {
             &cs,
             &bs,
             &kp,
+            &ift,
         );
         assert!(p.contains("scope=C"));
         assert!(p.contains("entropy"));
@@ -155,7 +172,7 @@ mod tests {
 
     #[test]
     fn mode_b_signals_pinned_targets() {
-        let (cs, bs, kp) = empty_extras();
+        let (cs, bs, kp, ift) = empty_extras();
         let p = build_prompt(
             "B",
             &[],
@@ -167,6 +184,7 @@ mod tests {
             &cs,
             &bs,
             &kp,
+            &ift,
         );
         assert!(p.contains("scope=B"));
         assert!(p.contains("LOCKED"));
@@ -175,8 +193,8 @@ mod tests {
 
     #[test]
     fn schema_mentions_required_fields() {
-        let (cs, bs, kp) = empty_extras();
-        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp);
+        let (cs, bs, kp, ift) = empty_extras();
+        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift);
         for f in &[
             "version",
             "scope",
@@ -190,8 +208,8 @@ mod tests {
 
     #[test]
     fn schema_hint_lists_mutation_priors_and_op_names() {
-        let (cs, bs, kp) = empty_extras();
-        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp);
+        let (cs, bs, kp, ift) = empty_extras();
+        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift);
         assert!(
             p.contains("mutation_priors"),
             "schema must mention mutation_priors"

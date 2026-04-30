@@ -56,6 +56,12 @@ pub struct SteeringConfig {
     /// picks a `population_size` / `generations` multiplier.
     #[serde(default)]
     pub compute_directives: Vec<ComputeDirective>,
+    /// LLM-driven self-curriculum status updates. Each entry
+    /// transitions a previously-proposed target through the
+    /// {open, proving, proved, abandoned} lifecycle. Empty by
+    /// default; the LLM emits these as it reasons about progress.
+    #[serde(default)]
+    pub target_status_updates: Vec<TargetStatusUpdate>,
     /// Free-form rationale (≤500 chars). Stored for the next cycle
     /// to read; never affects worker behaviour.
     pub rationale: String,
@@ -77,6 +83,23 @@ pub struct SoftTarget {
     pub latex: String,
     pub domain: String,
     pub weight: f32,
+    /// Optional stable handle the LLM uses to track its self-curriculum
+    /// proposals across cycles. When `Some`, the steerer cycle records
+    /// the target in `llm_proposed_targets` and surfaces its lifecycle
+    /// status in subsequent prompts. The LLM updates statuses via
+    /// `target_status_updates` in subsequent emissions.
+    #[serde(default)]
+    pub target_id: Option<String>,
+}
+
+/// LLM-driven status update for a previously-proposed self-curriculum
+/// target. Status transitions: open → proving → proved | abandoned.
+/// The LLM judges progress by inspecting recent verified theorems in
+/// the prompt; the server doesn't auto-detect proofs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TargetStatusUpdate {
+    pub target_id: String,
+    pub new_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,6 +317,7 @@ pub fn default_config() -> SteeringConfig {
         mutation_priors: HashMap::new(),
         cluster_directives: vec![],
         compute_directives: vec![],
+        target_status_updates: vec![],
         rationale: "default cold-start config".into(),
     }
 }

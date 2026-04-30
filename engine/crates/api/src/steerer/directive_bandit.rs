@@ -338,8 +338,10 @@ mod tests {
 
     #[test]
     fn lookup_clamps_out_of_range() {
+        // Out-of-range choice now saturates at index 8 (3.00× cap of
+        // the expanded 9-choice table from Phase H).
         assert!(
-            (lookup_multiplier_value(ClusterAction::Boost, 99) - 2.00).abs() < 1e-6
+            (lookup_multiplier_value(ClusterAction::Boost, 99) - 3.00).abs() < 1e-6
         );
     }
 

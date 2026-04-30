@@ -264,6 +264,25 @@ pub async fn run_one_cycle(
         }
     }
 
+    // Self-curriculum: show the LLM its in-flight proposed targets so
+    // it can mark them proved/abandoned in this cycle's emission.
+    let in_flight_targets: Vec<serde_json::Value> = nasrudin_pg::query::llm_proposed_targets::in_flight(
+        db, 30,
+    )
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|t| {
+        serde_json::json!({
+            "target_id": t.target_id,
+            "latex": t.latex,
+            "domain": t.domain,
+            "status": t.status,
+            "proposed_at": t.proposed_at.to_rfc3339(),
+        })
+    })
+    .collect();
+
     let user_prompt = build_prompt(
         scope,
         &history,
@@ -272,6 +291,7 @@ pub async fn run_one_cycle(
         &cluster_summaries,
         &serde_json::Value::Object(bandit_state),
         &next_k_per_island,
+        &in_flight_targets,
     );
 
     // 5. Call LLM.
@@ -303,6 +323,38 @@ pub async fn run_one_cycle(
         ctok,
     )
     .await?;
+
+    // Self-curriculum bookkeeping: persist any soft_target with a
+    // stable target_id, and apply target_status_updates the LLM
+    // emitted. Idempotent on re-emission — upsert_open is a no-op
+    // for existing rows, so the LLM can keep emitting the same
+    // target across cycles without resetting its lifecycle.
+    for st in &config.soft_targets {
+        if let Some(tid) = &st.target_id {
+            let _ = nasrudin_pg::query::llm_proposed_targets::upsert_open(
+                db, tid, &st.latex, &st.domain, st.weight as f64,
+            )
+            .await;
+        }
+    }
+    for upd in &config.target_status_updates {
+        let allowed =
+            matches!(upd.new_status.as_str(), "open" | "proving" | "proved" | "abandoned");
+        if !allowed {
+            tracing::warn!(
+                target_id = %upd.target_id,
+                bad_status = %upd.new_status,
+                "rejecting target_status_update with invalid status"
+            );
+            continue;
+        }
+        let _ = nasrudin_pg::query::llm_proposed_targets::set_status(
+            db,
+            &upd.target_id,
+            &upd.new_status,
+        )
+        .await;
+    }
 
     // Hot-reload the in-process snapshot. Workers see the new config
     // on their next `/api/seed` poll. Seed cache is invalidated
