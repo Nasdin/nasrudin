@@ -114,7 +114,16 @@ impl AxiomStore {
     /// This replaces the domain-specific `load_*()` methods.
     pub fn load_from_catalog(&mut self, catalog_path: &std::path::Path) -> anyhow::Result<usize> {
         let content = std::fs::read_to_string(catalog_path)?;
-        let catalog: serde_json::Value = serde_json::from_str(&content)?;
+        // serde_json's default recursion limit is 128. The full Mathlib
+        // math_corpus has Lean dependent-type expressions deeper than
+        // that (tested up to ~200). Disable the limit; the data is from
+        // a trusted local extract pipeline so DoS-via-stack-blowup isn't
+        // a threat model here.
+        let mut deser = serde_json::Deserializer::from_str(&content);
+        deser.disable_recursion_limit();
+        let deser = serde_stacker::Deserializer::new(&mut deser);
+        let catalog: serde_json::Value =
+            serde::Deserialize::deserialize(deser)?;
 
         let mut count = 0;
         let mut ast_count = 0;
