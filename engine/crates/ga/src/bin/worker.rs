@@ -459,6 +459,12 @@ async fn main() {
         // worker connected to the cluster steerer). The chunk loop
         // uses report.final_population to compute ClusterSummaries.
         collect_final_population: api_cfg.is_some(),
+        // Per-cluster knob overrides — populated per-chunk after
+        // matching the LLM's cluster_directives via the bandit. The
+        // base config holds an empty map so the GA falls back to
+        // global rates until directives land.
+        cluster_multipliers: std::collections::HashMap::new(),
+        cluster_assignments: vec![],
     };
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
@@ -1107,6 +1113,8 @@ async fn run_seed_driven_chunk(
             // Research-mode does not (yet) participate in cluster
             // reporting, so skip the final-population snapshot.
             collect_final_population: false,
+            cluster_multipliers: std::collections::HashMap::new(),
+            cluster_assignments: vec![],
         };
         let report = run_discovery(&filtered, &chunk_config, rng);
         total_attempted += report.total_candidates as u64;

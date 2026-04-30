@@ -127,6 +127,78 @@ pub struct DiscoveryConfig {
     /// population into `DiscoveryReport.final_population`. Off by
     /// default — only the worker that runs cluster reporting needs it.
     pub collect_final_population: bool,
+    /// Per-cluster knob overrides. Empty → all individuals use the
+    /// global rate / elitism unchanged. Populated by the worker after
+    /// matching LLM `cluster_directives` to the chunk's clusters.
+    pub cluster_multipliers: std::collections::HashMap<u32, ClusterMultiplier>,
+    /// Per-individual cluster_id, aligned with the offspring index.
+    /// Empty → cluster-aware path is skipped and the GA runs in legacy
+    /// uniform mode.
+    pub cluster_assignments: Vec<u32>,
+}
+
+/// Per-cluster knob multiplier. Default is identity (1.0× rate, 1.0×
+/// elitism, no kill, no diversify). The worker fills these in when a
+/// matched LLM `cluster_directive` lands; the GA mutation site
+/// applies the multiplier to the per-individual rate / elitism check.
+#[derive(Debug, Clone)]
+pub struct ClusterMultiplier {
+    pub mutation_rate_mult: f32,
+    pub elitism_mult: f32,
+    pub kill_fraction: f32,
+    pub diversify_fraction: f32,
+}
+
+impl Default for ClusterMultiplier {
+    fn default() -> Self {
+        Self {
+            mutation_rate_mult: 1.0,
+            elitism_mult: 1.0,
+            kill_fraction: 0.0,
+            diversify_fraction: 0.0,
+        }
+    }
+}
+
+/// Resolve the per-individual mutation rate. Falls back to global
+/// when no cluster assignment is in scope. Clamps to the existing
+/// GA bounds [0.05, 0.30] so a directive can't accidentally turn the
+/// GA into pure random search or freeze it.
+pub fn local_mutation_rate(cfg: &DiscoveryConfig, individual_idx: usize) -> f64 {
+    if cfg.cluster_assignments.is_empty() {
+        return cfg.mutation_rate;
+    }
+    let cid = match cfg.cluster_assignments.get(individual_idx) {
+        Some(c) => *c,
+        None => return cfg.mutation_rate,
+    };
+    let mult = cfg
+        .cluster_multipliers
+        .get(&cid)
+        .map(|m| m.mutation_rate_mult as f64)
+        .unwrap_or(1.0);
+    (cfg.mutation_rate * mult).clamp(0.05, 0.30)
+}
+
+/// Compute the elitism count for a specific cluster. Used when the
+/// GA performs its global elitism step but wants to honour a cluster
+/// directive that exploits one cluster harder than another.
+pub fn elite_count_with_cluster_multiplier(
+    cfg: &DiscoveryConfig,
+    cluster_id: u32,
+) -> usize {
+    let mult = cfg
+        .cluster_multipliers
+        .get(&cluster_id)
+        .map(|m| m.elitism_mult as f64)
+        .unwrap_or(1.0);
+    let base = (cfg.elitism_fraction.clamp(0.0, 0.2) as f64
+        * cfg.population_size as f64)
+        .floor();
+    (base * mult)
+        .round()
+        .max(0.0)
+        .min(cfg.population_size as f64) as usize
 }
 
 impl Default for DiscoveryConfig {
@@ -152,6 +224,8 @@ impl Default for DiscoveryConfig {
             suffix_bias: 0.0,
             elitism_fraction: 0.0,
             collect_final_population: false,
+            cluster_multipliers: std::collections::HashMap::new(),
+            cluster_assignments: vec![],
         }
     }
 }
@@ -272,7 +346,13 @@ pub fn run_discovery(
             } else {
                 (p1.chain.clone(), p2.chain.clone())
             };
-            if rng.random_bool(config.mutation_rate) {
+            // Per-individual mutation rate honours per-cluster
+            // multipliers when the worker has populated
+            // `cluster_assignments`; falls back to the global rate
+            // otherwise. Clamped to [0.05, 0.30] inside the helper.
+            let c1_rate = local_mutation_rate(config, offspring.len());
+            let c2_rate = local_mutation_rate(config, offspring.len() + 1);
+            if rng.random_bool(c1_rate) {
                 crate::chain_ga::mutate_chain_weighted_with_suffix_bias(
                     &mut c1,
                     store,
@@ -281,7 +361,7 @@ pub fn run_discovery(
                     config.suffix_bias,
                 );
             }
-            if rng.random_bool(config.mutation_rate) {
+            if rng.random_bool(c2_rate) {
                 crate::chain_ga::mutate_chain_weighted_with_suffix_bias(
                     &mut c2,
                     store,
@@ -687,6 +767,8 @@ mod tests {
             suffix_bias: 0.0,
             elitism_fraction: 0.0,
             collect_final_population: false,
+            cluster_multipliers: std::collections::HashMap::new(),
+            cluster_assignments: vec![],
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -721,6 +803,8 @@ mod tests {
             suffix_bias: 0.0,
             elitism_fraction: 0.0,
             collect_final_population: false,
+            cluster_multipliers: std::collections::HashMap::new(),
+            cluster_assignments: vec![],
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -732,6 +816,73 @@ mod tests {
             report.unique_executable > 0,
             "no executable chains in final pop after 20 gens"
         );
+    }
+
+    #[test]
+    fn local_rate_with_no_assignments_uses_global() {
+        let cfg = DiscoveryConfig::default();
+        let r = local_mutation_rate(&cfg, 0);
+        assert!((r - cfg.mutation_rate).abs() < 1e-9);
+    }
+
+    #[test]
+    fn local_rate_with_cluster_multiplier_clamps() {
+        let mut cfg = DiscoveryConfig::default();
+        cfg.mutation_rate = 0.20;
+        cfg.cluster_assignments = vec![0u32, 0, 1, 1];
+        cfg.cluster_multipliers.insert(
+            0,
+            ClusterMultiplier {
+                mutation_rate_mult: 2.0,
+                ..Default::default()
+            },
+        );
+        cfg.cluster_multipliers.insert(
+            1,
+            ClusterMultiplier {
+                mutation_rate_mult: 0.0,
+                ..Default::default()
+            },
+        );
+        // 0.20 × 2.0 = 0.40 → clamped to 0.30
+        assert!((local_mutation_rate(&cfg, 0) - 0.30).abs() < 1e-9);
+        // 0.20 × 0.0 = 0.0 → clamped to 0.05
+        assert!((local_mutation_rate(&cfg, 2) - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn local_rate_unknown_cluster_falls_back_to_global() {
+        let mut cfg = DiscoveryConfig::default();
+        cfg.mutation_rate = 0.10;
+        cfg.cluster_assignments = vec![5u32];
+        let r = local_mutation_rate(&cfg, 0);
+        assert!((r - 0.10).abs() < 1e-9);
+    }
+
+    #[test]
+    fn local_elitism_count_with_multiplier() {
+        let mut cfg = DiscoveryConfig::default();
+        cfg.population_size = 100;
+        cfg.elitism_fraction = 0.05; // 5 elites globally
+        cfg.cluster_assignments = vec![0u32; 100];
+        cfg.cluster_multipliers.insert(
+            0,
+            ClusterMultiplier {
+                elitism_mult: 2.0,
+                ..Default::default()
+            },
+        );
+        // 5 × 2.0 = 10 elites for cluster 0
+        assert_eq!(elite_count_with_cluster_multiplier(&cfg, 0), 10);
+    }
+
+    #[test]
+    fn cluster_multiplier_default_is_identity() {
+        let m = ClusterMultiplier::default();
+        assert!((m.mutation_rate_mult - 1.0).abs() < 1e-9);
+        assert!((m.elitism_mult - 1.0).abs() < 1e-9);
+        assert!((m.kill_fraction - 0.0).abs() < 1e-9);
+        assert!((m.diversify_fraction - 0.0).abs() < 1e-9);
     }
 }
 
