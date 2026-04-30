@@ -6,30 +6,32 @@ Most of the moving pieces are documented inline in their unit / config files
 (`systemd/*.service`, `Caddyfile.native`, `scripts/`). This README is for
 ops decisions that don't fit cleanly anywhere else.
 
-## GitHub OAuth (sign-in)
+## Firebase Auth (sign-in)
 
-To enable the **"Continue with GitHub"** button on `/signin`, register a
-GitHub OAuth app and wire the credentials into the API.
+Sign-in is powered by Firebase Authentication. To bring up a fresh
+environment:
 
-1. Visit <https://github.com/settings/developers> → **New OAuth App**.
-2. **Application name:** Nasrudin (or per-environment, e.g. `Nasrudin (staging)`).
-3. **Homepage URL:** `https://nasrudin.app` (or staging URL).
-4. **Authorization callback URL:** `https://nasrudin.app/api/auth/github/callback`
-   — must match `GITHUB_OAUTH_REDIRECT_URI` exactly, including scheme.
-5. After creation, click **Generate a new client secret**.
-6. Set in the systemd unit `Environment=` block (or `.env`):
-   - `GITHUB_OAUTH_CLIENT_ID=Iv1.…`
-   - `GITHUB_OAUTH_CLIENT_SECRET=<the secret>`
-   - `GITHUB_OAUTH_REDIRECT_URI=https://nasrudin.app/api/auth/github/callback`
+1. Visit <https://console.firebase.google.com> → **Add project** → name it
+   (e.g. `nasrudin`, `nasrudin-staging`).
+2. **Authentication → Get started** → enable two providers:
+   - **Email/Password** — leave "Email link (passwordless sign-in)" off.
+   - **Google** — pick a support email from the dropdown.
+3. **Project settings → General → Your apps → Add app → Web** → register
+   the web app. Copy the Firebase SDK config snippet — populate the
+   `VITE_FIREBASE_*` env vars from it.
+4. **Project settings → General → Project ID** — copy → set
+   `FIREBASE_PROJECT_ID` on the backend.
+5. **Authentication → Settings → Authorized domains** — add the production
+   domain (e.g. `nasrudin.app`) and `localhost` for dev.
+6. **Authentication → Templates → Email address verification** and
+   **Password reset** — customize subject and body so emails read "Nasrudin"
+   rather than the default Firebase project name.
 
-The API logs `GitHub OAuth configured` at startup when all three are set;
-otherwise the routes return `503 oauth_not_configured` and the email /
-password flow still works.
+The API logs `Firebase Auth configured` at startup when `FIREBASE_PROJECT_ID`
+is set; otherwise `/api/auth/firebase-session` returns 503 and the rest of
+the API works (worker keys and live API keys continue to function).
 
-For local development against a non-TLS callback URL, also set:
-
-```
-OAUTH_COOKIE_SECURE=false
-```
-
-so the state cookie isn't dropped over plain HTTP.
+The first sign-in attempt after `FIREBASE_PROJECT_ID` is set fetches
+Google's signing keys (one HTTP round-trip, ~200ms). The API pre-warms
+the cache at boot in the background; failures are logged and recovery is
+automatic on next sign-in.
