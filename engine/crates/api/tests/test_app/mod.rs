@@ -93,11 +93,37 @@ pub struct Resp {
     pub body: Vec<u8>,
 }
 
+/// Per-test overrides for the harness. Defaults match `build()`.
+#[derive(Default)]
+pub struct BuildOpts {
+    pub firebase_project_id: Option<String>,
+    pub firebase_jwks: Option<std::sync::Arc<physics_api::firebase_auth::JwksCache>>,
+}
+
+/// Convenience for tests that need to inject a known JWKs key set.
+pub async fn build_with_jwks(
+    project_id: &str,
+    jwks: std::collections::HashMap<String, jsonwebtoken::DecodingKey>,
+) -> Option<TestApp> {
+    build_with_opts(BuildOpts {
+        firebase_project_id: Some(project_id.into()),
+        firebase_jwks: Some(std::sync::Arc::new(
+            physics_api::firebase_auth::JwksCache::for_test(jwks),
+        )),
+    })
+    .await
+}
+
 /// Build a router with just the four Phase-9 theorem read endpoints wired.
 ///
 /// Returns `None` if the test database can't be reached — callers should
 /// `let Some(app) = build().await else { return };` to skip gracefully.
 pub async fn build() -> Option<TestApp> {
+    build_with_opts(BuildOpts::default()).await
+}
+
+/// Like `build()` but with per-test overrides for Firebase config / JWKs.
+pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
     let guard = TEST_LOCK.lock().await;
 
     let pg = match connect_simple(&test_db_url()).await {
@@ -167,8 +193,12 @@ pub async fn build() -> Option<TestApp> {
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
-        firebase_project_id: Some("test-project".into()),
-        firebase_jwks: Arc::new(physics_api::firebase_auth::JwksCache::new()),
+        firebase_project_id: opts
+            .firebase_project_id
+            .or_else(|| Some("test-project".into())),
+        firebase_jwks: opts
+            .firebase_jwks
+            .unwrap_or_else(|| Arc::new(physics_api::firebase_auth::JwksCache::new())),
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the
@@ -223,6 +253,14 @@ pub async fn build() -> Option<TestApp> {
         .route(
             "/api/stats/landing",
             axum::routing::get(handlers::stats::landing),
+        )
+        .route(
+            "/api/auth/firebase-session",
+            axum::routing::post(physics_api::auth::firebase_session),
+        )
+        .route(
+            "/api/auth/me",
+            axum::routing::get(physics_api::auth::me),
         )
         .route(
             "/api/me/llm-keys",
