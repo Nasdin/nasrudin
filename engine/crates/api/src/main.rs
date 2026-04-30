@@ -629,6 +629,18 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Cluster bandit arms ensured");
         }
 
+        // Materialise the per-(island, action, strength_bucket,
+        // multiplier_choice) UCB1 arm rows for the directive bandit.
+        // 600 rows; idempotent. Without this the worker's UCB1
+        // selection sees an empty slot and the static-formula
+        // fallback handles every directive — correct but no learning.
+        if let Err(e) = physics_api::steerer::directive_bandit::ensure_all_arms(pg).await {
+            tracing::warn!(error=%e, "directive_bandit ensure_all_arms failed; \
+                per-cluster multipliers will fall back to static formula until next boot");
+        } else {
+            tracing::info!("Cluster directive bandit arms ensured");
+        }
+
         // Hourly purge of cluster_reports older than 7 days. Bandit
         // arms hold the long-running statistics; the per-chunk rows
         // are only needed for the most-recent prompt + reward window.

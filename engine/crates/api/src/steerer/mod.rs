@@ -24,6 +24,7 @@
 
 pub mod bandit;
 pub mod cycle;
+pub mod directive_bandit;
 pub mod demand;
 pub mod outcome;
 pub mod prompt;
