@@ -60,6 +60,17 @@ async fn main() {
         || std::env::var("NASRUDIN_RESEARCH_MODE")
             .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
+    // Paid Researcher tier ($19/mo) — distinct from --research-mode.
+    // When set, the worker polls /api/jobs/claim *before* the legacy
+    // /api/conjecture/claim path, runs a paid GA slice for up to 24h,
+    // heartbeats every 30s with slot-hour debits, and calls
+    // /api/jobs/{id}/mark_proved on a verified-theorem hit. The 96
+    // slot-hour quota and explorer-floor protection are enforced
+    // server-side; this flag just opts the worker in.
+    let paid_jobs_mode: bool = args.iter().any(|a| a == "--paid-jobs-mode")
+        || std::env::var("NASRUDIN_PAID_JOBS_MODE")
+            .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
     // P-Task 11/12: `--no-local-lake` is a DEV-ONLY mode that submits
     // candidate chains *without* first running local lake verification.
     // The production architecture requires workers to lake-build
@@ -461,6 +472,9 @@ async fn main() {
     let mut rng = rand::rng();
     let mut combined_verified: Vec<VerifiedDiscovery> = Vec::new();
     let mut total_lake = 0usize;
+    let mut total_lake_passed = 0usize;
+    let mut total_persistent_attempts = 0usize;
+    let mut total_dim_rejected = 0usize;
     let mut total_candidates = 0usize;
     let mut total_unique = 0usize;
     let mut current_rejected = rejected_canonicals.clone();
@@ -477,7 +491,87 @@ async fn main() {
         None
     };
 
+    // Paid Researcher tier: distinct queue, distinct client. Tries
+    // /api/jobs/claim first each chunk; on award runs a paid slice
+    // and skips the rest of the chunk. On 204, falls through to the
+    // legacy research_mode path and then the background fleet.
+    let paid_jobs_client = if paid_jobs_mode {
+        api_cfg.as_ref().map(|cfg| {
+            std::sync::Arc::new(nasrudin_ga::paid_jobs_client::PaidJobsClient::new(
+                cfg.api_url.clone(),
+                cfg.worker_key.clone(),
+            ))
+        })
+    } else {
+        None
+    };
+    // Slot count we report to the server on every paid claim. v1
+    // uses `--max-lake` as a proxy; v2 should plug in a real
+    // ResourceBudget detector.
+    let paid_available_slots: u32 = (max_lake as u32).max(1);
+    // Seed config for paid slices: same shape as the background
+    // config but with `submit_unverified_top_k = 0` so a noisy slice
+    // doesn't pollute the global ingest path — the slice's only
+    // submission channel is `mark_proved` once a kernel-verified
+    // theorem appears.
+    let paid_slice_base_config = {
+        let mut c = config.clone();
+        c.submit_unverified_top_k = 0;
+        c.population_size = pop;
+        c.max_chain_len = max_chain_len;
+        c
+    };
+    let paid_slice_store: std::sync::Arc<AxiomStore> =
+        std::sync::Arc::new(store.clone());
+
     for chunk_i in 0..chunks {
+        // ── Paid Researcher claim (highest priority) ─────────────────────
+        // The $19/mo Researcher tier owns its own queue under
+        // /api/jobs/claim. Try it first — if a claim succeeds we hand
+        // the entire chunk over to the slice runner (which will heartbeat,
+        // mark_proved on a verified hit, or run until the server signals
+        // budget_exhausted) and skip the rest of the chunk's work.
+        if let Some(client) = paid_jobs_client.as_ref() {
+            let claim_body = nasrudin_ga::paid_jobs_client::ClaimBody {
+                available_lake_slots: paid_available_slots,
+                domains_supported: vec!["all".into()],
+            };
+            match client.claim(&claim_body).await {
+                Ok(Some(job)) => {
+                    println!(
+                        "▶ chunk {} claimed paid conjecture {} (hunch: {}) — slot-hours remaining: {:.1}",
+                        chunk_i + 1,
+                        job.job_id,
+                        job.hunch.chars().take(80).collect::<String>(),
+                        job.lake_slot_hours_remaining
+                    );
+                    if let Err(e) = nasrudin_ga::paid_slice::run_paid_slice(
+                        client,
+                        &job,
+                        paid_slice_store.clone(),
+                        paid_slice_base_config.clone(),
+                    )
+                    .await
+                    {
+                        eprintln!(
+                            "  ! paid slice for {} failed: {e}; releasing",
+                            job.job_id
+                        );
+                        let _ = client.release(job.job_id).await;
+                    }
+                    continue;
+                }
+                Ok(None) => {
+                    tracing::debug!("paid-jobs claim: queue empty / floor protected");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "paid-jobs claim failed: {e}; falling through"
+                    );
+                }
+            }
+        }
+
         // ── Phase E: research-mode dequeue ────────────────────────────────
         // Try to claim a conjecture before falling through to background
         // corpus-fill. If a job is claimed, run it to completion (or budget
@@ -581,6 +675,9 @@ async fn main() {
         total_candidates += report.total_candidates;
         total_unique += report.unique_executable;
         total_lake += report.lake_attempts;
+        total_lake_passed += report.lake_passed;
+        total_persistent_attempts += report.persistent_attempts;
+        total_dim_rejected += report.dim_rejected;
         if !report.verified.is_empty() {
             println!(
                 "▶ chunk {}/{}: {} verified, {} lake attempts",
@@ -625,23 +722,26 @@ async fn main() {
         total_candidates,
         unique_executable: total_unique,
         lake_attempts: total_lake,
-        // The shim aggregates outputs across chunks; per-chunk
-        // `lake_passed`/`persistent_attempts`/`dim_rejected` aren't
-        // bubbled up through this code path yet, so report 0 — the
-        // verified count below is still authoritative.
-        lake_passed: combined_verified.len(),
-        persistent_attempts: 0,
-        dim_rejected: 0,
+        lake_passed: total_lake_passed,
+        persistent_attempts: total_persistent_attempts,
+        dim_rejected: total_dim_rejected,
         verified: combined_verified,
         top_fitness_canonical: None,
     };
 
     println!("▶ Run complete.");
-    println!("    Generations:        {}", report.generations_run);
-    println!("    Total candidates:   {}", report.total_candidates);
-    println!("    Unique executable:  {}", report.unique_executable);
-    println!("    Lake attempts:      {}", report.lake_attempts);
-    println!("    Verified theorems:  {}", report.verified.len());
+    println!("    Generations:         {}", report.generations_run);
+    println!("    Total candidates:    {}", report.total_candidates);
+    println!("    Unique executable:   {}", report.unique_executable);
+    println!("    Dimension rejected:  {}", report.dim_rejected);
+    println!("    Lake attempts:       {}", report.lake_attempts);
+    println!("    Lake passed:         {}", report.lake_passed);
+    if report.lake_attempts > 0 {
+        let pass_rate = (report.lake_passed as f64 / report.lake_attempts as f64) * 100.0;
+        println!("    Pass rate:           {pass_rate:.2}%");
+    }
+    println!("    Persistent attempts: {}", report.persistent_attempts);
+    println!("    Verified theorems:   {}", report.verified.len());
     if let Some(top) = &report.top_fitness_canonical {
         println!("    Top-fitness final: {top}");
     }
