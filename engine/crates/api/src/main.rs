@@ -631,6 +631,14 @@ async fn main() -> anyhow::Result<()> {
             "/api/admin/reload_corpus",
             post(handlers::admin::reload_corpus),
         )
+        .route(
+            "/api/admin/steering/recent",
+            get(handlers::admin::steering_recent),
+        )
+        .route(
+            "/api/admin/steering/force",
+            post(handlers::admin::steering_force),
+        )
         .layer(GovernorLayer::new(rate_limit::auth_strict()));
 
     // SSE: no rate limit (long-lived connection)

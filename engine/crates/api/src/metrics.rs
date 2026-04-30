@@ -144,6 +144,75 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         "nasrudin_theorems_lake_verified {lake_verified}\n"
     ));
 
+    // ── Cluster steerer + paid Researcher (Phase 7) ─────────────────
+    let steering_snap = state.steering.load();
+    let scope = steering_snap
+        .config
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    out.push_str(
+        "# HELP nasrudin_steerer_mode Current steerer scope (B = paid jobs running, knobs locked; C = full authority).\n",
+    );
+    out.push_str("# TYPE nasrudin_steerer_mode gauge\n");
+    out.push_str(&format!(
+        "nasrudin_steerer_mode{{scope=\"{scope}\"}} 1\n"
+    ));
+
+    if let Some(ref pg) = state.pg {
+        if let Ok(active) = nasrudin_pg::query::conjecture_jobs::count_in_states(
+            pg,
+            &["claimed", "running", "Running"],
+        )
+        .await
+        {
+            out.push_str(
+                "# HELP nasrudin_paid_jobs_active Paid Researcher jobs currently claimed by a worker.\n",
+            );
+            out.push_str("# TYPE nasrudin_paid_jobs_active gauge\n");
+            out.push_str(&format!("nasrudin_paid_jobs_active {active}\n"));
+        }
+        if let Ok(queued) =
+            nasrudin_pg::query::conjecture_jobs::count_in_states(pg, &["queued"]).await
+        {
+            out.push_str("# HELP nasrudin_paid_jobs_queued Paid Researcher jobs waiting to be claimed.\n");
+            out.push_str("# TYPE nasrudin_paid_jobs_queued gauge\n");
+            out.push_str(&format!("nasrudin_paid_jobs_queued {queued}\n"));
+        }
+    }
+    let total = state.capacity.total_lake_slots();
+    let paid = state.capacity.paid_slots();
+    out.push_str(
+        "# HELP nasrudin_explorer_slot_count Lake slots currently free for the explorer fleet.\n",
+    );
+    out.push_str("# TYPE nasrudin_explorer_slot_count gauge\n");
+    out.push_str(&format!(
+        "nasrudin_explorer_slot_count {}\n",
+        total.saturating_sub(paid)
+    ));
+    out.push_str(
+        "# HELP nasrudin_explorer_floor_satisfied 1 iff the explorer floor (≥10% of total, ≥2) is currently honored.\n",
+    );
+    out.push_str("# TYPE nasrudin_explorer_floor_satisfied gauge\n");
+    out.push_str(&format!(
+        "nasrudin_explorer_floor_satisfied {}\n",
+        if crate::jobs::quota::floor_satisfied(total, paid) {
+            1
+        } else {
+            0
+        }
+    ));
+    out.push_str(
+        "# HELP nasrudin_total_lake_slots Sum of recently-reported lake_slots from active workers.\n",
+    );
+    out.push_str("# TYPE nasrudin_total_lake_slots gauge\n");
+    out.push_str(&format!("nasrudin_total_lake_slots {total}\n"));
+    out.push_str(
+        "# HELP nasrudin_paid_lake_slots Lake slots currently committed to paid Researcher jobs.\n",
+    );
+    out.push_str("# TYPE nasrudin_paid_lake_slots gauge\n");
+    out.push_str(&format!("nasrudin_paid_lake_slots {paid}\n"));
+
     // ── Liveness ─────────────────────────────────────────────────────
     out.push_str("# HELP nasrudin_up 1 if the API is live (always 1 by definition).\n");
     out.push_str("# TYPE nasrudin_up gauge\n");

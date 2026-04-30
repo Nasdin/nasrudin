@@ -127,3 +127,124 @@ pub async fn reload_corpus(
     )
         .into_response()
 }
+
+/// Bearer-token gate shared by every steerer admin endpoint. Returns
+/// the gate's `Err` response (503 / 401) if the request fails the
+/// check, else `Ok(())`.
+fn check_admin(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let expected = match &state.admin_token {
+        Some(t) => t.clone(),
+        None => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "admin_token_unset" })),
+            ));
+        }
+    };
+    let provided = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if provided != expected {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "bad_admin_token" })),
+        ));
+    }
+    Ok(())
+}
+
+/// `GET /api/admin/steering/recent` — last 50 cluster-steerer cycles
+/// (newest first). Lets ops eyeball mode flips, validation failures,
+/// and the LLM's actual emitted configs over time.
+pub async fn steering_recent(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = check_admin(&state, &headers) {
+        return e.into_response();
+    }
+    let pg = match &state.pg {
+        Some(p) => p,
+        None => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response();
+        }
+    };
+    match nasrudin_pg::query::cluster_steering::list_recent(pg, 50).await {
+        Ok(rows) => (StatusCode::OK, Json(serde_json::json!({ "cycles": rows })))
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// `POST /api/admin/steering/force` — manual override. Body is a
+/// `SteeringConfig`; persisted as a cycle row with model_id="admin"
+/// + validation_failed=false (it's force-injected, validation already
+/// performed). Hot-reloads the ArcSwap snapshot so workers see it
+/// instantly.
+pub async fn steering_force(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(config): Json<crate::steerer::schema::SteeringConfig>,
+) -> impl IntoResponse {
+    if let Err(e) = check_admin(&state, &headers) {
+        return e.into_response();
+    }
+    if let Err(e) = config.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": format!("validation: {e}") })),
+        )
+            .into_response();
+    }
+    let pg = match &state.pg {
+        Some(p) => p,
+        None => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response();
+        }
+    };
+    let value = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
+    let row = match nasrudin_pg::query::cluster_steering::insert_new_cycle(
+        pg,
+        &config.scope,
+        value.clone(),
+        "admin",
+        false,
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    let body = serde_json::to_vec(&config).unwrap_or_default();
+    let etag = xxhash_rust::xxh64::xxh64(&body, 0);
+    state.steering.store(Arc::new(crate::state::SteeringSnapshot {
+        config: value,
+        etag,
+        started_at: row.started_at.with_timezone(&chrono::Utc),
+    }));
+    state.invalidate_seed_cache();
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "cycle_id": row.id, "etag": format!("{etag:016x}") })),
+    )
+        .into_response()
+}
