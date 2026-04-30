@@ -62,11 +62,61 @@ pub struct TargetSpec {
 
 impl TargetSpec {
     /// Look up a built-in spec by name.
+    ///
+    /// Targets are *optional* steering for the GA. The system is meant
+    /// to operate spontaneously by default — the chain-engine can run
+    /// without a target and discover novel theorems via the
+    /// domain-aware fitness signal alone. Targets exist for
+    /// directed-discovery runs (e.g. "rediscover Schrödinger from QM
+    /// postulates") and as ladder-progress signals for the featured
+    /// equations the UI surfaces.
     pub fn lookup(name: &str) -> Option<TargetSpec> {
         match name {
+            // Special relativity
             "sr_rest_energy" => Some(sr_rest_energy()),
+            // Quantum mechanics
+            "qm_schrodinger" | "schrodinger" => Some(qm_schrodinger()),
+            "qm_free_particle_dispersion" | "qm_free_particle_energy" => {
+                Some(qm_free_particle_dispersion())
+            }
+            "qm_harmonic_oscillator_levels" | "qm_harmonic_oscillator" => {
+                Some(qm_harmonic_oscillator_levels())
+            }
+            "qm_planck_einstein" => Some(qm_planck_einstein()),
+            "qm_de_broglie" => Some(qm_de_broglie()),
+            // Thermodynamics / statistical mechanics
+            "thermo_boltzmann_entropy" | "boltzmann_entropy" => Some(thermo_boltzmann_entropy()),
+            "thermo_carnot" | "carnot_efficiency" => Some(thermo_carnot()),
+            // Classical mechanics
+            "newton_second" | "f_eq_ma" => Some(newton_second()),
+            // Electromagnetism
+            "em_gauss_law" | "gauss_law" => Some(em_gauss_law()),
+            // General relativity
+            "gr_einstein_field_equation" | "einstein_field_equation" => {
+                Some(gr_einstein_field_equation())
+            }
+            "gr_schwarzschild_radius" => Some(gr_schwarzschild_radius()),
             _ => None,
         }
+    }
+
+    /// All built-in target spec names. Use to power UI dropdowns and
+    /// the worker's TARGET= env-var validation.
+    pub fn all_names() -> &'static [&'static str] {
+        &[
+            "sr_rest_energy",
+            "qm_schrodinger",
+            "qm_free_particle_dispersion",
+            "qm_harmonic_oscillator_levels",
+            "qm_planck_einstein",
+            "qm_de_broglie",
+            "thermo_boltzmann_entropy",
+            "thermo_carnot",
+            "newton_second",
+            "em_gauss_law",
+            "gr_einstein_field_equation",
+            "gr_schwarzschild_radius",
+        ]
     }
 }
 
@@ -109,6 +159,230 @@ pub fn sr_rest_energy() -> TargetSpec {
     TargetSpec {
         name: "sr_rest_energy",
         ladder: vec![rung1, rung2, final_target.clone()],
+        final_target,
+    }
+}
+
+// ── Quantum mechanics targets ──────────────────────────────────────
+
+/// Schrödinger equation: iℏ ∂ψ/∂t = Ĥψ.
+pub fn qm_schrodinger() -> TargetSpec {
+    let psi = || Expr::Var("psi".into());
+    let i_unit = || Expr::Var("i_unit".into());
+    let hbar = || Expr::Const(PhysConst::ReducedPlanck);
+    let h_op = || Expr::Var("H_op".into());
+    let dpsi_dt = || Expr::PartialDeriv(Box::new(psi()), "t".into());
+    let mul = |a: Expr, b: Expr| Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(b));
+    let app = |f: Expr, x: Expr| Expr::App(Box::new(f), Box::new(x));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+
+    let final_target = eq(mul(mul(i_unit(), hbar()), dpsi_dt()), app(h_op(), psi()));
+    // Single-rung ladder — Schrödinger is itself a postulate, so the
+    // "ladder" is just the target. The GA's spontaneous-emergence path
+    // would arrive here by composing position+momentum operators with
+    // the eigenvalue equation under unitary time evolution.
+    TargetSpec {
+        name: "qm_schrodinger",
+        ladder: vec![final_target.clone()],
+        final_target,
+    }
+}
+
+/// Free-particle dispersion: E = p²/(2m). Derivable from Schrödinger
+/// with Ĥ_free = p̂²/(2m).
+pub fn qm_free_particle_dispersion() -> TargetSpec {
+    let e = || Expr::Var("E".into());
+    let p = || Expr::Var("p".into());
+    let m = || Expr::Var("m".into());
+    let two = || Expr::Lit(2, 1);
+    let pow = |a: Expr, b: Expr| Expr::BinOp(BinOp::Pow, Box::new(a), Box::new(b));
+    let mul = |a: Expr, b: Expr| Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(b));
+    let div = |a: Expr, b: Expr| Expr::BinOp(BinOp::Div, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+
+    // Rung 1: p² ≠ 0 (probe shape — moving particle)
+    let _p_sq = pow(p(), two());
+    // Rung 2: 2m·E = p² (intermediate)
+    let rung_intermediate = eq(mul(two(), mul(m(), e())), pow(p(), two()));
+    // Rung 3: E = p²/(2m)
+    let final_target = eq(e(), div(pow(p(), two()), mul(two(), m())));
+
+    TargetSpec {
+        name: "qm_free_particle_dispersion",
+        ladder: vec![rung_intermediate, final_target.clone()],
+        final_target,
+    }
+}
+
+/// Harmonic-oscillator levels: Eₙ = ℏω(n+½).
+pub fn qm_harmonic_oscillator_levels() -> TargetSpec {
+    let e = || Expr::Var("E".into());
+    let hbar = || Expr::Const(PhysConst::ReducedPlanck);
+    let omega = || Expr::Var("omega".into());
+    let n = || Expr::Var("n".into());
+    let half = || Expr::Lit(1, 2);
+    let mul = |a: Expr, b: Expr| Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(b));
+    let add = |a: Expr, b: Expr| Expr::BinOp(BinOp::Add, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+
+    // Rung 1: E ∝ ℏω (Planck-Einstein-like)
+    let rung1 = eq(e(), mul(hbar(), omega()));
+    // Rung 2: E = ℏω·n (integer-spaced)
+    let rung2 = eq(e(), mul(mul(hbar(), omega()), n()));
+    // Final: E = ℏω(n + ½)
+    let final_target = eq(e(), mul(mul(hbar(), omega()), add(n(), half())));
+
+    TargetSpec {
+        name: "qm_harmonic_oscillator_levels",
+        ladder: vec![rung1, rung2, final_target.clone()],
+        final_target,
+    }
+}
+
+/// Planck-Einstein relation: E = ℏω.
+pub fn qm_planck_einstein() -> TargetSpec {
+    let e = || Expr::Var("E".into());
+    let hbar = || Expr::Const(PhysConst::ReducedPlanck);
+    let omega = || Expr::Var("omega".into());
+    let mul = |a: Expr, b: Expr| Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+    let final_target = eq(e(), mul(hbar(), omega()));
+    TargetSpec {
+        name: "qm_planck_einstein",
+        ladder: vec![final_target.clone()],
+        final_target,
+    }
+}
+
+/// de Broglie wavelength: λ = h/p.
+pub fn qm_de_broglie() -> TargetSpec {
+    let lambda = || Expr::Var("lambda".into());
+    let h = || Expr::Const(PhysConst::PlanckConst);
+    let p = || Expr::Var("p".into());
+    let div = |a: Expr, b: Expr| Expr::BinOp(BinOp::Div, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+    let final_target = eq(lambda(), div(h(), p()));
+    TargetSpec {
+        name: "qm_de_broglie",
+        ladder: vec![final_target.clone()],
+        final_target,
+    }
+}
+
+// ── Thermodynamics / statistical mechanics targets ─────────────────
+
+/// Boltzmann entropy: S = k_B ln(Ω). Famous formula on Boltzmann's
+/// tombstone; appears in the featured equations.
+pub fn thermo_boltzmann_entropy() -> TargetSpec {
+    let s = || Expr::Var("S".into());
+    let kb = || Expr::Const(PhysConst::Boltzmann);
+    let omega = || Expr::Var("Omega".into());
+    let ln_op = |e: Expr| Expr::UnOp(nasrudin_core::UnOp::Ln, Box::new(e));
+    let mul = |a: Expr, b: Expr| Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+    let final_target = eq(s(), mul(kb(), ln_op(omega())));
+    TargetSpec {
+        name: "thermo_boltzmann_entropy",
+        ladder: vec![final_target.clone()],
+        final_target,
+    }
+}
+
+/// Carnot efficiency: η = 1 - T_c/T_h.
+pub fn thermo_carnot() -> TargetSpec {
+    let eta = || Expr::Var("eta".into());
+    let t_c = || Expr::Var("T_cold".into());
+    let t_h = || Expr::Var("T_hot".into());
+    let one = || Expr::Lit(1, 1);
+    let div = |a: Expr, b: Expr| Expr::BinOp(BinOp::Div, Box::new(a), Box::new(b));
+    let sub = |a: Expr, b: Expr| Expr::BinOp(BinOp::Sub, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+    let final_target = eq(eta(), sub(one(), div(t_c(), t_h())));
+    TargetSpec {
+        name: "thermo_carnot",
+        ladder: vec![final_target.clone()],
+        final_target,
+    }
+}
+
+// ── Classical mechanics targets ────────────────────────────────────
+
+/// Newton's second law: F = m·a.
+pub fn newton_second() -> TargetSpec {
+    let f = || Expr::Var("F".into());
+    let m = || Expr::Var("m".into());
+    let a = || Expr::Var("a".into());
+    let mul = |a: Expr, b: Expr| Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+    let final_target = eq(f(), mul(m(), a()));
+    TargetSpec {
+        name: "newton_second",
+        ladder: vec![final_target.clone()],
+        final_target,
+    }
+}
+
+// ── Electromagnetism targets ───────────────────────────────────────
+
+/// Gauss's law for electric fields: ∇·E = ρ/ε₀.
+pub fn em_gauss_law() -> TargetSpec {
+    let big_e = || Expr::Var("E_field".into());
+    let rho = || Expr::Var("rho".into());
+    let eps_0 = || Expr::Const(PhysConst::VacuumPermittivity);
+    let div_op = |e: Expr| Expr::UnOp(nasrudin_core::UnOp::Div, Box::new(e));
+    let div = |a: Expr, b: Expr| Expr::BinOp(BinOp::Div, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+    let final_target = eq(div_op(big_e()), div(rho(), eps_0()));
+    TargetSpec {
+        name: "em_gauss_law",
+        ladder: vec![final_target.clone()],
+        final_target,
+    }
+}
+
+// ── General relativity targets ─────────────────────────────────────
+
+/// Einstein field equations (slot form): G = (8πG/c⁴) T.
+pub fn gr_einstein_field_equation() -> TargetSpec {
+    let g_einstein = || Expr::Var("G_einstein".into());
+    let big_g = || Expr::Const(PhysConst::GravConst);
+    let c = || Expr::Const(PhysConst::SpeedOfLight);
+    let pi_const = || Expr::Const(PhysConst::Pi);
+    let t_stress = || Expr::Var("T_stress".into());
+    let lit = |n: i64| Expr::Lit(n, 1);
+    let mul = |a: Expr, b: Expr| Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(b));
+    let div = |a: Expr, b: Expr| Expr::BinOp(BinOp::Div, Box::new(a), Box::new(b));
+    let pow = |a: Expr, b: Expr| Expr::BinOp(BinOp::Pow, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+    let final_target = eq(
+        g_einstein(),
+        mul(div(mul(lit(8), mul(pi_const(), big_g())), pow(c(), lit(4))), t_stress()),
+    );
+    TargetSpec {
+        name: "gr_einstein_field_equation",
+        ladder: vec![final_target.clone()],
+        final_target,
+    }
+}
+
+/// Schwarzschild radius: r_s = 2GM/c².
+pub fn gr_schwarzschild_radius() -> TargetSpec {
+    let r_s = || Expr::Var("r_schwarzschild".into());
+    let big_g = || Expr::Const(PhysConst::GravConst);
+    let big_m = || Expr::Var("M".into());
+    let c = || Expr::Const(PhysConst::SpeedOfLight);
+    let two = || Expr::Lit(2, 1);
+    let mul = |a: Expr, b: Expr| Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(b));
+    let div = |a: Expr, b: Expr| Expr::BinOp(BinOp::Div, Box::new(a), Box::new(b));
+    let pow = |a: Expr, b: Expr| Expr::BinOp(BinOp::Pow, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+    let final_target = eq(
+        r_s(),
+        div(mul(two(), mul(big_g(), big_m())), pow(c(), two())),
+    );
+    TargetSpec {
+        name: "gr_schwarzschild_radius",
+        ladder: vec![final_target.clone()],
         final_target,
     }
 }

@@ -92,17 +92,59 @@ def tagDomain (name : Name) : PhysDomain :=
     .PureMath
   else if str.startsWith "PhysLean.Units" then
     .PureMath
-  -- Mathlib namespaces — when extracted via `--whitelist`, all of
-  -- these are pure-math identities (algebra, analysis, real
-  -- arithmetic). Without this branch they all fall through to
-  -- `.Unknown` and the JsonEmitter silently drops them.
-  else if str.startsWith "Mathlib." || str.startsWith "Real." then
+  -- Mathlib quantum-relevant namespaces — these are the substrate the
+  -- GA needs in scope when evolving QM theorems (operator algebra,
+  -- inner products, self-adjointness, spectral theory, tensor
+  -- products of state spaces, normed/Banach/Hilbert structure,
+  -- complex numbers underpinning amplitudes).
+  --
+  -- Tagging them as `.QuantumMechanics` rather than `.PureMath` means
+  -- a QM-domain island's `seed_from_axioms(store.by_domain(QM))` will
+  -- actually pull these as starting individuals, instead of seeing
+  -- only the empty PhysLean QM-namespace surface (Higgs/Fermion/SM).
+  else if str.startsWith "Mathlib.Analysis.InnerProductSpace." ||
+          str.startsWith "Mathlib.Analysis.Normed.Module." ||
+          str.startsWith "Mathlib.Analysis.NormedSpace.Spectrum." ||
+          str.startsWith "Mathlib.Analysis.NormedSpace.OperatorNorm." ||
+          str.startsWith "Mathlib.Analysis.Hilbert" ||
+          str.startsWith "Mathlib.LinearAlgebra.SelfAdjoint" ||
+          str.startsWith "Mathlib.LinearAlgebra.Matrix.Hermitian" ||
+          str.startsWith "Mathlib.LinearAlgebra.Matrix.Spectrum" ||
+          str.startsWith "Mathlib.LinearAlgebra.TensorProduct." ||
+          str.startsWith "Mathlib.LinearAlgebra.Eigenspace" ||
+          str.startsWith "Mathlib.Topology.ContinuousFunction.Algebra." ||
+          str.startsWith "Complex." then
+    .QuantumMechanics
+  -- Mathlib measure-theory and probability stay as PureMath — they
+  -- support QM (Born rule, expectation values) but are also broadly
+  -- used in classical statistical mechanics. The chain-engine sees
+  -- them via the full AxiomStore regardless of tag. Also: bare-name
+  -- Mathlib namespaces (`Real.`, `Nat.`, `Int.`, `Rat.`) which are
+  -- heavily used algebraic helpers.
+  else if str.startsWith "Mathlib." ||
+          str.startsWith "Real." ||
+          str.startsWith "Nat." ||
+          str.startsWith "Int." ||
+          str.startsWith "Rat." ||
+          str.startsWith "Set." ||
+          str.startsWith "Function." ||
+          str.startsWith "Order." ||
+          str.startsWith "List." ||
+          str.startsWith "Finset." ||
+          str.startsWith "Filter." ||
+          str.startsWith "Equiv." ||
+          str.startsWith "Group." ||
+          str.startsWith "Ring." ||
+          str.startsWith "Module." ||
+          str.startsWith "Topology." then
     .PureMath
   -- Infrastructure / meta / too specialized → Unknown
   else if str.startsWith "PhysLean." then
     .Unknown
   else
-    .Unknown
+    -- Anything else extracted under the +mathlib whitelist is math —
+    -- conservative default (was Unknown).
+    .PureMath
 
 /-- Map a domain to its corresponding Lean import module in our prover. -/
 def PhysDomain.toLeanImport : PhysDomain → Option String

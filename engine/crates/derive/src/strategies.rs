@@ -82,7 +82,21 @@ impl DerivationStrategy for DeriveRestEnergy {
         };
         rearrange.apply(ctx)?;
 
-        // Step 3: Substitute p = 0 (rest frame)
+        // Step 3a: Introduce the rest-frame assumption explicitly. The
+        // `SubstituteValue` rule's soundness gate requires `p = 0` to
+        // exist as a fact or assumption in scope before it'll apply
+        // the substitution — without this the gate rejects with
+        // "SubstituteValue not justified by any chain fact". The rest
+        // frame is a postulate of the derivation (existence of a frame
+        // where spatial momentum vanishes), so we register it here.
+        let p_eq_zero = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(p.clone()),
+            Box::new(zero.clone()),
+        );
+        ctx.assume("rest_frame: p = 0", p_eq_zero);
+
+        // Step 3b: Substitute p = 0 (rest frame)
         let substitute_p = SubstituteValue {
             var: "p".into(),
             value: zero.clone(),
@@ -107,6 +121,19 @@ impl DerivationStrategy for DeriveRestEnergy {
             "canonicalize",
             e_sq_eq_mc_sq_squared,
         );
+
+        // `TakePositiveRoot` requires non-negativity facts in scope for
+        // both bases. The legacy SR axiom set registers `energy_nonneg`
+        // (E ≥ 0) and `mass_nonneg` (m ≥ 0); pull them into ctx.facts()
+        // so the soundness gate finds them. We use add_fact directly
+        // rather than IntroduceAxiom so `current` stays as
+        // `E² = (mc²)²` (which is what TakePositiveRoot needs to see).
+        if let Some(ax) = store.get("energy_nonneg") {
+            ctx.add_fact("energy_nonneg", ax.statement.clone());
+        }
+        if let Some(ax) = store.get("mass_nonneg") {
+            ctx.add_fact("mass_nonneg", ax.statement.clone());
+        }
 
         let take_root = TakePositiveRoot;
         take_root.apply(ctx)?;

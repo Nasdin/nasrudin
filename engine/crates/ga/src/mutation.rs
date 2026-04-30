@@ -3,9 +3,22 @@
 //! Eight mutation operators that introduce controlled variation:
 //! VarSwap, OpSwap, AxiomInjection, Simplify, UnaryWrap, UnaryUnwrap,
 //! LitPerturb, ConstSwap.
+//!
+//! ## AxiomInjection and the AxiomStore
+//!
+//! The `axiom_injection` operator can sample fragments from the live
+//! [`AxiomStore`] instead of the legacy 4-fragment hardcoded set when
+//! a store is provided via `mutate_with_store`. This is the load-bearing
+//! piece that lets a GA running on a QM-domain island reach the
+//! Schrödinger / commutator / Born-rule postulates as substrate during
+//! evolution. Without this wiring, mutation explores only the 4
+//! hardcoded fragments (mc², ℏω, k_B·T, p²/2m) and the AxiomStore is
+//! invisible to the population once `seed_from_axioms` runs at t=0.
 
 use nasrudin_core::{BinOp, Expr, PhysConst, UnOp};
+use nasrudin_derive::AxiomStore;
 use rand::Rng;
+use rand::seq::IteratorRandom;
 
 /// Which mutation operator to apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,17 +53,56 @@ const ALL_MUTATIONS: &[MutationOp] = &[
 ];
 
 /// Apply a random mutation to an expression.
+///
+/// Legacy entry point — falls back to the 4-fragment hardcoded
+/// AxiomInjection pool. Prefer [`mutate_with_store`] for the GA loop
+/// so AxiomInjection samples from the live AxiomStore (incl. all of
+/// PhysLean + Mathlib + the foundational postulates).
 pub fn mutate(expr: &Expr, rng: &mut impl Rng) -> Expr {
     let op = ALL_MUTATIONS[rng.random_range(0..ALL_MUTATIONS.len())];
     apply_mutation(expr, op, rng)
 }
 
+/// Apply a random mutation to an expression with an [`AxiomStore`]
+/// available. AxiomInjection samples a random axiom statement from the
+/// store (filtered to the current domain when one is provided, then
+/// falling back to the full store for cross-domain leverage), which
+/// makes math substrate (Mathlib lemmas) and foundational postulates
+/// (Schrödinger, Born rule, etc.) reachable during evolution.
+///
+/// When `domain_hint` is `None` the entire store is in scope. When it
+/// is `Some(d)` a 70/30 split is used: 70 % of injections sample from
+/// `store.by_domain(d)`, 30 % from any axiom (so cross-domain
+/// composition stays possible — e.g. a QM island still benefits from
+/// algebraic identities tagged `PureMath`).
+pub fn mutate_with_store(
+    expr: &Expr,
+    store: Option<&AxiomStore>,
+    domain_hint: Option<&nasrudin_core::Domain>,
+    rng: &mut impl Rng,
+) -> Expr {
+    let op = ALL_MUTATIONS[rng.random_range(0..ALL_MUTATIONS.len())];
+    apply_mutation_with_store(expr, op, store, domain_hint, rng)
+}
+
 /// Apply a specific mutation operator.
 pub fn apply_mutation(expr: &Expr, op: MutationOp, rng: &mut impl Rng) -> Expr {
+    apply_mutation_with_store(expr, op, None, None, rng)
+}
+
+/// Apply a specific mutation operator with an optional [`AxiomStore`]
+/// for `AxiomInjection`. All other operators ignore the store.
+pub fn apply_mutation_with_store(
+    expr: &Expr,
+    op: MutationOp,
+    store: Option<&AxiomStore>,
+    domain_hint: Option<&nasrudin_core::Domain>,
+    rng: &mut impl Rng,
+) -> Expr {
     match op {
         MutationOp::VarSwap => var_swap(expr, rng),
         MutationOp::OpSwap => op_swap(expr, rng),
-        MutationOp::AxiomInjection => axiom_injection(expr, rng),
+        MutationOp::AxiomInjection => axiom_injection_with_store(expr, store, domain_hint, rng),
         MutationOp::Simplify => simplify(expr),
         MutationOp::UnaryWrap => unary_wrap(expr, rng),
         MutationOp::UnaryUnwrap => unary_unwrap(expr),
@@ -125,8 +177,107 @@ fn op_swap(expr: &Expr, rng: &mut impl Rng) -> Expr {
     }
 }
 
-/// Inject a small axiom-like fragment into the tree.
-fn axiom_injection(expr: &Expr, rng: &mut impl Rng) -> Expr {
+/// Inject a small axiom-like fragment into the tree, sampling from a
+/// live [`AxiomStore`] when one is provided.
+///
+/// Selection policy:
+///   1. If `store` is `None` or empty → fall back to the 4 hardcoded
+///      fragments (legacy behaviour).
+///   2. If `domain_hint` is set, sample with probability 0.7 from
+///      `store.by_domain(domain_hint)`; 0.3 from the full store. This
+///      keeps domain-relevant material front-and-centre while
+///      preserving cross-domain leverage (a QM island still pulls
+///      algebraic identities tagged `PureMath`).
+///   3. Picked fragments are guaranteed to be sub-expressions of the
+///      axiom statement: for an `Eq(LHS, RHS)` axiom we randomly pick
+///      LHS or RHS; for non-`Eq` propositions (`Gt`, `Implies`, etc.)
+///      we pick the LHS — these are sign-conditions / constraints
+///      whose left-hand side is the meaningful fragment.
+fn axiom_injection_with_store(
+    expr: &Expr,
+    store: Option<&AxiomStore>,
+    domain_hint: Option<&nasrudin_core::Domain>,
+    rng: &mut impl Rng,
+) -> Expr {
+    if let Some(store) = store
+        && store.len() > 0
+        && let Some(fragment) = sample_axiom_fragment(store, domain_hint, rng)
+    {
+        return replace_random_leaf(expr, &fragment, rng);
+    }
+    axiom_injection_legacy(expr, rng)
+}
+
+/// Sample a meaningful sub-expression from the AxiomStore. Returns
+/// `None` if the store has no usable axioms for the domain.
+fn sample_axiom_fragment(
+    store: &AxiomStore,
+    domain_hint: Option<&nasrudin_core::Domain>,
+    rng: &mut impl Rng,
+) -> Option<Expr> {
+    // 70/30 split: domain-matched preferred, full store fallback for
+    // cross-domain leverage.
+    let prefer_domain = domain_hint.is_some() && rng.random_bool(0.7);
+    let chosen: Option<&nasrudin_derive::Axiom> = if prefer_domain {
+        let dom = domain_hint.unwrap();
+        let domain_set = store.by_domain(dom);
+        if domain_set.is_empty() {
+            // Domain has no axioms; fall through to full store.
+            store.iter().choose(rng)
+        } else {
+            domain_set.into_iter().choose(rng)
+        }
+    } else {
+        store.iter().choose(rng)
+    };
+    let axiom = chosen?;
+    Some(extract_meaningful_fragment(&axiom.statement, rng))
+}
+
+/// Pick a meaningful sub-expression from a propositional axiom.
+fn extract_meaningful_fragment(stmt: &Expr, rng: &mut impl Rng) -> Expr {
+    match stmt {
+        // For Eq(LHS, RHS) — both sides are useful. Pick at random.
+        Expr::BinOp(
+            BinOp::Eq | BinOp::Iff,
+            l,
+            r,
+        ) => {
+            if rng.random_bool(0.5) {
+                (**l).clone()
+            } else {
+                (**r).clone()
+            }
+        }
+        // For inequalities and implications, the LHS is usually the
+        // structurally interesting fragment (a quantity being bounded
+        // or an antecedent). RHS is often a literal (0, 1) or a
+        // simple consequent.
+        Expr::BinOp(
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Ne | BinOp::Implies,
+            l,
+            _,
+        ) => (**l).clone(),
+        // Pi-quantified — recurse into the body, which is the actual
+        // proposition.
+        Expr::Pi(_, _, body) => extract_meaningful_fragment(body, rng),
+        // For And/Or — pick a conjunct/disjunct at random.
+        Expr::BinOp(BinOp::And | BinOp::Or, l, r) => {
+            if rng.random_bool(0.5) {
+                (**l).clone()
+            } else {
+                (**r).clone()
+            }
+        }
+        // Anything else — use the whole expression.
+        other => other.clone(),
+    }
+}
+
+/// Legacy 4-fragment hardcoded pool, preserved for back-compat with
+/// callers that don't have an AxiomStore handy and as a fallback when
+/// the store happens to be empty (e.g. early in worker boot).
+fn axiom_injection_legacy(expr: &Expr, rng: &mut impl Rng) -> Expr {
     // Axiom fragments: common physics subexpressions
     let fragments = [
         // mc^2

@@ -138,7 +138,7 @@ impl GaEngine {
             // Step each island and collect candidates
             let mut all_candidates: Vec<Theorem> = Vec::new();
             for island in &mut self.islands {
-                let candidates = island.step(&mut rng);
+                let candidates = island.step_with_store(&mut rng, &self.axiom_store);
                 all_candidates.extend(candidates);
             }
 
@@ -292,7 +292,7 @@ impl GaEngine {
             // Step each island and collect candidates
             let mut all_candidates: Vec<Theorem> = Vec::new();
             for island in &mut self.islands {
-                let candidates = island.step(&mut rng);
+                let candidates = island.step_with_store(&mut rng, &self.axiom_store);
                 all_candidates.extend(candidates);
             }
 

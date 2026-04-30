@@ -108,6 +108,20 @@ async fn main() -> anyhow::Result<()> {
     // Until PhysLean ships these upstream they live in
     // `nasrudin_derive::postulates_classical`.
     axiom_store.load_classical_mechanics_postulates();
+    // Quantum mechanics — Schrödinger evolution, [x,p]=iℏ, Born rule,
+    // Hermitian observables, unitarity, normalization. PhysLean's QM
+    // namespace is Standard-Model surface; the *foundations* are
+    // upstream of PhysLean and live in `postulates_quantum`.
+    axiom_store.load_quantum_mechanics_postulates();
+    // Thermodynamics — laws + ideal gas + free-energy / enthalpy /
+    // Gibbs definitions. Scalar form for chain composability.
+    axiom_store.load_thermodynamics_postulates();
+    // Statistical mechanics — Boltzmann entropy, Gibbs distribution,
+    // partition function ↔ free energy, equipartition.
+    axiom_store.load_statistical_mechanics_postulates();
+    // General relativity — Einstein field equations, geodesic
+    // equation, equivalence principle, Newtonian limit.
+    axiom_store.load_general_relativity_postulates();
 
     // Math corpus from Mathlib (real-arithmetic identities). HARD
     // REQUIREMENT: missing or truncated corpus panics at boot. Run

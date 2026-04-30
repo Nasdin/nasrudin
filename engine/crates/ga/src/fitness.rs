@@ -9,8 +9,8 @@
 //! - connectivity: how many known theorems this relates to
 //! - nasrudin_relevance: domain-specific relevance signals
 
-use nasrudin_core::{BinOp, Expr, FitnessScore, Theorem};
-use nasrudin_derive::{check_equation_dimensions, sr_variable_dimensions};
+use nasrudin_core::{BinOp, Domain, Expr, FitnessScore, PhysConst, Theorem, UnOp};
+use nasrudin_derive::{check_equation_dimensions, domain_variable_dimensions};
 
 /// Evaluate all 7 fitness objectives for a theorem candidate.
 pub fn evaluate(theorem: &Theorem) -> FitnessScore {
@@ -35,7 +35,7 @@ pub fn evaluate_with_target(
         novelty: novelty_score(theorem),
         complexity: complexity_score(&theorem.statement),
         depth: depth_score(theorem.depth),
-        dimensional: dimensional_score(&theorem.statement),
+        dimensional: dimensional_score_for_domain(&theorem.statement, &theorem.domain),
         symmetry: symmetry_score(&theorem.statement),
         connectivity: connectivity_score(theorem),
         nasrudin_relevance: nasrudin_relevance_score(theorem),
@@ -81,9 +81,14 @@ fn depth_score(depth: u32) -> f64 {
 }
 
 /// Dimensional: check whether the expression is dimensionally consistent.
-/// Returns 1.0 if consistent, 0.0 if not (or unknown).
-fn dimensional_score(expr: &Expr) -> f64 {
-    let var_dims = sr_variable_dimensions();
+///
+/// Uses the candidate theorem's *domain-aware* dimension table — a QM
+/// expression is checked against QM variable dimensions, a thermo
+/// expression against thermo dimensions, etc. Falls back to SR
+/// dimensions for unrecognised domains. Returns 1.0 if consistent,
+/// 0.0 if not (or unknown).
+fn dimensional_score_for_domain(expr: &Expr, domain: &Domain) -> f64 {
+    let var_dims = domain_variable_dimensions(domain);
     match check_equation_dimensions(expr, &var_dims) {
         Ok(_) => 1.0,
         Err(_) => 0.0,
@@ -129,33 +134,256 @@ fn connectivity_score(theorem: &Theorem) -> f64 {
     (parents / 5.0).min(1.0)
 }
 
-/// Physics relevance: domain-specific heuristic.
-/// Checks for presence of physical constants and meaningful structure.
+/// Physics relevance: domain-aware heuristic.
+///
+/// Layered scoring:
+///   - Base layer (all domains): physical constants, equation root,
+///     calculus, multiple variables — these are domain-agnostic
+///     "physics-shapedness" signals.
+///   - Domain-specific bonus: a QuantumMechanics theorem gets credit
+///     for QM structural primitives (∂/∂t with ℏ → Schrödinger shape;
+///     conjugation or `i_unit` → complex amplitude; tensor product →
+///     state-space shape; integral of |·|² → normalization shape).
+///     A Thermodynamics theorem gets credit for entropy-shape
+///     signatures (S, T, k_B). Etc. These are *domain-aware* without
+///     requiring any explicit `TargetSpec` — the system can score
+///     spontaneous emergence of QM-shaped expressions higher even
+///     when no QM target is configured.
 fn nasrudin_relevance_score(theorem: &Theorem) -> f64 {
     let mut score: f64 = 0.0;
 
     // Has physical constants?
     if has_physical_constants(&theorem.statement) {
-        score += 0.3;
+        score += 0.2;
     }
 
     // Is an equation (has Eq at root)?
     if matches!(&theorem.statement, Expr::BinOp(BinOp::Eq, _, _)) {
-        score += 0.3;
+        score += 0.2;
     }
 
     // Has derivatives or integrals (dynamical content)?
     if has_calculus_ops(&theorem.statement) {
-        score += 0.2;
+        score += 0.15;
     }
 
     // Uses multiple variables (not trivial)?
     let var_count = count_distinct_vars(&theorem.statement);
     if var_count >= 2 {
-        score += 0.2;
+        score += 0.15;
     }
 
+    // Domain-specific bonus (capped at 0.3 so base signals still
+    // dominate when present).
+    let dom_bonus = domain_specific_signal(&theorem.statement, &theorem.domain);
+    score += dom_bonus.min(0.3);
+
     score.min(1.0)
+}
+
+/// Domain-specific structural signal in `[0, 0.5]`.
+///
+/// Recognises shapes the system should reward as "this looks like the
+/// kind of theorem this domain produces", *without* requiring a
+/// `TargetSpec`. The point is that a randomly-evolved expression that
+/// happens to look like a Schrödinger equation gets fitness credit
+/// even when no human has pointed the GA at a target.
+fn domain_specific_signal(expr: &Expr, domain: &Domain) -> f64 {
+    match domain {
+        Domain::QuantumMechanics => quantum_signal(expr),
+        Domain::Thermodynamics | Domain::StatisticalMechanics => thermal_signal(expr),
+        Domain::GeneralRelativity => gr_signal(expr),
+        _ => 0.0,
+    }
+}
+
+fn quantum_signal(expr: &Expr) -> f64 {
+    let mut s = 0.0_f64;
+    // Schrödinger shape: ∂/∂t somewhere AND ℏ (ReducedPlanck) somewhere.
+    if has_partial_deriv_var(expr, "t") && contains_const(expr, &PhysConst::ReducedPlanck) {
+        s += 0.20;
+    }
+    // Complex-amplitude shape: conjugation (Â† or ψ*) or imaginary unit.
+    if has_unop(expr, &UnOp::Conjugate) || contains_var(expr, "i_unit") {
+        s += 0.10;
+    }
+    // State-space shape: tensor product, dot product (inner product).
+    if has_binop(expr, &BinOp::TensorProduct) || has_binop(expr, &BinOp::Dot) {
+        s += 0.10;
+    }
+    // Normalization shape: integral of squared-abs over x.
+    if has_normalization_shape(expr) {
+        s += 0.10;
+    }
+    // Operator-acting-on-state shape: App with name ending in _op.
+    if has_operator_application(expr) {
+        s += 0.05;
+    }
+    s
+}
+
+fn thermal_signal(expr: &Expr) -> f64 {
+    let mut s = 0.0_f64;
+    // Boltzmann-related: ln, k_B, exp.
+    if has_unop(expr, &UnOp::Ln) || contains_const(expr, &PhysConst::Boltzmann) {
+        s += 0.10;
+    }
+    if has_unop(expr, &UnOp::Exp) {
+        s += 0.10;
+    }
+    // T appearing as a variable (temperature).
+    if contains_var(expr, "T") {
+        s += 0.05;
+    }
+    // Entropy shape: S = ... or partition-function-like.
+    if contains_var(expr, "S") || contains_var(expr, "Z") {
+        s += 0.05;
+    }
+    s
+}
+
+fn gr_signal(expr: &Expr) -> f64 {
+    let mut s = 0.0_f64;
+    // Curvature/metric tensor slot vars.
+    for v in ["g_metric", "R_ricci", "R_scalar", "T_stress"] {
+        if contains_var(expr, v) {
+            s += 0.10;
+            break;
+        }
+    }
+    // Newton's constant or speed of light squared.
+    if contains_const(expr, &PhysConst::GravConst) {
+        s += 0.10;
+    }
+    if has_pow_const(expr, &PhysConst::SpeedOfLight, 4) {
+        s += 0.05;
+    }
+    s
+}
+
+// ---- structural predicates ----
+
+fn contains_var(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Var(n) => n.as_str() == name,
+        Expr::BinOp(_, l, r) => contains_var(l, name) || contains_var(r, name),
+        Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => contains_var(e, name),
+        Expr::App(f, x) => contains_var(f, name) || contains_var(x, name),
+        Expr::Lam(_, ty, body) | Expr::Pi(_, ty, body) | Expr::Let(_, ty, body) => {
+            contains_var(ty, name) || contains_var(body, name)
+        }
+        Expr::Integral { body, lower, upper, .. } => {
+            contains_var(body, name)
+                || lower.as_ref().is_some_and(|l| contains_var(l, name))
+                || upper.as_ref().is_some_and(|u| contains_var(u, name))
+        }
+        Expr::Sum { body, lower, upper, .. } | Expr::Prod { body, lower, upper, .. } => {
+            contains_var(body, name) || contains_var(lower, name) || contains_var(upper, name)
+        }
+        Expr::Limit { body, approaching, .. } => {
+            contains_var(body, name) || contains_var(approaching, name)
+        }
+        _ => false,
+    }
+}
+
+fn contains_const(expr: &Expr, c: &PhysConst) -> bool {
+    match expr {
+        Expr::Const(k) => k == c,
+        Expr::BinOp(_, l, r) => contains_const(l, c) || contains_const(r, c),
+        Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => contains_const(e, c),
+        Expr::App(f, x) => contains_const(f, c) || contains_const(x, c),
+        Expr::Integral { body, lower, upper, .. } => {
+            contains_const(body, c)
+                || lower.as_ref().is_some_and(|l| contains_const(l, c))
+                || upper.as_ref().is_some_and(|u| contains_const(u, c))
+        }
+        Expr::Sum { body, lower, upper, .. } | Expr::Prod { body, lower, upper, .. } => {
+            contains_const(body, c) || contains_const(lower, c) || contains_const(upper, c)
+        }
+        _ => false,
+    }
+}
+
+fn has_partial_deriv_var(expr: &Expr, var: &str) -> bool {
+    match expr {
+        Expr::PartialDeriv(inner, v) => v.as_str() == var || has_partial_deriv_var(inner, var),
+        Expr::BinOp(_, l, r) => has_partial_deriv_var(l, var) || has_partial_deriv_var(r, var),
+        Expr::UnOp(_, e) | Expr::Deriv(e, _) => has_partial_deriv_var(e, var),
+        Expr::App(f, x) => has_partial_deriv_var(f, var) || has_partial_deriv_var(x, var),
+        Expr::Integral { body, .. } => has_partial_deriv_var(body, var),
+        _ => false,
+    }
+}
+
+fn has_unop(expr: &Expr, op: &UnOp) -> bool {
+    match expr {
+        Expr::UnOp(o, e) => o == op || has_unop(e, op),
+        Expr::BinOp(_, l, r) => has_unop(l, op) || has_unop(r, op),
+        Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => has_unop(e, op),
+        Expr::App(f, x) => has_unop(f, op) || has_unop(x, op),
+        Expr::Integral { body, .. } => has_unop(body, op),
+        _ => false,
+    }
+}
+
+fn has_binop(expr: &Expr, op: &BinOp) -> bool {
+    match expr {
+        Expr::BinOp(o, l, r) => o == op || has_binop(l, op) || has_binop(r, op),
+        Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => has_binop(e, op),
+        Expr::App(f, x) => has_binop(f, op) || has_binop(x, op),
+        Expr::Integral { body, .. } => has_binop(body, op),
+        _ => false,
+    }
+}
+
+/// Recognise the normalization shape: ∫ Pow(Abs(_), 2) [d_].
+fn has_normalization_shape(expr: &Expr) -> bool {
+    match expr {
+        Expr::Integral { body, .. } => is_abs_squared(body),
+        Expr::BinOp(_, l, r) => has_normalization_shape(l) || has_normalization_shape(r),
+        Expr::UnOp(_, e) => has_normalization_shape(e),
+        _ => false,
+    }
+}
+
+fn is_abs_squared(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::BinOp(BinOp::Pow, lhs, rhs)
+            if matches!(lhs.as_ref(), Expr::UnOp(UnOp::Abs, _))
+                && matches!(rhs.as_ref(), Expr::Lit(2, 1))
+    )
+}
+
+/// Recognise an operator-application shape: App(Var, Var) where the
+/// applied head's name ends with `_op`.
+fn has_operator_application(expr: &Expr) -> bool {
+    match expr {
+        Expr::App(f, _) => matches!(f.as_ref(), Expr::Var(n) if n.ends_with("_op")),
+        Expr::BinOp(_, l, r) => has_operator_application(l) || has_operator_application(r),
+        Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => {
+            has_operator_application(e)
+        }
+        _ => false,
+    }
+}
+
+/// Recognise `Pow(Const(c), Lit(n, 1))` — useful for "c^4" in EFE.
+fn has_pow_const(expr: &Expr, c: &PhysConst, n: i64) -> bool {
+    match expr {
+        Expr::BinOp(BinOp::Pow, base, exp) => {
+            let base_match = matches!(base.as_ref(), Expr::Const(k) if k == c);
+            let exp_match = matches!(exp.as_ref(), Expr::Lit(m, 1) if *m == n);
+            (base_match && exp_match)
+                || has_pow_const(base, c, n)
+                || has_pow_const(exp, c, n)
+        }
+        Expr::BinOp(_, l, r) => has_pow_const(l, c, n) || has_pow_const(r, c, n),
+        Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => has_pow_const(e, c, n),
+        Expr::App(f, x) => has_pow_const(f, c, n) || has_pow_const(x, c, n),
+        _ => false,
+    }
 }
 
 /// Check if an expression contains any physical constants.
@@ -294,8 +522,56 @@ mod tests {
         );
         let thm = make_test_theorem(expr);
         let fitness = evaluate(&thm);
-        // Has constants (0.3) + is equation (0.3) + multiple vars (0.2)
-        assert!(fitness.nasrudin_relevance >= 0.7);
+        // Re-weighted in domain-aware fitness:
+        //   constants 0.2 + equation 0.2 + multiple vars 0.15
+        //   (no calculus ops, SR domain → no domain bonus) = 0.55.
+        assert!(
+            fitness.nasrudin_relevance >= 0.5,
+            "expected ≥0.5 for E=ℏω, got {}",
+            fitness.nasrudin_relevance
+        );
+    }
+
+    #[test]
+    fn nasrudin_relevance_qm_schrodinger_shape() {
+        // A canonical Schrödinger-like expression should score higher
+        // on the QM domain than the same shape on a non-QM domain,
+        // confirming the domain-specific signal is wired.
+        use nasrudin_core::UnOp;
+        // iℏ ∂ψ/∂t = Ĥ·ψ  (encoded against the QM postulate convention)
+        let psi = Expr::Var("psi".into());
+        let i_unit = Expr::Var("i_unit".into());
+        let hbar = Expr::Const(PhysConst::ReducedPlanck);
+        let h_op = Expr::Var("H_op".into());
+        let dpsi_dt = Expr::PartialDeriv(Box::new(psi.clone()), "t".into());
+        let lhs = Expr::BinOp(
+            BinOp::Mul,
+            Box::new(Expr::BinOp(BinOp::Mul, Box::new(i_unit), Box::new(hbar))),
+            Box::new(dpsi_dt),
+        );
+        let rhs = Expr::App(Box::new(h_op), Box::new(psi));
+        let stmt = Expr::BinOp(BinOp::Eq, Box::new(lhs), Box::new(rhs));
+
+        let mut thm_qm = make_test_theorem(stmt.clone());
+        thm_qm.domain = Domain::QuantumMechanics;
+        let thm_sr = make_test_theorem(stmt);
+        // already SR via make_test_theorem default
+
+        let f_qm = evaluate(&thm_qm);
+        let f_sr = evaluate(&thm_sr);
+        assert!(
+            f_qm.nasrudin_relevance > f_sr.nasrudin_relevance,
+            "QM-shaped expr should score higher on QM domain ({}) than SR ({})",
+            f_qm.nasrudin_relevance,
+            f_sr.nasrudin_relevance
+        );
+        assert!(
+            f_qm.nasrudin_relevance >= 0.6,
+            "QM-shaped Schrödinger should score ≥0.6, got {}",
+            f_qm.nasrudin_relevance
+        );
+        // suppress unused — Domain is needed by the assertion above
+        let _ = UnOp::Conjugate;
     }
 
     #[test]

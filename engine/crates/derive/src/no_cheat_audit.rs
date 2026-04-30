@@ -16,7 +16,7 @@
 //! — every entry is a target the system is supposed to *derive*.
 
 use crate::axiom_store::AxiomStore;
-use nasrudin_core::{BinOp, Expr, PhysConst};
+use nasrudin_core::{BinOp, Expr, PhysConst, UnOp};
 
 /// Build the deny-list of canonical-form statements that must never
 /// appear as starting axioms. Each entry is constructed as the same
@@ -69,6 +69,131 @@ pub fn forbidden_canonical_statements() -> Vec<(&'static str, String)> {
     // photon_energy_momentum_relation). We forbid the simpler scalar
     // form here; the SR-domain symbolic version uses Eph.
     out.push(("photon_E_eq_pc", eq(e(), mul(c(), p())).to_canonical()));
+
+    // ── Quantum mechanics headline results ──────────────────────────
+    //
+    // These are derivation *targets*, not postulates. They share the
+    // structural shape of a final theorem the GA should rediscover from
+    // the foundational QM postulates. (The postulates themselves use
+    // different shapes: e.g. Schrödinger is `iℏ ∂ψ/∂t = Ĥψ`, while
+    // the derived "free particle dispersion" is `E = p²/(2m)`.)
+    let hbar = || Expr::Const(PhysConst::ReducedPlanck);
+    let div = |a: Expr, b: Expr| Expr::BinOp(BinOp::Div, Box::new(a), Box::new(b));
+    let abs = |e: Expr| Expr::UnOp(UnOp::Abs, Box::new(e));
+
+    // Free-particle dispersion: E = p²/(2m). Direct consequence of the
+    // free-particle Hamiltonian + momentum operator squared.
+    out.push((
+        "qm_free_particle_dispersion",
+        eq(
+            e(),
+            div(pow(p(), two()), mul(two(), Expr::Var("m".into()))),
+        )
+        .to_canonical(),
+    ));
+
+    // Heisenberg uncertainty (textbook form): Δx·Δp ≥ ℏ/2.
+    // Encoded as the equality boundary case (the GA derives this from
+    // [x,p]=iℏ via Robertson-Schrödinger; we forbid the boundary as a
+    // raw axiom).
+    let dx = || Expr::Var("Delta_x".into());
+    let dp = || Expr::Var("Delta_p".into());
+    out.push((
+        "qm_heisenberg_uncertainty_minimum",
+        Expr::BinOp(
+            BinOp::Eq,
+            Box::new(mul(dx(), dp())),
+            Box::new(div(hbar(), two())),
+        )
+        .to_canonical(),
+    ));
+
+    // Harmonic oscillator energy levels: Eₙ = ℏω(n + ½).
+    // Derived from Schrödinger + ladder-operator algebra.
+    let omega = || Expr::Var("omega".into());
+    let n = || Expr::Var("n".into());
+    let half = || Expr::Lit(1, 2);
+    let n_plus_half = Expr::BinOp(BinOp::Add, Box::new(n()), Box::new(half()));
+    out.push((
+        "qm_harmonic_oscillator_levels",
+        eq(e(), mul(mul(hbar(), omega()), n_plus_half)).to_canonical(),
+    ));
+
+    // de Broglie relation: λ = h/p (Planck rather than ℏ here, with
+    // h_planck as a Const slot. ReducedPlanck = h/2π so the canonical
+    // form differs.)
+    let h = || Expr::Const(PhysConst::PlanckConst);
+    out.push((
+        "qm_de_broglie_wavelength",
+        eq(Expr::Var("lambda".into()), div(h(), p())).to_canonical(),
+    ));
+
+    // Planck-Einstein relation: E = h ν (or ℏ ω). Forbid both forms.
+    out.push((
+        "qm_planck_einstein_omega",
+        eq(e(), mul(hbar(), omega())).to_canonical(),
+    ));
+    let nu = || Expr::Var("nu".into());
+    out.push((
+        "qm_planck_einstein_nu",
+        eq(e(), mul(h(), nu())).to_canonical(),
+    ));
+
+    // Born rule expectation: ⟨A⟩ = ⟨ψ|Â|ψ⟩. This is the *derived*
+    // expectation form; the postulate is the simpler P = |c|².
+    let _ = abs; // silence warning if unused
+
+    // ── Thermodynamics headline results ─────────────────────────────
+    //
+    // Boltzmann entropy: S = k_B ln(Ω). NOTE: this is also one of the
+    // statmech *postulates* — listing it here as a forbidden headline
+    // would cause the postulate set to fail the audit. We do NOT
+    // include it; statmech_boltzmann_entropy is a foundational input.
+    //
+    // Carnot efficiency: η = 1 - T_c/T_h (derived).
+    let t_c = || Expr::Var("T_cold".into());
+    let t_h = || Expr::Var("T_hot".into());
+    let eta = || Expr::Var("eta".into());
+    out.push((
+        "thermo_carnot_efficiency",
+        eq(eta(), sub(Expr::Lit(1, 1), div(t_c(), t_h()))).to_canonical(),
+    ));
+
+    // Maxwell-Boltzmann energy distribution (per particle, scalar form):
+    // <E> = (3/2) k_B T. Derived; not a postulate.
+    let kb = || Expr::Const(PhysConst::Boltzmann);
+    out.push((
+        "thermo_kinetic_energy_avg",
+        eq(
+            Expr::Var("E_avg".into()),
+            mul(Expr::Lit(3, 2), mul(kb(), Expr::Var("T".into()))),
+        )
+        .to_canonical(),
+    ));
+
+    // ── General relativity headline results ─────────────────────────
+    //
+    // Schwarzschild radius: r_s = 2GM/c². Derived from the
+    // Schwarzschild-metric solution to the EFE.
+    let r_s = || Expr::Var("r_schwarzschild".into());
+    let big_m = || Expr::Var("M".into());
+    let big_g = || Expr::Const(PhysConst::GravConst);
+    out.push((
+        "gr_schwarzschild_radius",
+        eq(
+            r_s(),
+            div(mul(two(), mul(big_g(), big_m())), pow(c(), Expr::Lit(2, 1))),
+        )
+        .to_canonical(),
+    ));
+
+    // Hubble's law: v = H_0 · d. Derived from FRW cosmology.
+    let h0 = || Expr::Var("H_0".into());
+    let d = || Expr::Var("d".into());
+    out.push((
+        "gr_hubble_law",
+        eq(Expr::Var("v_recession".into()), mul(h0(), d())).to_canonical(),
+    ));
 
     out
 }

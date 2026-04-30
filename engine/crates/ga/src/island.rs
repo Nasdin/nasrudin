@@ -16,7 +16,7 @@ use crate::crossover::subtree_crossover;
 use crate::dedup::DedupFilter;
 use crate::fitness::evaluate;
 use crate::individual::Individual;
-use crate::mutation::mutate;
+use crate::mutation::{mutate, mutate_with_store};
 use crate::population::Population;
 use crate::selection::{crowding_distance_assignment, non_dominated_sort, tournament_select};
 
@@ -99,60 +99,141 @@ impl Island {
         self.seed(rng);
     }
 
-    /// Seed the population from axioms in the AxiomStore matching this island's domain.
+    /// Seed the population from axioms in the AxiomStore.
     ///
-    /// Converts each domain-matched axiom into an `Individual` and adds it to
-    /// the population (up to capacity). Remaining slots are filled by `seed()`.
+    /// Two-phase fill that gives the GA both domain-relevant *and*
+    /// cross-domain math substrate as starting individuals:
+    ///
+    /// 1. **Domain phase** (up to ~70 % of population) — every axiom
+    ///    tagged with this island's domain is added.
+    /// 2. **Math substrate phase** (up to ~30 % of population) — for
+    ///    physics islands, a random sample of `PureMath` and
+    ///    `Unknown`-tagged axioms is mixed in. This is the load-bearing
+    ///    change for *spontaneous* emergence: without it, a QM island
+    ///    has no starting handle on Mathlib's algebraic identities,
+    ///    inner-product lemmas, etc., and crossover cannot recombine
+    ///    physics with math because the math individuals were never in
+    ///    the population. With it, the GA can spontaneously evolve
+    ///    composite expressions that combine, say, `qm_normalization`
+    ///    (a physics postulate) with `Real.integral_sub` (a math
+    ///    identity from Mathlib).
+    /// 3. **Random fill** — remaining slots get `seed()`'s random
+    ///    domain-flavoured expressions.
+    ///
+    /// `PureMath` islands skip phase 2 (they're already on the math
+    /// side) and just fill from their own domain.
     pub fn seed_from_axioms(&mut self, store: &AxiomStore, rng: &mut impl Rng) {
-        let domain = &self.population.domain;
-        let axioms = store.by_domain(domain);
+        let domain = self.population.domain.clone();
         let target = self.config.population_size;
 
+        // Phase 1 — domain-matched axioms
+        let domain_target = if matches!(domain, Domain::PureMath) {
+            target
+        } else {
+            (target * 7) / 10
+        };
+        let axioms = store.by_domain(&domain);
         for axiom in axioms {
-            if self.population.len() >= target {
+            if self.population.len() >= domain_target {
                 break;
             }
-
-            let canonical = axiom.statement.to_canonical();
-            let id = compute_theorem_id(&canonical);
-
-            if self.dedup.is_duplicate(&id) {
-                continue;
-            }
-            self.dedup.insert(id);
-
-            let mut theorem = Theorem {
-                id,
-                statement: axiom.statement.clone(),
-                canonical,
-                latex: String::new(),
-                proof: ProofTree::Axiom(id),
-                depth: 1,
-                complexity: 0,
-                domain: axiom.domain.clone(),
-                dimension: None,
-                parents: vec![],
-                children: vec![],
-                verified: VerificationStatus::Pending,
-                fitness: FitnessScore::default(),
-                generation: 0,
-                created_at: 0,
-                origin: TheoremOrigin::Axiom,
-            };
-            theorem.complexity = theorem.statement.node_count() as u32;
-            theorem.fitness = evaluate(&theorem);
-
-            self.population.add(Individual::new(theorem));
+            self.try_add_axiom(axiom, &domain);
         }
 
-        // Fill remainder with random expressions
+        // Phase 2 — math substrate cross-pollination for physics islands.
+        // Pulls from PureMath (the algebraic identities the GA needs to
+        // recombine with physics postulates).
+        if !matches!(domain, Domain::PureMath) {
+            use rand::seq::IteratorRandom;
+            let math_pool: Vec<&nasrudin_derive::Axiom> = store
+                .iter()
+                .filter(|a| matches!(a.domain, Domain::PureMath))
+                .collect();
+            let need = target.saturating_sub(self.population.len());
+            // Cap math substrate at population capacity remaining; chosen
+            // uniformly at random (so each generation re-sampling
+            // surfaces different lemmas as starting individuals).
+            let math_sample: Vec<&nasrudin_derive::Axiom> =
+                math_pool.into_iter().choose_multiple(rng, need);
+            for axiom in math_sample {
+                if self.population.len() >= target {
+                    break;
+                }
+                self.try_add_axiom(axiom, &domain);
+            }
+        }
+
+        // Phase 3 — fill remainder with random expressions
         self.seed(rng);
+    }
+
+    /// Helper: convert an axiom into an Individual and add to the
+    /// population, respecting dedup. Used by seed_from_axioms phases.
+    fn try_add_axiom(&mut self, axiom: &nasrudin_derive::Axiom, island_domain: &Domain) {
+        let canonical = axiom.statement.to_canonical();
+        let id = compute_theorem_id(&canonical);
+        if self.dedup.is_duplicate(&id) {
+            return;
+        }
+        self.dedup.insert(id);
+
+        // Tag the seed individual with the *island's* domain even when
+        // sourced from PureMath. This lets dimension-checking and
+        // domain-aware fitness signals treat it as in-scope substrate
+        // for the island's evolutionary direction. The original axiom
+        // domain is preserved for the chain-engine's `IntroduceAxiom`
+        // step (which looks the axiom up by name in the AxiomStore).
+        let mut theorem = Theorem {
+            id,
+            statement: axiom.statement.clone(),
+            canonical,
+            latex: String::new(),
+            proof: ProofTree::Axiom(id),
+            depth: 1,
+            complexity: 0,
+            domain: island_domain.clone(),
+            dimension: None,
+            parents: vec![],
+            children: vec![],
+            verified: VerificationStatus::Pending,
+            fitness: FitnessScore::default(),
+            generation: 0,
+            created_at: 0,
+            origin: TheoremOrigin::Axiom,
+        };
+        theorem.complexity = theorem.statement.node_count() as u32;
+        theorem.fitness = evaluate(&theorem);
+        self.population.add(Individual::new(theorem));
     }
 
     /// Run one generation: select → crossover → mutate → filter → evaluate → replace.
     ///
     /// Returns a list of candidate theorems to send for Lean4 verification.
+    ///
+    /// Legacy entry point — uses the 4-fragment hardcoded AxiomInjection
+    /// pool. Prefer [`Island::step_with_store`] in production so the
+    /// AxiomStore is reachable during mutation.
     pub fn step(&mut self, rng: &mut impl Rng) -> Vec<Theorem> {
+        self.step_inner(rng, None)
+    }
+
+    /// Run one generation with the live [`AxiomStore`] threaded through
+    /// to AxiomInjection mutation. Domain-relevant axioms (incl. all of
+    /// PhysLean + Mathlib + foundational postulates) become reachable
+    /// substrate during evolution.
+    pub fn step_with_store(
+        &mut self,
+        rng: &mut impl Rng,
+        store: &AxiomStore,
+    ) -> Vec<Theorem> {
+        self.step_inner(rng, Some(store))
+    }
+
+    fn step_inner(
+        &mut self,
+        rng: &mut impl Rng,
+        store: Option<&AxiomStore>,
+    ) -> Vec<Theorem> {
         let pop_size = self.config.population_size;
         if self.population.len() < 2 {
             return vec![];
@@ -194,12 +275,21 @@ impl Island {
                 )
             };
 
-            // Mutation
+            // Mutation — when `store` is `Some`, AxiomInjection samples
+            // from it (domain-biased per `domain_hint`). When `None`,
+            // the legacy 4-fragment fallback runs.
+            let domain_hint = Some(&self.population.domain);
             if rng.random_bool(self.config.mutation_rate) {
-                child_stmt_a = mutate(&child_stmt_a, rng);
+                child_stmt_a = match store {
+                    Some(s) => mutate_with_store(&child_stmt_a, Some(s), domain_hint, rng),
+                    None => mutate(&child_stmt_a, rng),
+                };
             }
             if rng.random_bool(self.config.mutation_rate) {
-                child_stmt_b = mutate(&child_stmt_b, rng);
+                child_stmt_b = match store {
+                    Some(s) => mutate_with_store(&child_stmt_b, Some(s), domain_hint, rng),
+                    None => mutate(&child_stmt_b, rng),
+                };
             }
 
             // Create offspring theorems

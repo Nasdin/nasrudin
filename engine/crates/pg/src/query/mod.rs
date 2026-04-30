@@ -9,6 +9,7 @@ pub mod refund_records;
 pub mod cluster_bandit_arms;
 pub mod cluster_compute_arms;
 pub mod cluster_directive_arms;
+pub mod cluster_directive_linucb;
 pub mod cluster_reports;
 pub mod cluster_steering;
 pub mod directive_pull_events;
