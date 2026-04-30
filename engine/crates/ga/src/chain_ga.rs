@@ -680,6 +680,13 @@ pub struct ChainIndividual {
     pub fitness: FitnessScore,
     pub pareto_rank: usize,
     pub crowding_distance: f64,
+    /// Per-cluster routing tag. Populated by the worker after
+    /// clustering the seed population at chunk start; inherited
+    /// from `parent_a` during crossover so per-cluster mutation
+    /// rates apply to children of a cluster too. `0` is the
+    /// default (and acts as the "unclustered" id since the GA
+    /// runs unmodified when `cluster_multipliers` is empty).
+    pub cluster_id: u32,
 }
 
 impl ChainIndividual {
@@ -689,6 +696,17 @@ impl ChainIndividual {
             fitness,
             pareto_rank: usize::MAX,
             crowding_distance: 0.0,
+            cluster_id: 0,
+        }
+    }
+
+    pub fn with_cluster(chain: Chain, fitness: FitnessScore, cluster_id: u32) -> Self {
+        Self {
+            chain,
+            fitness,
+            pareto_rank: usize::MAX,
+            crowding_distance: 0.0,
+            cluster_id,
         }
     }
 }

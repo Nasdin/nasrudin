@@ -160,10 +160,26 @@ impl Default for ClusterMultiplier {
     }
 }
 
-/// Resolve the per-individual mutation rate. Falls back to global
-/// when no cluster assignment is in scope. Clamps to the existing
-/// GA bounds [0.05, 0.30] so a directive can't accidentally turn the
-/// GA into pure random search or freeze it.
+/// Resolve the per-individual mutation rate by cluster_id. Falls back
+/// to global when no per-cluster multiplier is set for the id. Clamps
+/// to the existing GA bounds [0.05, 0.30] so a directive can't
+/// accidentally turn the GA into pure random search or freeze it.
+pub fn local_mutation_rate_for_cluster(cfg: &DiscoveryConfig, cluster_id: u32) -> f64 {
+    if cfg.cluster_multipliers.is_empty() {
+        return cfg.mutation_rate;
+    }
+    let mult = cfg
+        .cluster_multipliers
+        .get(&cluster_id)
+        .map(|m| m.mutation_rate_mult as f64)
+        .unwrap_or(1.0);
+    (cfg.mutation_rate * mult).clamp(0.05, 0.30)
+}
+
+/// Backwards-compatible idx-based variant. Reads cluster_assignments
+/// at `individual_idx` to find the cluster_id, then forwards to
+/// `local_mutation_rate_for_cluster`. Empty `cluster_assignments`
+/// falls through to the global rate (legacy behaviour).
 pub fn local_mutation_rate(cfg: &DiscoveryConfig, individual_idx: usize) -> f64 {
     if cfg.cluster_assignments.is_empty() {
         return cfg.mutation_rate;
@@ -172,12 +188,7 @@ pub fn local_mutation_rate(cfg: &DiscoveryConfig, individual_idx: usize) -> f64 
         Some(c) => *c,
         None => return cfg.mutation_rate,
     };
-    let mult = cfg
-        .cluster_multipliers
-        .get(&cid)
-        .map(|m| m.mutation_rate_mult as f64)
-        .unwrap_or(1.0);
-    (cfg.mutation_rate * mult).clamp(0.05, 0.30)
+    local_mutation_rate_for_cluster(cfg, cid)
 }
 
 /// Compute the elitism count for a specific cluster. Used when the
@@ -271,7 +282,14 @@ pub struct DiscoveryReport {
     /// true; empty otherwise so the legacy hot path doesn't pay for
     /// the clone. Each entry is (chain, fitness components vector,
     /// axiom/theorem names referenced by the chain).
-    pub final_population: Vec<(Chain, [f32; 4], Vec<String>)>,
+    /// Snapshot of the chunk's final population for clustering /
+    /// reporting / per-cluster reward attribution. Each tuple is
+    /// `(chain, fitness_components, axiom_names, cluster_id)`. The
+    /// last element traces back to the SEED cluster_id (parent →
+    /// child inheritance through crossover) so callers can group
+    /// final-population fitness by the cluster a directive landed
+    /// on at chunk start.
+    pub final_population: Vec<(Chain, [f32; 4], Vec<String>, u32)>,
 }
 
 /// Run the chain-based GA for `config.generations` generations.
@@ -285,6 +303,32 @@ pub struct DiscoveryReport {
 ///
 /// Returns a `DiscoveryReport` summarising the run + any lake-verified
 /// theorems found.
+/// Seed an initial GA population from random 1-step IntroduceAxiom
+/// chains. Exposed as a separate function so callers (the worker)
+/// can cluster the seed population externally and inject per-cluster
+/// `cluster_id`s before evolution begins.
+///
+/// `report.total_candidates` is incremented by `population_size` to
+/// match the bookkeeping of the legacy `run_discovery` path.
+pub fn seed_population(
+    store: &AxiomStore,
+    config: &DiscoveryConfig,
+    rng: &mut impl Rng,
+    report: &mut DiscoveryReport,
+) -> Vec<ChainIndividual> {
+    (0..config.population_size)
+        .map(|_| {
+            let chain = random_chain_seed(store, rng, report);
+            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+                &chain,
+                store,
+                config.target.as_ref(),
+            );
+            ChainIndividual::new(chain, fit)
+        })
+        .collect()
+}
+
 pub fn run_discovery(
     store: &AxiomStore,
     config: &DiscoveryConfig,
@@ -295,13 +339,24 @@ pub fn run_discovery(
     // ── Seed initial population: each individual is a 1-step chain
     //    `[IntroduceAxiom(random_axiom)]`. The GA will compose more
     //    interesting chains via mutation/crossover.
-    let mut population: Vec<ChainIndividual> = (0..config.population_size)
-        .map(|_| {
-            let chain = random_chain_seed(store, rng, &mut report);
-            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(&chain, store, config.target.as_ref());
-            ChainIndividual::new(chain, fit)
-        })
-        .collect();
+    let population = seed_population(store, config, rng, &mut report);
+    run_discovery_from_population(store, config, population, rng, report)
+}
+
+/// Variant of `run_discovery` that takes a pre-seeded initial
+/// population. Used by the worker to externally cluster the seeds
+/// and tag each individual's `cluster_id` before evolution starts;
+/// the per-cluster mutation rate then fires inside the offspring
+/// loop via `local_mutation_rate_for_cluster`.
+pub fn run_discovery_from_population(
+    store: &AxiomStore,
+    config: &DiscoveryConfig,
+    initial_population: Vec<ChainIndividual>,
+    rng: &mut impl Rng,
+    initial_report: DiscoveryReport,
+) -> DiscoveryReport {
+    let mut report = initial_report;
+    let mut population = initial_population;
 
     // Dedup set keyed on canonical form of (final_expr) for verified
     // discoveries so we don't lake-build the same theorem twice.
@@ -341,6 +396,16 @@ pub fn run_discovery(
         while offspring.len() < config.population_size {
             let p1 = tournament_select(&population, config.tournament_size, rng);
             let p2 = tournament_select(&population, config.tournament_size, rng);
+            // Inherit cluster_id from each parent. Children are
+            // tagged with their parent's cluster so per-cluster
+            // mutation rates apply consistently to the cluster's
+            // descendants too. After several generations of
+            // crossover the cluster becomes a soft attribute (the
+            // chain itself drifts) but the lineage tag stays
+            // useful as long as the cluster_multipliers are
+            // populated for that id.
+            let p1_cluster = p1.cluster_id;
+            let p2_cluster = p2.cluster_id;
             let (mut c1, mut c2) = if rng.random_bool(config.crossover_rate) {
                 splice_chains(&p1.chain, &p2.chain, rng)
             } else {
@@ -348,10 +413,10 @@ pub fn run_discovery(
             };
             // Per-individual mutation rate honours per-cluster
             // multipliers when the worker has populated
-            // `cluster_assignments`; falls back to the global rate
+            // `cluster_multipliers`; falls back to the global rate
             // otherwise. Clamped to [0.05, 0.30] inside the helper.
-            let c1_rate = local_mutation_rate(config, offspring.len());
-            let c2_rate = local_mutation_rate(config, offspring.len() + 1);
+            let c1_rate = local_mutation_rate_for_cluster(config, p1_cluster);
+            let c2_rate = local_mutation_rate_for_cluster(config, p2_cluster);
             if rng.random_bool(c1_rate) {
                 crate::chain_ga::mutate_chain_weighted_with_suffix_bias(
                     &mut c1,
@@ -370,12 +435,16 @@ pub fn run_discovery(
                     config.suffix_bias,
                 );
             }
-            for child in [c1, c2] {
+            for (child, child_cluster) in [(c1, p1_cluster), (c2, p2_cluster)] {
                 if child.is_empty() || child.len() > config.max_chain_len {
                     continue;
                 }
-                let fit = crate::chain_ga::evaluate_chain_fitness_with_target(&child, store, config.target.as_ref());
-                offspring.push(ChainIndividual::new(child, fit));
+                let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+                    &child,
+                    store,
+                    config.target.as_ref(),
+                );
+                offspring.push(ChainIndividual::with_cluster(child, fit, child_cluster));
                 report.total_candidates += 1;
                 if offspring.len() >= config.population_size {
                     break;
@@ -599,7 +668,9 @@ pub fn run_discovery(
                 length_signal as f32,
                 f.target_shape.max(f.ladder_progress).clamp(0.0, 1.0) as f32,
             ];
-            report.final_population.push((ind.chain.clone(), comps, names));
+            report
+                .final_population
+                .push((ind.chain.clone(), comps, names, ind.cluster_id));
         }
     }
 

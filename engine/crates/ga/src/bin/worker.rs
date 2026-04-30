@@ -511,13 +511,6 @@ async fn main() {
     // via `apply_steering_knobs` so the LLM cluster steerer's
     // mutation rate / population size land on the next chunk's GA.
     let mut last_steering: Option<serde_json::Value> = None;
-    // Per-chunk directive bookkeeping. Recorded at chunk N when the
-    // bandit picks a multiplier_choice; consumed at chunk N+1 to
-    // emit reward feedback if the matched cluster's hash is still
-    // close enough. `prev_directive_log` carries chunk N's records
-    // forward into chunk N+1.
-    let mut prev_directive_log: Vec<nasrudin_ga::clustering::WorkerDirectiveEntry> =
-        Vec::new();
 
     // Phase E: when research-mode is on, build the HTTP client once.
     let research_client = if research_mode {
@@ -744,27 +737,228 @@ async fn main() {
                 );
             }
         }
-        let report = run_discovery(&store, &chunk_config, &mut rng);
 
-        // Cluster the chunk's final population and POST the per-cluster
-        // ClusterSummaries to the API. Soft-fails: cluster reporting is
-        // observability, not a blocking dependency. K comes from the
-        // bandit's cluster_config (folded into /api/seed); falls back
-        // to DEFAULT_K=6 if steering is absent or doesn't list this
-        // domain. Skipped entirely when the worker isn't connected
-        // to an API (offline / dev mode).
+        // ── Per-cluster directive routing (v1.5 + v2) ──────────────
+        // When connected to the API, externally seed the population
+        // and cluster the seeds so per-cluster directives can route
+        // to specific cluster_ids and the GA's mutation site fires
+        // `local_mutation_rate_for_cluster`. `current_directive_log`
+        // captures (cluster_id, action, strength_bucket,
+        // multiplier_choice, mean_fitness_at_apply) so we can
+        // compute the reward at chunk END from the same chunk's
+        // final fitness — no cross-chunk hash drift problem.
+        let canonical_domain: &str = match domain.as_str() {
+            "sr" => "special_relativity",
+            "em" => "electromagnetism",
+            "qm" => "quantum_mechanics",
+            "thermo" => "thermodynamics",
+            "cm" => "classical_mechanics",
+            "gr" => "general_relativity",
+            other => other,
+        };
+        let mut current_directive_log: Vec<
+            nasrudin_ga::clustering::WorkerDirectiveEntry,
+        > = Vec::new();
+        let mut seed_summaries: Vec<nasrudin_ga::clustering::ClusterSummary> =
+            Vec::new();
+
+        // Build the report's bookkeeping placeholder once so we can
+        // either run the legacy `run_discovery` path or the
+        // pre-seeded `run_discovery_from_population` path with
+        // matching `total_candidates` accounting.
+        let mut initial_report =
+            nasrudin_ga::chain_engine::DiscoveryReport::default();
+        let report = if let Some(steering_val) = last_steering.as_ref()
+            .filter(|_| api_cfg.is_some())
+        {
+            // Externally seed so we can cluster + tag cluster_id
+            // before the offspring loop runs.
+            let mut seed_pop = nasrudin_ga::chain_engine::seed_population(
+                &store,
+                &chunk_config,
+                &mut rng,
+                &mut initial_report,
+            );
+            // K from the bandit's cluster_config; clamp [2, 12].
+            let k_for_island = steering_val
+                .get("cluster_config")
+                .and_then(|cc| cc.get("k_per_island"))
+                .and_then(|m| m.get(canonical_domain))
+                .and_then(|v| v.as_u64())
+                .map(|v| v.clamp(2, 12) as u32)
+                .unwrap_or(6);
+            // Build cluster features from the seed population.
+            let chunk_seed = (chunk_i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let chains_with_fitness: Vec<(_, [f32; 4], Vec<String>)> = seed_pop
+                .iter()
+                .map(|ind| {
+                    let names = nasrudin_ga::clustering::extract_axiom_names(
+                        &ind.chain,
+                    );
+                    let f = &ind.fitness;
+                    let length_signal = (1.0
+                        - (ind.chain.0.len() as f64 / 16.0).min(1.0))
+                    .clamp(0.0, 1.0);
+                    let comps = [
+                        f.novelty.clamp(0.0, 1.0) as f32,
+                        f.dimensional.clamp(0.0, 1.0) as f32,
+                        length_signal as f32,
+                        f.target_shape.max(f.ladder_progress).clamp(0.0, 1.0)
+                            as f32,
+                    ];
+                    (ind.chain.clone(), comps, names)
+                })
+                .collect();
+            let (s_summaries, s_assignment) =
+                nasrudin_ga::clustering::cluster_and_summarise(
+                    &chains_with_fitness,
+                    k_for_island,
+                    canonical_domain,
+                    chunk_seed,
+                );
+            // Tag each individual with its seed cluster_id so child
+            // lineage carries the cluster through crossover.
+            for (i, ind) in seed_pop.iter_mut().enumerate() {
+                ind.cluster_id =
+                    *s_assignment.assignments.get(i).unwrap_or(&0);
+            }
+            chunk_config.cluster_assignments = s_assignment.assignments.clone();
+            seed_summaries = s_summaries;
+
+            // Match LLM directives against seed clusters by hash.
+            // Populate cluster_multipliers and aggregate v1.5 layer.
+            let mut aggregate_mut_mult: f64 = 1.0;
+            let mut aggregate_elite_mult: f64 = 1.0;
+            let directives = steering_val
+                .get("config")
+                .and_then(|c| c.get("cluster_directives"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let centroids: Vec<(u32, u64)> = seed_summaries
+                .iter()
+                .map(|s| (s.cluster_id, s.centroid_skeleton_hash))
+                .collect();
+            for d in directives.iter() {
+                let dom = d
+                    .get("island_domain")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if dom != canonical_domain {
+                    continue;
+                }
+                let hash = d
+                    .get("centroid_skeleton_hash")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let action = d
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let strength = d
+                    .get("strength")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0)
+                    as f32;
+                let strength_bucket =
+                    (strength.clamp(0.0, 1.0) * 5.0).floor().min(4.0) as u8;
+                let Some(cid) =
+                    nasrudin_ga::clustering::match_directive_to_cluster(
+                        hash,
+                        &centroids,
+                        0.10,
+                    )
+                else {
+                    continue;
+                };
+                let arms = directive_arms_for_slot(
+                    steering_val,
+                    canonical_domain,
+                    &action,
+                    strength_bucket,
+                );
+                let multiplier_choice =
+                    pick_multiplier_choice(&arms, strength);
+                let mult_value =
+                    lookup_action_multiplier(&action, multiplier_choice);
+                let m = chunk_config
+                    .cluster_multipliers
+                    .entry(cid)
+                    .or_default();
+                match action.as_str() {
+                    "boost" => {
+                        m.mutation_rate_mult = mult_value;
+                        if (mult_value as f64) > aggregate_mut_mult {
+                            aggregate_mut_mult = mult_value as f64;
+                        }
+                    }
+                    "exploit" => {
+                        m.elitism_mult = mult_value;
+                        if (mult_value as f64) > aggregate_elite_mult {
+                            aggregate_elite_mult = mult_value as f64;
+                        }
+                    }
+                    "diversify" => m.diversify_fraction = mult_value,
+                    "kill" => m.kill_fraction = mult_value,
+                    _ => continue,
+                }
+                let mean_fitness_at_apply = seed_summaries
+                    .iter()
+                    .find(|s| s.cluster_id == cid)
+                    .map(|s| s.mean_fitness)
+                    .unwrap_or(0.0);
+                current_directive_log.push(
+                    nasrudin_ga::clustering::WorkerDirectiveEntry {
+                        centroid_hash_at_apply: hash,
+                        action: action.clone(),
+                        strength_bucket,
+                        multiplier_choice,
+                        mean_fitness_at_apply,
+                    },
+                );
+                tracing::info!(
+                    cluster_id = cid,
+                    action = %action,
+                    strength_bucket,
+                    multiplier_choice,
+                    mult_value,
+                    "applied cluster directive (per-individual)"
+                );
+            }
+            // v1.5 chunk-wide aggregate: even individuals in
+            // unmatched clusters feel some shift, so the bandit's
+            // reward signal isn't washed out by clusters that didn't
+            // get a directive.
+            chunk_config.mutation_rate =
+                (chunk_config.mutation_rate * aggregate_mut_mult)
+                    .clamp(0.05, 0.30);
+            chunk_config.elitism_fraction =
+                (chunk_config.elitism_fraction as f64 * aggregate_elite_mult)
+                    .clamp(0.0, 0.2) as f32;
+
+            nasrudin_ga::chain_engine::run_discovery_from_population(
+                &store,
+                &chunk_config,
+                seed_pop,
+                &mut rng,
+                initial_report,
+            )
+        } else {
+            // Offline / no steering yet: use the legacy seed-then-
+            // evolve path; cluster_assignments stays empty so the
+            // GA falls back to global mutation rate.
+            run_discovery(&store, &chunk_config, &mut rng)
+        };
+
+        // Cluster the chunk's final population and POST per-cluster
+        // ClusterSummaries to the API. Re-cluster the final population
+        // here (separate from the seed-time clustering above) because
+        // the LLM addresses clusters by their CURRENT-state hashes,
+        // and the final population reflects the post-evolution state.
         if !report.final_population.is_empty()
             && let Some(api_cfg_for_cluster) = api_cfg.as_ref()
         {
-            let canonical_domain: &str = match domain.as_str() {
-                "sr" => "special_relativity",
-                "em" => "electromagnetism",
-                "qm" => "quantum_mechanics",
-                "thermo" => "thermodynamics",
-                "cm" => "classical_mechanics",
-                "gr" => "general_relativity",
-                other => other,
-            };
             let k_for_island = last_steering
                 .as_ref()
                 .and_then(|s| s.get("cluster_config"))
@@ -776,9 +970,16 @@ async fn main() {
             // Deterministic per-chunk seed so re-running the same
             // chunk reproduces the same cluster assignments.
             let chunk_seed = (chunk_i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            // final_population is `(chain, comps, names, cluster_id)`;
+            // cluster_and_summarise wants `(chain, comps, names)`.
+            let final_3tuple: Vec<(_, [f32; 4], Vec<String>)> = report
+                .final_population
+                .iter()
+                .map(|(c, f, n, _)| (c.clone(), *f, n.clone()))
+                .collect();
             let (summaries, _assignment) =
                 nasrudin_ga::clustering::cluster_and_summarise(
-                    &report.final_population,
+                    &final_3tuple,
                     k_for_island,
                     canonical_domain,
                     chunk_seed,
@@ -801,34 +1002,47 @@ async fn main() {
                 tracing::debug!(error=%e, "cluster_report post failed (non-blocking)");
             }
 
-            // Reward attribution for the previous chunk's directives.
-            // Match each prev_directive_log entry's centroid hash against
-            // the current chunk's clusters; if matched within the Hamming
-            // threshold, the fitness delta becomes the bandit reward.
-            if !prev_directive_log.is_empty() {
-                let mut feedback_batch: Vec<serde_json::Value> = Vec::new();
-                let centroids_now: Vec<(u32, u64)> = summaries
+            // Reward attribution for THIS chunk's directives. The
+            // cluster_id assigned at seed time is preserved through
+            // crossover (parent → child), so we group the final
+            // population by the SEED cluster_id and compute mean
+            // fitness per group. That post-evolution mean minus the
+            // entry's `mean_fitness_at_apply` is the reward signal —
+            // no cross-chunk hash drift, no stale directive log.
+            if !current_directive_log.is_empty() {
+                use std::collections::HashMap;
+                let mut sums: HashMap<u32, (f64, u32)> = HashMap::new();
+                for (_, comps, _, cid) in &report.final_population {
+                    let mean = (comps.iter().sum::<f32>() / 4.0) as f64;
+                    let entry = sums.entry(*cid).or_insert((0.0, 0));
+                    entry.0 += mean;
+                    entry.1 += 1;
+                }
+                // Match each entry's hash to its seed-time cluster_id
+                // via the seed_summaries we computed earlier; that
+                // cluster_id then keys into `sums` for the post-
+                // evolution mean.
+                let seed_centroids: Vec<(u32, u64)> = seed_summaries
                     .iter()
                     .map(|s| (s.cluster_id, s.centroid_skeleton_hash))
                     .collect();
-                for entry in prev_directive_log.iter() {
-                    let Some(cid_now) =
+                let mut feedback_batch: Vec<serde_json::Value> = Vec::new();
+                for entry in current_directive_log.iter() {
+                    let Some(seed_cid) =
                         nasrudin_ga::clustering::match_directive_to_cluster(
                             entry.centroid_hash_at_apply,
-                            &centroids_now,
+                            &seed_centroids,
                             0.10,
                         )
                     else {
-                        // Hash drifted past threshold; reward unobservable.
                         continue;
                     };
-                    let new_mean = summaries
-                        .iter()
-                        .find(|s| s.cluster_id == cid_now)
-                        .map(|s| s.mean_fitness)
-                        .unwrap_or(entry.mean_fitness_at_apply);
-                    let delta = new_mean - entry.mean_fitness_at_apply;
-                    let reward = (delta + 0.5).clamp(0.0, 1.0) as f64;
+                    let post_mean = sums
+                        .get(&seed_cid)
+                        .map(|(s, n)| s / (*n as f64).max(1.0))
+                        .unwrap_or(entry.mean_fitness_at_apply as f64);
+                    let delta = post_mean - entry.mean_fitness_at_apply as f64;
+                    let reward = (delta + 0.5).clamp(0.0, 1.0);
                     feedback_batch.push(serde_json::json!({
                         "island_domain": canonical_domain,
                         "action": entry.action,
@@ -849,112 +1063,11 @@ async fn main() {
                     } else {
                         tracing::info!(
                             n = feedback_batch.len(),
-                            "posted directive_feedback batch"
+                            "posted directive_feedback batch (same-chunk)"
                         );
                     }
                 }
             }
-
-            // Build the directive log for THIS chunk's directives. The
-            // log is consumed at chunk N+1 (above) to emit reward
-            // feedback. The matched directive's multiplier is recorded
-            // in chunk_config.cluster_multipliers so future chunks can
-            // honour it; cluster_assignments stays empty in v1, so the
-            // GA mutation site falls through to global rate — the
-            // reward signal still flows correctly because the bandit
-            // arm key is (action, strength_bucket, multiplier_choice),
-            // not per-individual.
-            let mut new_directive_log: Vec<
-                nasrudin_ga::clustering::WorkerDirectiveEntry,
-            > = Vec::new();
-            if let Some(steering_val) = last_steering.as_ref() {
-                let directives = steering_val
-                    .get("config")
-                    .and_then(|c| c.get("cluster_directives"))
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                let centroids: Vec<(u32, u64)> = summaries
-                    .iter()
-                    .map(|s| (s.cluster_id, s.centroid_skeleton_hash))
-                    .collect();
-                for d in directives.iter() {
-                    let dom = d
-                        .get("island_domain")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    if dom != canonical_domain {
-                        continue;
-                    }
-                    let hash = d
-                        .get("centroid_skeleton_hash")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    let action = d
-                        .get("action")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let strength = d
-                        .get("strength")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0)
-                        as f32;
-                    let strength_bucket =
-                        (strength.clamp(0.0, 1.0) * 5.0).floor().min(4.0) as u8;
-                    let Some(cid) =
-                        nasrudin_ga::clustering::match_directive_to_cluster(
-                            hash,
-                            &centroids,
-                            0.10,
-                        )
-                    else {
-                        continue;
-                    };
-                    let arms = directive_arms_for_slot(
-                        steering_val,
-                        canonical_domain,
-                        &action,
-                        strength_bucket,
-                    );
-                    let multiplier_choice = pick_multiplier_choice(&arms, strength);
-                    let mult_value = lookup_action_multiplier(&action, multiplier_choice);
-                    let m = chunk_config
-                        .cluster_multipliers
-                        .entry(cid)
-                        .or_default();
-                    match action.as_str() {
-                        "boost" => m.mutation_rate_mult = mult_value,
-                        "exploit" => m.elitism_mult = mult_value,
-                        "diversify" => m.diversify_fraction = mult_value,
-                        "kill" => m.kill_fraction = mult_value,
-                        _ => continue,
-                    }
-                    let mean_fitness_at_apply = summaries
-                        .iter()
-                        .find(|s| s.cluster_id == cid)
-                        .map(|s| s.mean_fitness)
-                        .unwrap_or(0.0);
-                    new_directive_log.push(
-                        nasrudin_ga::clustering::WorkerDirectiveEntry {
-                            centroid_hash_at_apply: hash,
-                            action: action.clone(),
-                            strength_bucket,
-                            multiplier_choice,
-                            mean_fitness_at_apply,
-                        },
-                    );
-                    tracing::info!(
-                        cluster_id = cid,
-                        action = %action,
-                        strength_bucket,
-                        multiplier_choice,
-                        mult_value,
-                        "applied cluster directive (bandit-picked multiplier)"
-                    );
-                }
-            }
-            prev_directive_log = new_directive_log;
         }
 
         total_candidates += report.total_candidates;
