@@ -75,11 +75,28 @@ pub fn mutate_chain_weighted(
     rng: &mut impl Rng,
     priors: Option<&std::collections::HashMap<String, f32>>,
 ) {
+    mutate_chain_weighted_with_suffix_bias(chain, store, rng, priors, 0.0);
+}
+
+/// Same as [`mutate_chain_weighted`] but additionally honors the
+/// `suffix_bias` knob from the LLM cluster steerer's `MutationKnobs`.
+/// `suffix_bias ∈ [0.0, 1.0]` (clamped) multiplies the
+/// `append_productive_suffix` operator's weight by
+/// `(1.0 + 4.0 * suffix_bias)` — so `1.0` makes that op 5× more likely
+/// than uniform, `0.0` is no bias. Combines multiplicatively with any
+/// `mutation_priors` weight already on `append_productive_suffix`.
+pub fn mutate_chain_weighted_with_suffix_bias(
+    chain: &mut Chain,
+    store: &AxiomStore,
+    rng: &mut impl Rng,
+    priors: Option<&std::collections::HashMap<String, f32>>,
+    suffix_bias: f32,
+) {
     if chain.is_empty() {
         insert_random(chain, store, rng);
         return;
     }
-    let weights = resolve_weights(priors);
+    let weights = resolve_weights(priors, suffix_bias);
     let pick = weighted_pick(&weights, rng);
     match pick {
         0 => insert_random(chain, store, rng),
@@ -93,25 +110,33 @@ pub fn mutate_chain_weighted(
 
 fn resolve_weights(
     priors: Option<&std::collections::HashMap<String, f32>>,
+    suffix_bias: f32,
 ) -> [f32; 6] {
+    let bias = suffix_bias.clamp(0.0, 1.0);
+    let suffix_mult = 1.0 + 4.0 * bias;
     let mut w = [1.0f32; 6]; // uniform fallback
-    let Some(map) = priors else { return w };
-    let mut any = false;
-    for (i, &name) in MUTATION_OPS.iter().enumerate() {
-        if let Some(&v) = map.get(name) {
-            if v.is_finite() && v >= 0.0 {
-                w[i] = v;
-                any = true;
+    if let Some(map) = priors {
+        let mut any = false;
+        for (i, &name) in MUTATION_OPS.iter().enumerate() {
+            if let Some(&v) = map.get(name) {
+                if v.is_finite() && v >= 0.0 {
+                    w[i] = v;
+                    any = true;
+                }
             }
         }
+        if !any {
+            w = [1.0f32; 6];
+        }
+        let sum: f32 = w.iter().sum();
+        if sum <= 0.0 {
+            w = [1.0f32; 6];
+        }
     }
-    if !any {
-        return [1.0f32; 6];
-    }
-    let sum: f32 = w.iter().sum();
-    if sum <= 0.0 {
-        return [1.0f32; 6];
-    }
+    // append_productive_suffix is the last operator (index 5).
+    // Multiply AFTER prior resolution so the LLM's priors and the
+    // steerer's suffix_bias compose multiplicatively.
+    w[5] *= suffix_mult;
     w
 }
 

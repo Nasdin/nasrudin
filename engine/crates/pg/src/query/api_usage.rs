@@ -6,7 +6,7 @@
 
 use chrono::NaiveDate;
 use sea_orm::prelude::*;
-use sea_orm::{ConnectionTrait, DatabaseBackend, ExprTrait, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use uuid::Uuid;
 
 use crate::entity::api_usage_daily as aud;

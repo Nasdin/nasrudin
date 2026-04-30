@@ -399,6 +399,7 @@ async fn main() -> anyhow::Result<()> {
         steering: Arc::new(arc_swap::ArcSwap::from_pointee(initial_snapshot)),
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
+        landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
@@ -468,6 +469,25 @@ async fn main() -> anyhow::Result<()> {
             }
         });
         tracing::info!("Conjecture lease reaper (paid jobs) spawned");
+
+        // Worker status reaper: mark workers as inactive if they haven't
+        // been seen in the last 60 seconds. This ensures the "active workers"
+        // metric on the landing page reflects actual recent activity.
+        let pg_for_worker_reaper = pg.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                tick.tick().await;
+                match physics_api::jobs::reaper::mark_stale_workers(&pg_for_worker_reaper).await {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(n, "marked stale workers as inactive")
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::error!(error=%e, "worker status reaper failed"),
+                }
+            }
+        });
+        tracing::info!("Worker status reaper spawned");
 
         let steerer_disabled = std::env::var("STEERER_DISABLED").is_ok();
         if !steerer_disabled {
@@ -578,6 +598,7 @@ async fn main() -> anyhow::Result<()> {
     // specific routes first for readability.
     let api = Router::new()
         .route("/api/ga/status", get(ga_status_handler))
+        .route("/api/featured", get(handlers::featured::featured))
         .route(
             "/api/theorems/{hash}/lean",
             get(handlers::theorems::lean_download),
@@ -622,6 +643,7 @@ async fn main() -> anyhow::Result<()> {
     let health = Router::new()
         .route("/api/health", get(self::health))
         .route("/api/stats", get(stats))
+        .route("/api/stats/landing", get(handlers::stats::landing))
         // P-Task 9: Prometheus exposition for Grafana scraping. No
         // auth gate; Caddy restricts source IPs in production.
         .route("/metrics", get(physics_api::metrics::metrics))
@@ -758,6 +780,26 @@ async fn main() -> anyhow::Result<()> {
                 get(handlers::conjecture::get_paper),
             )
             .route("/api/me/conjectures", get(handlers::conjecture::list_mine))
+            .route(
+                "/api/me/library/theorems",
+                post(handlers::me_library::save_theorem)
+                    .get(handlers::me_library::list_saved),
+            )
+            .route(
+                "/api/me/library/theorems/{id}",
+                delete(handlers::me_library::unsave_theorem)
+                    .patch(handlers::me_library::patch_saved),
+            )
+            .route(
+                "/api/me/library/folders",
+                post(handlers::me_library::create_folder)
+                    .get(handlers::me_library::list_folders),
+            )
+            .route(
+                "/api/me/library/folders/{id}",
+                delete(handlers::me_library::delete_folder)
+                    .patch(handlers::me_library::patch_folder),
+            )
             .route(
                 "/api/research/jobs",
                 post(handlers::research_jobs::create)

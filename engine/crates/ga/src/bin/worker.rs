@@ -449,6 +449,12 @@ async fn main() {
         dimension_hard_reject,
         dimension_var_dims: dimension_var_dims.clone(),
         elaborator: elaborator.clone(),
+        // Cluster-steerer mutation_knobs are applied per-chunk via
+        // `apply_steering_knobs` once the seed-fetch returns; defaults
+        // here keep the legacy (uniform / no-elitism) behaviour for
+        // chunks where steering hasn't landed yet.
+        suffix_bias: 0.0,
+        elitism_fraction: 0.0,
     };
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
@@ -1014,6 +1020,12 @@ async fn run_seed_driven_chunk(
             // no elaborator (lake-only path), this stays None and the
             // chunk falls back to legacy lake build.
             elaborator: None,
+            // research-mode chunks pre-date the cluster steerer's
+            // per-chunk knob plumbing; pass uniform defaults for now.
+            // (When the legacy /api/conjecture flow is folded into
+            // /api/research/jobs the steering knobs will land here too.)
+            suffix_bias: 0.0,
+            elitism_fraction: 0.0,
         };
         let report = run_discovery(&filtered, &chunk_config, rng);
         total_attempted += report.total_candidates as u64;

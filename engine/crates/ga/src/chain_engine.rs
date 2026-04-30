@@ -111,6 +111,18 @@ pub struct DiscoveryConfig {
     /// Spawn this once at worker boot via
     /// `nasrudin_lean_bridge::PersistentElaborator::new`.
     pub elaborator: Option<std::sync::Arc<nasrudin_lean_bridge::PersistentElaborator>>,
+    /// LLM-emitted "bias toward end-of-chain mutations". Bounded
+    /// [0.0, 1.0] by the steerer validator. Multiplies the
+    /// `append_productive_suffix` mutation operator's selection
+    /// weight by `(1.0 + 4.0 * suffix_bias)` so suffix_bias=1.0
+    /// makes that op 5× more likely than uniform. 0.0 = no
+    /// bias (uniform).
+    pub suffix_bias: f32,
+    /// Fraction of best-fitness individuals copied through to the
+    /// next generation unchanged. Bounded [0.0, 0.2]. Default 0.0
+    /// (no elitism). With elitism_fraction=0.05 and population=128,
+    /// the top 6 elites carry through verbatim each generation.
+    pub elitism_fraction: f32,
 }
 
 impl Default for DiscoveryConfig {
@@ -133,6 +145,8 @@ impl Default for DiscoveryConfig {
             dimension_hard_reject: true,
             dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
             elaborator: None,
+            suffix_bias: 0.0,
+            elitism_fraction: 0.0,
         }
     }
 }
@@ -209,11 +223,36 @@ pub fn run_discovery(
     let mut verified_canonicals: HashSet<String> = HashSet::new();
 
     // ── Evolution loop
+    // Number of best-fitness elites copied through unchanged each
+    // generation, derived from `config.elitism_fraction` (clamped to
+    // [0, 0.2] to match the steerer validator). 0.0 = no elitism =
+    // legacy pure-replacement behaviour; 0.05 × pop=128 = 6 elites.
+    let elite_count = ((config.elitism_fraction.clamp(0.0, 0.2) as f64
+        * config.population_size as f64)
+        .floor() as usize)
+        .min(config.population_size.saturating_sub(1));
+
     for gen_idx in 0..config.generations {
         report.generations_run = gen_idx + 1;
 
         // Generate offspring.
         let mut offspring: Vec<ChainIndividual> = Vec::with_capacity(config.population_size);
+
+        // Elitism: copy top-N current population through unchanged
+        // before generating the rest as offspring. The population
+        // is pre-sorted by composite fitness at the end of the
+        // previous generation (or by initial fitness on gen 0, since
+        // the seed loop preserves insertion order).
+        if elite_count > 0 {
+            for ind in population.iter().take(elite_count) {
+                offspring.push(ind.clone());
+                report.total_candidates += 1;
+                if offspring.len() >= config.population_size {
+                    break;
+                }
+            }
+        }
+
         while offspring.len() < config.population_size {
             let p1 = tournament_select(&population, config.tournament_size, rng);
             let p2 = tournament_select(&population, config.tournament_size, rng);
@@ -223,19 +262,21 @@ pub fn run_discovery(
                 (p1.chain.clone(), p2.chain.clone())
             };
             if rng.random_bool(config.mutation_rate) {
-                crate::chain_ga::mutate_chain_weighted(
+                crate::chain_ga::mutate_chain_weighted_with_suffix_bias(
                     &mut c1,
                     store,
                     rng,
                     config.mutation_priors.as_ref(),
+                    config.suffix_bias,
                 );
             }
             if rng.random_bool(config.mutation_rate) {
-                crate::chain_ga::mutate_chain_weighted(
+                crate::chain_ga::mutate_chain_weighted_with_suffix_bias(
                     &mut c2,
                     store,
                     rng,
                     config.mutation_priors.as_ref(),
+                    config.suffix_bias,
                 );
             }
             for child in [c1, c2] {
@@ -598,6 +639,8 @@ mod tests {
             dimension_hard_reject: false,
             dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
             elaborator: None,
+            suffix_bias: 0.0,
+            elitism_fraction: 0.0,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -629,6 +672,8 @@ mod tests {
             dimension_hard_reject: false,
             dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
             elaborator: None,
+            suffix_bias: 0.0,
+            elitism_fraction: 0.0,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);

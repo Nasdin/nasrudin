@@ -41,22 +41,13 @@ pub fn apply_steering_knobs(cfg: &mut DiscoveryConfig, steering: &Value) -> bool
         cfg.population_size = clamped;
         applied = true;
     }
-    // suffix_bias and elitism_fraction aren't fields on DiscoveryConfig
-    // today — they'd ride on top of the existing chain_ga mutation
-    // operator selection. Read + clamp them so the values are
-    // structurally validated, but discard until the chain_ga layer
-    // grows the corresponding hooks. This keeps the steerer's
-    // contract honest: any field the LLM emits is bounded server-side
-    // and worker-side, even when not yet acted on.
     if let Some(bias) = knobs.get("suffix_bias").and_then(Value::as_f64) {
-        let _clamped = bias.clamp(0.0, 1.0);
-        // TODO: thread into chain_ga::mutate_chain when the operator
-        // layer grows a "prefer suffix" weight.
+        cfg.suffix_bias = bias.clamp(0.0, 1.0) as f32;
+        applied = true;
     }
     if let Some(elite) = knobs.get("elitism_fraction").and_then(Value::as_f64) {
-        let _clamped = elite.clamp(0.0, 0.2);
-        // TODO: thread into the offspring-replace step in run_discovery
-        // when the elitism gate lands.
+        cfg.elitism_fraction = elite.clamp(0.0, 0.2) as f32;
+        applied = true;
     }
 
     applied
