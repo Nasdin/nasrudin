@@ -31,6 +31,8 @@ mod m20260430_000024_email_outbox;
 mod m20260430_000025_refund_records;
 mod m20260430_000026_bulk_runs;
 mod m20260430_000027_last_admin_trigger;
+mod m20260430_000017_cluster_reports;
+mod m20260430_000018_cluster_bandit_arms;
 
 pub struct Migrator;
 
@@ -69,6 +71,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260430_000025_refund_records::Migration),
             Box::new(m20260430_000026_bulk_runs::Migration),
             Box::new(m20260430_000027_last_admin_trigger::Migration),
+            Box::new(m20260430_000017_cluster_reports::Migration),
+            Box::new(m20260430_000018_cluster_bandit_arms::Migration),
         ]
     }
 }
