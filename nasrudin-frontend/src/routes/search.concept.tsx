@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { useDebouncedValue } from '@tanstack/react-pacer';
 import { type FormEvent, useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
@@ -10,13 +11,13 @@ export const Route = createFileRoute('/search/concept')({ component: ConceptSear
 
 function ConceptSearchPage() {
   const [draft, setDraft] = useState('');
-  const [query, setQuery] = useState('');
+  const debouncedDraft = useDebouncedValue(draft, { wait: 300 });
   const [includePending, setIncludePending] = useState(true);
-  const search = useConceptSearch(query, { includePending });
+  const search = useConceptSearch(debouncedDraft.trim(), { includePending });
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setQuery(draft.trim());
+    // Form submit is now just for UX - the query already runs via debounced value
   };
 
   return (
@@ -106,7 +107,7 @@ function ConceptSearchPage() {
           </div>
         )}
 
-        {search.isPending && query && (
+        {search.isPending && debouncedDraft.trim() && (
           <div style={{ color: 'var(--ink-500)' }}>Searching…</div>
         )}
 
@@ -117,15 +118,14 @@ function ConceptSearchPage() {
           </div>
         )}
 
-        {search.data && search.data.hits.length === 0 && query && (
+        {search.data && search.data.hits.length === 0 && debouncedDraft.trim() && (
           <div className="card">
-            No matches for <em>"{query}"</em>. Try a broader phrase, or toggle
+            No matches for <em>"{debouncedDraft.trim()}"</em>. Try a broader phrase, or toggle
             "include conjectures" if you only see verified rows.
           </div>
         )}
 
-        {search.data &&
-          search.data.hits.map((h) => <ConceptHitCard key={h.theorem_id} hit={h} />)}
+        {search.data?.hits.map((h) => <ConceptHitCard key={h.theorem_id} hit={h} />)}
       </div>
       <AppFooter />
     </div>

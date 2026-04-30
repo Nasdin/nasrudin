@@ -1,4 +1,11 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
+import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type SortingState,
+} from '@tanstack/react-table';
 import { useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
@@ -12,6 +19,7 @@ type StatusFilter = 'all' | 'active' | 'inactive' | 'disconnected';
 function WorkersPage() {
   const { data, isPending } = useWorkers();
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const [sorting, setSorting] = useState<SortingState>([]);
   const all = data ?? [];
   const filtered =
     filter === 'all' ? all : all.filter((w) => String(w.status).toLowerCase() === filter);
@@ -91,30 +99,182 @@ function WorkersPage() {
               <Link to="/api-keys">spin one up →</Link>
             </p>
           )}
-          {filtered.length > 0 && (
-            <table className="lead-table">
-              <thead>
-                <tr>
-                  <th>Worker</th>
-                  <th>Owner</th>
-                  <th>Host</th>
-                  <th style={{ textAlign: 'right' }}>Status</th>
-                  <th style={{ textAlign: 'right' }}>Theorems</th>
-                  <th style={{ textAlign: 'right' }}>Last verified</th>
-                  <th style={{ textAlign: 'right' }}>Last seen</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((w) => (
-                  <WorkerRow key={w.id} w={w} />
-                ))}
-              </tbody>
-            </table>
-          )}
+          {filtered.length > 0 && <WorkersTable workers={filtered} />}
         </div>
       </div>
       <AppFooter />
     </div>
+  );
+}
+
+function WorkersTable({ workers }: { workers: Worker[] }) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+
+  const columns: ColumnDef<Worker>[] = [
+    {
+      accessorKey: 'id',
+      header: 'Worker',
+      cell: (info) => {
+        const w = info.row.original;
+        const status = String(w.status).toLowerCase();
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background:
+                  status === 'active'
+                    ? 'var(--olive-500)'
+                    : status === 'inactive'
+                      ? 'var(--saffron-500)'
+                      : 'var(--paper-300)',
+                boxShadow: status === 'active' ? '0 0 0 3px var(--olive-50)' : 'none',
+              }}
+            />
+            <span className="handle-cell">{w.id}</span>
+          </div>
+        );
+      },
+    },
+    {
+      id: 'owner',
+      header: 'Owner',
+      cell: (info) => {
+        const w = info.row.original;
+        const ownerLabel =
+          w.owner?.display_name ?? (w.owner?.handle ? `@${w.owner.handle}` : null) ?? 'Anonymous';
+        const ownerStyle = w.owner
+          ? { fontFamily: 'var(--font-serif)', fontSize: 14 }
+          : { fontStyle: 'italic', color: 'var(--ink-500)' };
+        const ownerColor = w.owner ? 'var(--ink-900)' : 'var(--ink-500)';
+        return (
+          <span style={ownerStyle}>
+            <span style={{ color: ownerColor }}>{ownerLabel}</span>
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'host',
+      header: 'Host',
+      cell: (info) => {
+        const host = info.getValue() as string | null;
+        return (
+          <span style={{ color: 'var(--ink-500)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            {host ?? '—'}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: (info) => {
+        const w = info.row.original;
+        const status = String(w.status).toLowerCase();
+        const color =
+          status === 'active'
+            ? 'var(--olive-700)'
+            : status === 'inactive'
+              ? 'var(--saffron-700)'
+              : 'var(--ink-500)';
+        return (
+          <span
+            className="num-cell"
+            style={{
+              color,
+              textTransform: 'uppercase',
+              letterSpacing: 'var(--tracking-allcaps)',
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          >
+            {status}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'theorems_contributed',
+      header: 'Theorems',
+      cell: (info) => (
+        <span className="num-cell">{(info.getValue() as number).toLocaleString()}</span>
+      ),
+    },
+    {
+      id: 'lastVerified',
+      header: 'Last verified',
+      cell: (info) => {
+        const w = info.row.original;
+        return (
+          <span className="num-cell" style={{ color: 'var(--ink-500)' }}>
+            {w.last_contribution_at ? formatRelative(w.last_contribution_at) : '—'}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'lastSeen',
+      header: 'Last seen',
+      cell: (info) => {
+        const w = info.row.original;
+        return (
+          <span className="num-cell" style={{ color: 'var(--ink-500)' }}>
+            {formatRelative(w.last_seen)}
+          </span>
+        );
+      },
+    },
+  ];
+
+  const table = useReactTable({
+    data: workers,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    onSortingChange: setSorting,
+    state: { sorting },
+  });
+
+  return (
+    <table className="lead-table">
+      <thead>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <tr key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <th
+                key={header.id}
+                style={{
+                  textAlign: 'right',
+                  cursor: header.column.getCanSort() ? 'pointer' : 'default',
+                }}
+                onClick={header.column.getToggleSortingHandler()}
+              >
+                {header.isPlaceholder ? null : header.column.columnDef.header}
+                {header.column.getIsSorted() === 'asc' ? ' ↑' : null}
+                {header.column.getIsSorted() === 'desc' ? ' ↓' : null}
+              </th>
+            ))}
+          </tr>
+        ))}
+      </thead>
+      <tbody>
+        {table.getRowModel().rows.map((row) => (
+          <tr key={row.id}>
+            {row.getVisibleCells().map((cell) => (
+              <td
+                key={cell.id}
+                className="num-cell"
+                style={{ textAlign: 'right' }}
+              >
+                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -137,75 +297,6 @@ function FilterTab({
     >
       {children}
     </button>
-  );
-}
-
-function WorkerRow({ w }: { w: Worker }) {
-  const status = String(w.status).toLowerCase();
-  const ownerLabel =
-    w.owner?.display_name ?? (w.owner?.handle ? `@${w.owner.handle}` : null) ?? 'Anonymous';
-  const ownerColor = w.owner ? 'var(--ink-900)' : 'var(--ink-500)';
-  const ownerStyle: React.CSSProperties = w.owner
-    ? { fontFamily: 'var(--font-serif)', fontSize: 14 }
-    : { fontStyle: 'italic', color: 'var(--ink-500)' };
-  return (
-    <tr>
-      <td className="handle-cell">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: '50%',
-              background:
-                status === 'active'
-                  ? 'var(--olive-500)'
-                  : status === 'inactive'
-                    ? 'var(--saffron-500)'
-                    : 'var(--paper-300)',
-              boxShadow: status === 'active' ? '0 0 0 3px var(--olive-50)' : 'none',
-            }}
-          />
-          {w.id}
-        </div>
-      </td>
-      <td style={ownerStyle}>
-        <span style={{ color: ownerColor }}>{ownerLabel}</span>
-      </td>
-      <td
-        style={{
-          color: 'var(--ink-500)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12,
-        }}
-      >
-        {w.host ?? '—'}
-      </td>
-      <td
-        className="num-cell"
-        style={{
-          color:
-            status === 'active'
-              ? 'var(--olive-700)'
-              : status === 'inactive'
-                ? 'var(--saffron-700)'
-                : 'var(--ink-500)',
-          textTransform: 'uppercase',
-          letterSpacing: 'var(--tracking-allcaps)',
-          fontSize: 11,
-          fontWeight: 600,
-        }}
-      >
-        {status}
-      </td>
-      <td className="num-cell">{w.theorems_contributed.toLocaleString()}</td>
-      <td className="num-cell" style={{ color: 'var(--ink-500)' }}>
-        {w.last_contribution_at ? formatRelative(w.last_contribution_at) : '—'}
-      </td>
-      <td className="num-cell" style={{ color: 'var(--ink-500)' }}>
-        {formatRelative(w.last_seen)}
-      </td>
-    </tr>
   );
 }
 

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useRef, useState } from 'react';
 import { FacetSidebar } from '~/components/browse/FacetSidebar';
 import { ResultCard } from '~/components/browse/ResultCard';
 import { AppFooter } from '~/components/platform/AppFooter';
@@ -24,6 +25,16 @@ function BrowsePage() {
       apiFetch<TheoremListResponse>(
         domain ? `/api/theorems?domain=${domain}&limit=50` : `/api/theorems/recent?limit=50`,
       ),
+  });
+
+  const parentRef = useRef<HTMLDivElement>(null);
+  const theorems = list.data?.theorems ?? [];
+
+  const virtualizer = useVirtualizer({
+    count: theorems.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 120, // Estimated height of each ResultCard
+    overscan: 5,
   });
 
   return (
@@ -56,9 +67,41 @@ function BrowsePage() {
                 </span>
               </div>
               {list.isPending && <p style={{ color: 'var(--ink-500)' }}>loading…</p>}
-              {list.data?.theorems.map((t) => (
-                <ResultCard key={bytesToHex(t.id)} thm={t} />
-              ))}
+              {!list.isPending && theorems.length > 0 && (
+                <div
+                  ref={parentRef}
+                  style={{
+                    height: 'calc(100vh - 300px)',
+                    overflow: 'auto',
+                  }}
+                >
+                  <div
+                    style={{
+                      height: `${virtualizer.getTotalSize()}px`,
+                      width: '100%',
+                      position: 'relative',
+                    }}
+                  >
+                    {virtualizer.getVirtualItems().map((virtualItem) => {
+                      const theorem = theorems[virtualItem.index];
+                      return (
+                        <div
+                          key={bytesToHex(theorem.id)}
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            transform: `translateY(${virtualItem.start}px)`,
+                          }}
+                        >
+                          <ResultCard thm={theorem} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

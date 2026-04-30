@@ -1,5 +1,6 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
-import { type CSSProperties, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { type CSSProperties, useRef, useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { bytesToHex } from '~/lib/hex';
@@ -33,10 +34,19 @@ function LibraryPage() {
   const folders = useLibraryFolders();
   const saved = useSavedSearches();
 
+  const virtualListRef = useRef<HTMLDivElement>(null);
+  const savedTheorems = lib.data?.saved ?? [];
+
+  const virtualizer = useVirtualizer({
+    count: savedTheorems.length,
+    getScrollElement: () => virtualListRef.current,
+    estimateSize: () => 80,
+    overscan: 5,
+  });
+
   if (me.isPending) return null;
   if (!me.data) throw redirect({ to: '/signin' });
 
-  const savedTheorems = lib.data?.saved ?? [];
   const allFolders = folders.data?.folders ?? [];
   const totalCount = lib.data?.count ?? 0;
   const limit = lib.data?.limit ?? 50;
@@ -118,11 +128,39 @@ function LibraryPage() {
                     )}
                   </EmptyState>
                 ) : (
-                  <ul className="saved-list">
-                    {savedTheorems.map((s) => (
-                      <SavedTheoremItem key={bytesToHex(s.theorem.id)} row={s} folders={allFolders} />
-                    ))}
-                  </ul>
+                  <div
+                    ref={virtualListRef}
+                    style={{
+                      height: 'calc(100vh - 400px)',
+                      overflow: 'auto',
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: `${virtualizer.getTotalSize()}px`,
+                        width: '100%',
+                        position: 'relative',
+                      }}
+                    >
+                      {virtualizer.getVirtualItems().map((virtualItem) => {
+                        const row = savedTheorems[virtualItem.index];
+                        return (
+                          <div
+                            key={bytesToHex(row.theorem.id)}
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              transform: `translateY(${virtualItem.start}px)`,
+                            }}
+                          >
+                            <SavedTheoremItem row={row} folders={allFolders} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -417,7 +455,6 @@ function SavedTheoremItem({
         {noteEdit ? (
           <input
             value={noteValue}
-            autoFocus
             onChange={(e) => setNoteValue(e.target.value)}
             onBlur={() => {
               patch.mutate({
