@@ -262,9 +262,10 @@ function Landing() {
                 Run a worker. <em>Help physics rediscover itself.</em>
               </h2>
               <p className="section-lede">
-                Four steps — key, Lean, download, run. Your machine starts mutating axioms in
-                minutes. Every theorem your node verifies and the server accepts gets your pseudonym
-                attached, forever.
+                Two steps. One command. Your machine starts mutating axioms in minutes — the
+                installer detects your platform, fetches the right binary, and starts the worker.
+                Every theorem it verifies and the server accepts gets your pseudonym attached,
+                forever.
               </p>
             </div>
           </div>

@@ -1,10 +1,12 @@
 import { Link } from '@tanstack/react-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { type ArchKind, detectPlatform, type OsKind } from './RunWorker.platform';
 import { runWorkerFixture } from './run-worker.fixture';
 import { TerminalPreview } from './TerminalPreview';
 
 const RELEASE_BASE = 'https://github.com/Nasdin/nasrudin/releases/latest/download';
+const INSTALL_SH = 'https://nasrudin.org/install.sh';
+const INSTALL_PS1 = 'https://nasrudin.org/install.ps1';
 
 interface Build {
   os: OsKind;
@@ -54,8 +56,10 @@ const BUILDS: Build[] = [
 
 const ELAN_UNIX =
   'curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y';
-const ELAN_WIN =
-  'iwr -useb https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 | iex';
+const ELAN_WIN = 'iwr -useb https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 | iex';
+
+const ONELINE_UNIX = `curl -fsSL ${INSTALL_SH} | NASRUDIN_WORKER_KEY=nsk_worker_… bash`;
+const ONELINE_WIN = `$env:NASRUDIN_WORKER_KEY="nsk_worker_…"; iwr -useb ${INSTALL_PS1} | iex`;
 
 // Maps the platform-detection model (which uses canonical UA-friendly names
 // like "macos" and "aarch64") to the names used by build-worker-all.sh,
@@ -130,9 +134,20 @@ function PrimaryCard({ build, detected }: { build: Build; detected: boolean }) {
 
 export function RunWorker() {
   const detected = useMemo(() => detectPlatform(), []);
+  const [showManual, setShowManual] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [installTab, setInstallTab] = useState<'unix' | 'win'>('unix');
   const [runTab, setRunTab] = useState<'unix' | 'win'>('unix');
   const [leanTab, setLeanTab] = useState<'unix' | 'win'>('unix');
+
+  // Default the install + run tabs to whatever the user's platform is, post-hydration.
+  useEffect(() => {
+    if (detected?.os === 'windows') {
+      setInstallTab('win');
+      setRunTab('win');
+      setLeanTab('win');
+    }
+  }, [detected]);
 
   const macBuild = BUILDS.find(
     (b) => b.os === 'macos' && b.arch === (detected?.os === 'macos' ? detected.arch : 'aarch64'),
@@ -156,7 +171,7 @@ export function RunWorker() {
               <h3>Get a worker key</h3>
               <p>
                 Sign in, then open <Link to="/api-keys">/api-keys</Link> → "+ New key" → Kind:{' '}
-                <em>Worker</em>. Save the <code>nsk_worker_…</code> value.
+                <em>Worker</em>. Copy the <code>nsk_worker_…</code> value.
               </p>
               <Link to="/api-keys" className="btn btn-secondary">
                 Open /api-keys →
@@ -167,55 +182,36 @@ export function RunWorker() {
           <li className="run-worker-step">
             <div className="run-worker-step-num">2</div>
             <div className="run-worker-step-body">
-              <h3>Install the Lean toolchain (one-time, ~200 MB)</h3>
+              <h3>Paste this into your terminal</h3>
               <div className="lead-tabs run-worker-tabs">
                 <button
                   type="button"
-                  className={`lead-tab ${leanTab === 'unix' ? 'active' : ''}`}
-                  onClick={() => setLeanTab('unix')}
+                  className={`lead-tab ${installTab === 'unix' ? 'active' : ''}`}
+                  onClick={() => setInstallTab('unix')}
                 >
                   macOS / Linux
                 </button>
                 <button
                   type="button"
-                  className={`lead-tab ${leanTab === 'win' ? 'active' : ''}`}
-                  onClick={() => setLeanTab('win')}
+                  className={`lead-tab ${installTab === 'win' ? 'active' : ''}`}
+                  onClick={() => setInstallTab('win')}
                 >
                   Windows (PowerShell)
                 </button>
               </div>
-              <CodeBlock>{leanTab === 'unix' ? ELAN_UNIX : ELAN_WIN}</CodeBlock>
-            </div>
-          </li>
-
-          <li className="run-worker-step">
-            <div className="run-worker-step-num">3</div>
-            <div className="run-worker-step-body">
-              <h3>Download for your platform</h3>
-              <div className="run-worker-cards">
-                <PrimaryCard build={macBuild} detected={detected?.os === 'macos'} />
-                <PrimaryCard build={linuxBuild} detected={detected?.os === 'linux'} />
-                <PrimaryCard build={winBuild} detected={detected?.os === 'windows'} />
-              </div>
-              <button
-                type="button"
-                className="run-worker-disclosure"
-                onClick={() => setShowAll((v) => !v)}
+              <CodeBlock>{installTab === 'unix' ? ONELINE_UNIX : ONELINE_WIN}</CodeBlock>
+              <p className="margin-note" style={{ marginTop: 12 }}>
+                One command. The script detects your platform, installs the Lean toolchain if it
+                isn't already there, downloads the matching binary from this repo's latest release,
+                verifies its SHA-256, and starts the worker.
+              </p>
+              <p
+                className="margin-note"
+                style={{ marginTop: 8, fontSize: 12, color: 'var(--ink-500)' }}
               >
-                {showAll ? '▾' : '▸'} Show all builds ({BUILDS.length})
-              </button>
-              {showAll && (
-                <ul className="run-worker-all-builds">
-                  {BUILDS.map((b) => (
-                    <li key={`${b.os}-${b.arch}`}>
-                      <span className="run-worker-build-label">{b.label}</span>
-                      <span className="run-worker-build-arch">({b.archLabel})</span>
-                      <a href={downloadUrl(b)}>.{b.ext}</a>
-                      <a href={shaUrl(b)}>sha256</a>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                First run warms the Mathlib cache (a few minutes); subsequent runs reuse it.
+                Ctrl+C is clean.
+              </p>
             </div>
           </li>
         </ol>
@@ -225,35 +221,100 @@ export function RunWorker() {
           <TerminalPreview fixture={runWorkerFixture} />
         </div>
 
-        <ol className="run-worker-steps" start={4}>
-          <li className="run-worker-step">
-            <div className="run-worker-step-num">4</div>
-            <div className="run-worker-step-body">
-              <h3>Extract and run</h3>
-              <div className="lead-tabs run-worker-tabs">
-                <button
-                  type="button"
-                  className={`lead-tab ${runTab === 'unix' ? 'active' : ''}`}
-                  onClick={() => setRunTab('unix')}
-                >
-                  macOS / Linux
-                </button>
-                <button
-                  type="button"
-                  className={`lead-tab ${runTab === 'win' ? 'active' : ''}`}
-                  onClick={() => setRunTab('win')}
-                >
-                  Windows (PowerShell)
-                </button>
-              </div>
-              <CodeBlock>{runTab === 'unix' ? extractRunUnix(myBuild) : EXTRACT_RUN_WIN}</CodeBlock>
-              <p className="margin-note" style={{ marginTop: 12 }}>
-                First run warms the Mathlib cache (a few minutes); next runs reuse it. Ctrl+C is
-                clean.
-              </p>
-            </div>
-          </li>
-        </ol>
+        <button
+          type="button"
+          className="run-worker-disclosure"
+          onClick={() => setShowManual((v) => !v)}
+        >
+          {showManual ? '▾' : '▸'} Manual install (download bundle yourself, no curl-pipe-bash)
+        </button>
+
+        {showManual && (
+          <div className="run-worker-manual">
+            <ol className="run-worker-steps" start={3}>
+              <li className="run-worker-step">
+                <div className="run-worker-step-num">3</div>
+                <div className="run-worker-step-body">
+                  <h3>Install the Lean toolchain (one-time, ~200 MB)</h3>
+                  <div className="lead-tabs run-worker-tabs">
+                    <button
+                      type="button"
+                      className={`lead-tab ${leanTab === 'unix' ? 'active' : ''}`}
+                      onClick={() => setLeanTab('unix')}
+                    >
+                      macOS / Linux
+                    </button>
+                    <button
+                      type="button"
+                      className={`lead-tab ${leanTab === 'win' ? 'active' : ''}`}
+                      onClick={() => setLeanTab('win')}
+                    >
+                      Windows (PowerShell)
+                    </button>
+                  </div>
+                  <CodeBlock>{leanTab === 'unix' ? ELAN_UNIX : ELAN_WIN}</CodeBlock>
+                </div>
+              </li>
+
+              <li className="run-worker-step">
+                <div className="run-worker-step-num">4</div>
+                <div className="run-worker-step-body">
+                  <h3>Download the bundle for your platform</h3>
+                  <div className="run-worker-cards">
+                    <PrimaryCard build={macBuild} detected={detected?.os === 'macos'} />
+                    <PrimaryCard build={linuxBuild} detected={detected?.os === 'linux'} />
+                    <PrimaryCard build={winBuild} detected={detected?.os === 'windows'} />
+                  </div>
+                  <button
+                    type="button"
+                    className="run-worker-disclosure"
+                    onClick={() => setShowAll((v) => !v)}
+                  >
+                    {showAll ? '▾' : '▸'} Show all builds ({BUILDS.length})
+                  </button>
+                  {showAll && (
+                    <ul className="run-worker-all-builds">
+                      {BUILDS.map((b) => (
+                        <li key={`${b.os}-${b.arch}`}>
+                          <span className="run-worker-build-label">{b.label}</span>
+                          <span className="run-worker-build-arch">({b.archLabel})</span>
+                          <a href={downloadUrl(b)}>.{b.ext}</a>
+                          <a href={shaUrl(b)}>sha256</a>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </li>
+
+              <li className="run-worker-step">
+                <div className="run-worker-step-num">5</div>
+                <div className="run-worker-step-body">
+                  <h3>Extract and run</h3>
+                  <div className="lead-tabs run-worker-tabs">
+                    <button
+                      type="button"
+                      className={`lead-tab ${runTab === 'unix' ? 'active' : ''}`}
+                      onClick={() => setRunTab('unix')}
+                    >
+                      macOS / Linux
+                    </button>
+                    <button
+                      type="button"
+                      className={`lead-tab ${runTab === 'win' ? 'active' : ''}`}
+                      onClick={() => setRunTab('win')}
+                    >
+                      Windows (PowerShell)
+                    </button>
+                  </div>
+                  <CodeBlock>
+                    {runTab === 'unix' ? extractRunUnix(myBuild) : EXTRACT_RUN_WIN}
+                  </CodeBlock>
+                </div>
+              </li>
+            </ol>
+          </div>
+        )}
       </div>
 
       <aside className="install-side run-worker-aside">
