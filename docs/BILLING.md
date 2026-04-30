@@ -30,17 +30,33 @@ Setting any of these wrong won't crash the boot — `BillingClient::from_env()` 
 
 ---
 
-## First-time setup (Stripe dashboard, test mode)
+## Provisioned resources
 
-**Test-mode resources are already provisioned for this project** (test API
-key + product + prices live in `.env`):
+Both modes (test + live) are set up. Concrete product / price / Payment
+Link IDs are in the gitignored env files (this repo is public):
 
-| Resource             | Test-mode id                                |
-|----------------------|---------------------------------------------|
-| Product              | `prod_UQY6z9ugEnCRRI` (Nasrudin Researcher)  |
-| Price (monthly)      | `price_1TRh0fDrlrOn1hRGpS3INgKd` ($19/mo)    |
-| Price (annual, −20%) | `price_1TRh0kDrlrOn1hRGOzY2xrpo` ($182.40/yr)|
-| Portal configuration | `bpc_1TRh0sDrlrOn1hRGULhEcLiF` (default)     |
+- **Local dev (test mode):** `.env` at repo root.
+- **Production (live mode):** `deploy/.env` on the droplet (also kept
+  gitignored locally if you keep a copy for ops).
+
+Resource shape in each mode:
+
+| What                  | Recurring                                     |
+|-----------------------|-----------------------------------------------|
+| Researcher product    | One product, two recurring prices ($19/mo, $182.40/yr) |
+| Sponsor product       | One product, three recurring prices ($5 / $25 / $100 monthly) + one custom-amount one-time price + one hosted Payment Link |
+| Customer Portal       | Default config (cancel-at-period-end, plan switch, payment-method update, invoice history) |
+
+To inspect the exact IDs:
+
+```bash
+# In Stripe MCP-enabled CLI / Claude Code:
+#   list_products / list_prices
+
+# Or via API:
+curl -u $STRIPE_SECRET_KEY: https://api.stripe.com/v1/products
+curl -u $STRIPE_SECRET_KEY: 'https://api.stripe.com/v1/prices?product=prod_…'
+```
 
 To re-create them from scratch (e.g. on a fresh test-mode account):
 
@@ -106,18 +122,62 @@ Save the signing secret as `STRIPE_WEBHOOK_SECRET` in production env.
 
 ## Operational tasks
 
-### Production rollout (test → live)
+### Production rollout (droplet)
 
-1. Re-run dashboard setup in **Live mode** — Products, Prices, Customer Portal config, webhook endpoint all need to be recreated; test-mode objects don't carry over.
-2. Swap env vars on the production deployment:
+Live products / prices / Payment Link are already provisioned (see table
+above) and the IDs are committed to `deploy/.env.example`. What's left:
+
+1. **SSH into the droplet** and edit `/opt/nasrudin/deploy/.env` (or
+   wherever `docker-compose.yml` reads from). Add:
    ```
-   STRIPE_SECRET_KEY=sk_live_…
-   STRIPE_WEBHOOK_SECRET=whsec_… (from the live-mode webhook endpoint)
-   STRIPE_PRICE_RESEARCHER_MONTHLY=price_… (live)
-   STRIPE_PRICE_RESEARCHER_ANNUAL=price_… (live)
+   STRIPE_SECRET_KEY=sk_live_…             # from dashboard.stripe.com/apikeys (Live mode)
+   STRIPE_WEBHOOK_SECRET=whsec_…           # from step 2 below
    ```
-3. Deploy. The first Checkout session opened against the live keys creates a real Stripe Customer for the user.
-4. Verify the live webhook delivers by triggering a test in the dashboard or running through a real signup with a real card.
+   The price IDs and redirect URLs are already in `.env.example`; copy
+   them through unless you've changed them.
+
+2. **Create the live webhook endpoint**:
+   - Dashboard → Developers → Webhooks → Add endpoint
+   - URL: `https://api.nasrudin.org/api/billing/webhook`
+   - Events: `customer.subscription.created`, `customer.subscription.updated`,
+     `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`
+   - Copy the signing secret (`whsec_…`) into `STRIPE_WEBHOOK_SECRET` from step 1.
+
+3. **Configure Customer Portal in live mode** (Settings → Billing → Customer
+   portal). Match what we did in test:
+   - Allow cancellation: at end of period
+   - Allow plan switching: monthly ↔ annual
+   - Allow payment-method updates
+   - Show invoice history
+   - Default return URL: `https://nasrudin.org/profile`
+
+4. **Enable Stripe Tax** (Settings → Tax → enable). Required so EU/UK VAT
+   is collected on Checkout. Add tax registrations as you cross thresholds.
+
+5. **Activate payment methods** if needed (Settings → Payment methods).
+   At minimum cards must be on; Apple Pay / Google Pay / Link are
+   recommended for conversion. Currently the live Sponsor Payment Link is
+   `card`-only because that's all that was active when it was created;
+   recreate it with broader `payment_method_types` once more methods are on.
+
+6. **Restart the API service** so the new env vars get read:
+   ```
+   sudo systemctl restart nasrudin-api    # native systemd
+   # or
+   docker compose -f /opt/nasrudin/deploy/docker-compose.yml up -d api
+   ```
+
+7. **Smoke-test with a real card**:
+   - Visit `https://nasrudin.org/pricing`, click Researcher → Start subscription.
+   - Use your own card (or stripe-cli `trigger` against live mode if you
+     don't want real charges; but reverse them via dashboard refund).
+   - Verify in psql that `users.plan_tier` flipped to `researcher` and
+     `current_period_end` is set ~1 month out.
+
+### Switching back to test mode (local dev)
+
+`.env` (project root) holds the test-mode IDs already. `just dev-engine`
+reads it. The `deploy/.env.example` only affects the droplet.
 
 ### Pricing changes
 
