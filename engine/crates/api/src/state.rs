@@ -147,6 +147,21 @@ pub struct AppState {
     pub firebase_project_id: Option<String>,
     /// Lazily-fetched Google JWKs, used to verify Firebase ID tokens.
     pub firebase_jwks: Arc<crate::firebase_auth::JwksCache>,
+
+    // ── Admin panel + trust bypass ────────────────────────────────────
+    /// Trust-decision cache keyed by `api_keys.id`. 30 s TTL, 4096
+    /// capacity. Populated lazily by the ingest path; invalidated
+    /// surgically via `trust_invalidation_tx` when admin endpoints
+    /// mutate trust state.
+    pub trust_cache: crate::trust::TrustCache,
+    /// Broadcast channel for cache invalidation. Admin handlers post
+    /// `CacheInvalidation::{ApiKey,User,All}` after committing a trust
+    /// mutation; a single tokio task subscribes and purges.
+    pub trust_invalidation_tx:
+        tokio::sync::broadcast::Sender<crate::trust::CacheInvalidation>,
+    /// Default spot-check rate (`TRUSTED_SPOT_CHECK_RATE` env var).
+    /// Used when neither the api_key nor the user has an override set.
+    pub trusted_spot_check_rate: u32,
 }
 
 /// Cache key for the `/api/seed` JSON response cache. Distinct

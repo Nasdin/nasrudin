@@ -412,6 +412,18 @@ async fn main() -> anyhow::Result<()> {
         started_at: chrono::Utc::now(),
     };
 
+    // Trust-bypass plumbing (admin panel).
+    let trust_cache = physics_api::trust::TrustCache::new(
+        std::time::Duration::from_secs(30),
+        4096,
+    );
+    let (trust_invalidation_tx, _) =
+        tokio::sync::broadcast::channel::<physics_api::trust::CacheInvalidation>(256);
+    let trusted_spot_check_rate: u32 = std::env::var("TRUSTED_SPOT_CHECK_RATE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+
     let state = Arc::new(AppState {
         db,
         pg,
@@ -440,7 +452,38 @@ async fn main() -> anyhow::Result<()> {
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
         firebase_project_id,
         firebase_jwks,
+        trust_cache: trust_cache.clone(),
+        trust_invalidation_tx: trust_invalidation_tx.clone(),
+        trusted_spot_check_rate,
     });
+
+    // Trust-cache invalidation listener: subscribed to the same broadcast
+    // channel; purges affected entries when admin endpoints commit a
+    // trust-altering mutation. Surgical for ApiKey/User; wholesale for All.
+    {
+        let cache = trust_cache.clone();
+        let mut rx = trust_invalidation_tx.subscribe();
+        let pg_for_listener = state.pg.clone();
+        tokio::spawn(async move {
+            use physics_api::trust::CacheInvalidation as I;
+            while let Ok(msg) = rx.recv().await {
+                match msg {
+                    I::ApiKey(id) => cache.invalidate(&id),
+                    I::User(user_id) => {
+                        if let Some(pg) = &pg_for_listener
+                            && let Ok(rows) =
+                                nasrudin_pg::query::api_keys::list_by_user(pg, user_id).await
+                        {
+                            for r in rows {
+                                cache.invalidate(&r.id);
+                            }
+                        }
+                    }
+                    I::All => cache.purge_all(),
+                }
+            }
+        });
+    }
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
     if let Some(ref reverify) = state.reverify {

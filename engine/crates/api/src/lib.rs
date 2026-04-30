@@ -19,3 +19,4 @@ pub mod rate_limit;
 pub mod reverify;
 pub mod state;
 pub mod steerer;
+pub mod trust;

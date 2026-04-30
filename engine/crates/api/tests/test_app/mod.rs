@@ -199,6 +199,12 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         firebase_jwks: opts
             .firebase_jwks
             .unwrap_or_else(|| Arc::new(physics_api::firebase_auth::JwksCache::new())),
+        trust_cache: physics_api::trust::TrustCache::new(
+            std::time::Duration::from_secs(30),
+            128,
+        ),
+        trust_invalidation_tx: tokio::sync::broadcast::channel(16).0,
+        trusted_spot_check_rate: 50,
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the
