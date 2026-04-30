@@ -22,32 +22,55 @@ use serde_json::Value;
 /// Returns `true` if any field was applied — useful for logging the
 /// effective config at chunk boundaries.
 pub fn apply_steering_knobs(cfg: &mut DiscoveryConfig, steering: &Value) -> bool {
+    let mut applied = false;
+
+    // mutation_knobs (population-level): nested object. Missing/null
+    // is fine — leave cfg as-is. mutation_priors lives at config-level
+    // and is handled separately below.
     let knobs = steering
         .get("config")
-        .and_then(|c| c.get("mutation_knobs"));
-    let Some(knobs) = knobs else { return false };
-    if knobs.is_null() {
-        return false;
+        .and_then(|c| c.get("mutation_knobs"))
+        .filter(|v| !v.is_null());
+    if let Some(knobs) = knobs {
+        if let Some(rate) = knobs.get("rate").and_then(Value::as_f64) {
+            cfg.mutation_rate = rate.clamp(0.05, 0.30);
+            applied = true;
+        }
+        if let Some(pop) = knobs.get("population_size").and_then(Value::as_u64) {
+            cfg.population_size = pop.clamp(32, 512) as usize;
+            applied = true;
+        }
+        if let Some(bias) = knobs.get("suffix_bias").and_then(Value::as_f64) {
+            cfg.suffix_bias = bias.clamp(0.0, 1.0) as f32;
+            applied = true;
+        }
+        if let Some(elite) = knobs.get("elitism_fraction").and_then(Value::as_f64) {
+            cfg.elitism_fraction = elite.clamp(0.0, 0.2) as f32;
+            applied = true;
+        }
     }
 
-    let mut applied = false;
-    if let Some(rate) = knobs.get("rate").and_then(Value::as_f64) {
-        let clamped = rate.clamp(0.05, 0.30);
-        cfg.mutation_rate = clamped;
-        applied = true;
-    }
-    if let Some(pop) = knobs.get("population_size").and_then(Value::as_u64) {
-        let clamped = pop.clamp(32, 512) as usize;
-        cfg.population_size = clamped;
-        applied = true;
-    }
-    if let Some(bias) = knobs.get("suffix_bias").and_then(Value::as_f64) {
-        cfg.suffix_bias = bias.clamp(0.0, 1.0) as f32;
-        applied = true;
-    }
-    if let Some(elite) = knobs.get("elitism_fraction").and_then(Value::as_f64) {
-        cfg.elitism_fraction = elite.clamp(0.0, 0.2) as f32;
-        applied = true;
+    // mutation_priors is a sibling of mutation_knobs (NOT nested) and
+    // is read independently — the LLM may emit priors without knobs
+    // (e.g. in scope=B where knobs are locked but per-operator bias
+    // still helps). Each value clamped to [0.0, 2.0]; empty map →
+    // leave cfg.mutation_priors as None so the GA's uniform fallback
+    // kicks in.
+    let priors = steering
+        .get("config")
+        .and_then(|c| c.get("mutation_priors"))
+        .and_then(|p| p.as_object());
+    if let Some(map) = priors {
+        let mut h = std::collections::HashMap::new();
+        for (k, v) in map {
+            if let Some(f) = v.as_f64() {
+                h.insert(k.clone(), f.clamp(0.0, 2.0) as f32);
+            }
+        }
+        if !h.is_empty() {
+            cfg.mutation_priors = Some(h);
+            applied = true;
+        }
     }
 
     applied
@@ -122,5 +145,63 @@ mod tests {
         apply_steering_knobs(&mut cfg, &s);
         assert!((cfg.mutation_rate - 0.05).abs() < 1e-9);
         assert_eq!(cfg.population_size, 32);
+    }
+
+    #[test]
+    fn applies_mutation_priors() {
+        let mut cfg = base();
+        let s = serde_json::json!({
+            "config": {
+                "scope": "C",
+                "mutation_knobs": {
+                    "rate": 0.10,
+                    "suffix_bias": 0.0,
+                    "population_size": 64,
+                    "elitism_fraction": 0.05
+                },
+                "mutation_priors": {
+                    "append_productive_suffix": 2.0,
+                    "insert_random": 0.5
+                }
+            }
+        });
+        apply_steering_knobs(&mut cfg, &s);
+        let priors = cfg
+            .mutation_priors
+            .as_ref()
+            .expect("priors should be set");
+        assert!(
+            (priors
+                .get("append_productive_suffix")
+                .copied()
+                .unwrap_or(0.0)
+                - 2.0)
+                .abs()
+                < 1e-6
+        );
+        assert!(
+            (priors.get("insert_random").copied().unwrap_or(0.0) - 0.5).abs() < 1e-6
+        );
+    }
+
+    #[test]
+    fn missing_mutation_priors_leaves_field_none() {
+        let mut cfg = base();
+        let s = serde_json::json!({"config": {"scope": "C", "mutation_knobs": null}});
+        apply_steering_knobs(&mut cfg, &s);
+        assert!(cfg.mutation_priors.is_none());
+    }
+
+    #[test]
+    fn clamps_mutation_prior_above_two() {
+        let mut cfg = base();
+        let s = serde_json::json!({
+            "config": {
+                "mutation_priors": { "insert_random": 5.0 }
+            }
+        });
+        apply_steering_knobs(&mut cfg, &s);
+        let priors = cfg.mutation_priors.as_ref().unwrap();
+        assert!((priors.get("insert_random").copied().unwrap_or(0.0) - 2.0).abs() < 1e-6);
     }
 }
