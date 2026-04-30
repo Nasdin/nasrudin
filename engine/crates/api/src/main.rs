@@ -720,6 +720,14 @@ async fn main() -> anyhow::Result<()> {
         let auth_strict = Router::new()
             .route("/api/auth/register", axum::routing::post(auth::register))
             .route("/api/auth/login", axum::routing::post(auth::login))
+            .route(
+                "/api/auth/github/start",
+                get(physics_api::auth_oauth::start),
+            )
+            .route(
+                "/api/auth/github/callback",
+                get(physics_api::auth_oauth::callback),
+            )
             .layer(GovernorLayer::new(rate_limit::auth_strict()));
 
         // Auth-session: lightweight session ops (30 req/min, burst 10)
