@@ -16,6 +16,10 @@ pub struct Model {
     pub stripe_subscription_id: Option<String>,
     pub current_period_end: Option<DateTimeWithTimeZone>,
     pub plan_cycle_start: Option<DateTimeWithTimeZone>,
+    /// $19/mo Researcher tier credit ledger. One credit is debited
+    /// when a paid `conjecture_jobs` row is created and refunded on
+    /// cancel-before-progress or zero-result `budget_exhausted`.
+    pub research_credits: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

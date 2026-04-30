@@ -44,6 +44,10 @@ pub async fn create(db: &DatabaseConnection, input: CreateInput) -> Result<Uuid,
         created_at: Set(chrono::Utc::now().into()),
         completed_at: Set(None),
         paper_draft: Set(None),
+        lake_slot_hours_quota: Set(96),
+        lake_slot_hours_consumed: Set(0.0),
+        slice_priority: Set(5),
+        tier: Set("researcher".into()),
     };
     am.insert(db).await?;
     Ok(id)

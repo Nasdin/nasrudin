@@ -16,6 +16,9 @@ mod m20260901_000009_manual_verifications;
 mod m20260901_000010_worker_reputation;
 mod m20260901_000011_worker_verified;
 mod m20260430_000013_conjecture_paper_draft;
+mod m20260501_000001_cluster_steering;
+mod m20260501_000002_paid_job_quota;
+mod m20260501_000003_research_credits;
 
 pub struct Migrator;
 
@@ -39,6 +42,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260901_000010_worker_reputation::Migration),
             Box::new(m20260901_000011_worker_verified::Migration),
             Box::new(m20260430_000013_conjecture_paper_draft::Migration),
+            Box::new(m20260501_000001_cluster_steering::Migration),
+            Box::new(m20260501_000002_paid_job_quota::Migration),
+            Box::new(m20260501_000003_research_credits::Migration),
         ]
     }
 }

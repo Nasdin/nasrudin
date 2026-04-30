@@ -1,6 +1,7 @@
 pub mod api_keys;
 pub mod api_usage_daily;
 pub mod billing_events;
+pub mod cluster_steering;
 pub mod conjecture_events;
 pub mod conjecture_jobs;
 pub mod saved_searches;

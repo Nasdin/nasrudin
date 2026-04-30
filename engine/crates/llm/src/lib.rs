@@ -6,6 +6,7 @@
 
 pub mod anthropic;
 pub mod encryption;
+pub mod gradient;
 pub mod ollama;
 pub mod openai;
 pub mod provider;
@@ -13,6 +14,7 @@ pub mod registry;
 
 pub use anthropic::AnthropicProvider;
 pub use encryption::{decrypt, encrypt, key_hint, EncryptedKey};
+pub use gradient::GradientProvider;
 pub use ollama::OllamaProvider;
 pub use openai::OpenAiProvider;
 pub use provider::{

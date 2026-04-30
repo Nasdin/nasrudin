@@ -21,6 +21,7 @@ pub async fn create_user(
         stripe_subscription_id: Set(None),
         current_period_end: Set(None),
         plan_cycle_start: Set(None),
+        research_credits: Set(0),
     };
     model.insert(db).await
 }

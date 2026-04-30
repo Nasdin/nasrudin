@@ -34,6 +34,16 @@ pub struct Model {
     /// requests one; populated incrementally as the LLM streams.
     #[sea_orm(column_type = "Text", nullable)]
     pub paper_draft: Option<String>,
+    /// Hard ceiling on lake-build slot-hours the cluster will spend
+    /// on this conjecture (default 96 = 4 slots × 24h).
+    pub lake_slot_hours_quota: i32,
+    /// Slot-hours debited via heartbeats. Server caps the per-tick
+    /// delta at `2 × wallclock_h × slots_held` to defeat lying workers.
+    pub lake_slot_hours_consumed: f32,
+    /// Queue ordering: highest first. Free baseline is 5.
+    pub slice_priority: i32,
+    /// Plan ownership ("researcher" today; future tiers extend).
+    pub tier: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
