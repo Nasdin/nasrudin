@@ -4,12 +4,15 @@
 //! All five endpoints are POST and authenticate with the worker's
 //! `nsk_worker_…` API key. `claim` returns 204 NoContent when nothing
 //! is queued; the worker can then fall back to background corpus-fill.
+//!
+//! Transport is `WorkerHttp` so this client works equally over TCP and
+//! the unix socket trust-bypass entry point.
 
-use anyhow::{Context, Result};
-use reqwest::Client;
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use uuid::Uuid;
+
+use crate::worker_http::WorkerHttp;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClaimedJob {
@@ -49,7 +52,7 @@ pub struct SubmitBody {
     pub theorem: SubmitTheorem,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct SubmitResponse {
     pub theorem_id: String,
     pub canonical_hash: String,
@@ -66,69 +69,80 @@ pub struct CompleteBody {
 pub struct ResearchClient {
     pub api_url: String,
     pub worker_key: String,
-    http: Client,
+    http: WorkerHttp,
 }
 
 impl ResearchClient {
     pub fn new(api_url: String, worker_key: String) -> Self {
+        let http = WorkerHttp::from_env(&api_url).expect("invalid NASRUDIN_API_URL");
         Self {
             api_url,
             worker_key,
-            http: Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("reqwest client"),
+            http,
         }
+    }
+
+    fn auth(&self) -> String {
+        format!("Bearer {}", self.worker_key)
     }
 
     /// Returns `Ok(Some(job))` when a conjecture was claimed, `Ok(None)`
     /// when the queue is empty (HTTP 204), and `Err` for transport errors.
     pub async fn claim(&self) -> Result<Option<ClaimedJob>> {
-        let resp = self
+        let auth = self.auth();
+        let headers = [("authorization", auth.as_str())];
+        let (status, body) = self
             .http
-            .post(format!("{}/api/conjecture/claim", self.api_url))
-            .bearer_auth(&self.worker_key)
-            .send()
+            .post_bytes("/api/conjecture/claim", bytes::Bytes::new(), &headers)
             .await
             .context("POST /api/conjecture/claim")?;
-        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+        if status == 204 {
             return Ok(None);
         }
-        let resp = resp.error_for_status()?;
-        Ok(Some(resp.json::<ClaimedJob>().await?))
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("claim failed: {status}"));
+        }
+        let parsed: ClaimedJob =
+            serde_json::from_slice(&body).context("decode ClaimedJob")?;
+        Ok(Some(parsed))
     }
 
     pub async fn heartbeat(&self, id: Uuid, body: &HeartbeatBody) -> Result<()> {
-        self.http
-            .post(format!("{}/api/conjecture/{id}/heartbeat", self.api_url))
-            .bearer_auth(&self.worker_key)
-            .json(body)
-            .send()
-            .await?
-            .error_for_status()?;
+        let auth = self.auth();
+        let headers = [("authorization", auth.as_str())];
+        let (status, _): (u16, serde_json::Value) = self
+            .http
+            .post_json(&format!("/api/conjecture/{id}/heartbeat"), body, &headers)
+            .await?;
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("heartbeat failed: {status}"));
+        }
         Ok(())
     }
 
     pub async fn submit(&self, id: Uuid, body: &SubmitBody) -> Result<SubmitResponse> {
-        let resp = self
+        let auth = self.auth();
+        let headers = [("authorization", auth.as_str())];
+        let (status, parsed): (u16, SubmitResponse) = self
             .http
-            .post(format!("{}/api/conjecture/{id}/submit", self.api_url))
-            .bearer_auth(&self.worker_key)
-            .json(body)
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(resp.json::<SubmitResponse>().await?)
+            .post_json(&format!("/api/conjecture/{id}/submit"), body, &headers)
+            .await?;
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("submit failed: {status}"));
+        }
+        Ok(parsed)
     }
 
     pub async fn complete(&self, id: Uuid, body: &CompleteBody) -> Result<()> {
-        self.http
-            .post(format!("{}/api/conjecture/{id}/complete", self.api_url))
-            .bearer_auth(&self.worker_key)
-            .json(body)
-            .send()
-            .await?
-            .error_for_status()?;
+        let auth = self.auth();
+        let headers = [("authorization", auth.as_str())];
+        let (status, _): (u16, serde_json::Value) = self
+            .http
+            .post_json(&format!("/api/conjecture/{id}/complete"), body, &headers)
+            .await?;
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("complete failed: {status}"));
+        }
         Ok(())
     }
 }

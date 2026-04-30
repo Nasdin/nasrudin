@@ -21,6 +21,13 @@ bloomfilter = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+hyperlocal = "0.9"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "tokio", "http1"] }
+http-body-util = "0.1"
+bytes = { workspace = true }
+url = "2"
+thiserror = { workspace = true }
 instant-distance = { workspace = true }
 bincode = "1"
 num_cpus = { workspace = true }

@@ -1008,22 +1008,102 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(3001);
     let addr = format!("0.0.0.0:{port}");
-    tracing::info!("Listening on {addr}");
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let tcp_listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("Listening on {addr} (TCP)");
 
-    let shutdown_flag = Arc::clone(&shutdown);
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to listen for ctrl+c");
-        tracing::info!("Received shutdown signal, stopping...");
-        shutdown_flag.store(true, Ordering::Relaxed);
-    })
-    .await?;
+    // Unix-domain-socket listener (admin-panel trust-bypass entry point).
+    // The co-located worker connects via `unix:///run/nasrudin/api-local.sock`
+    // and is auto-trusted because Caddy never proxies to this socket.
+    // `NASRUDIN_LOCAL_SOCK_PATH=` (empty string) disables the listener — useful
+    // when running in a container that doesn't share /run with the worker.
+    let sock_path_env = std::env::var("NASRUDIN_LOCAL_SOCK_PATH")
+        .unwrap_or_else(|_| "/run/nasrudin/api-local.sock".to_string());
+    let sock_path: Option<std::path::PathBuf> = if sock_path_env.is_empty() {
+        None
+    } else {
+        Some(sock_path_env.into())
+    };
+
+    let uds_listener: Option<tokio::net::UnixListener> = match sock_path.as_ref() {
+        None => {
+            tracing::info!("Unix socket listener disabled (NASRUDIN_LOCAL_SOCK_PATH=\"\")");
+            None
+        }
+        Some(p) => {
+            if let Some(parent) = p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if p.exists() {
+                let _ = std::fs::remove_file(p);
+            }
+            match tokio::net::UnixListener::bind(p) {
+                Ok(l) => {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = std::fs::metadata(p) {
+                        let mut perms = meta.permissions();
+                        perms.set_mode(0o660);
+                        let _ = std::fs::set_permissions(p, perms);
+                    }
+                    tracing::info!(
+                        "Listening on {} (UDS, mode 0660 — auto-trusted)",
+                        p.display()
+                    );
+                    Some(l)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Could not bind unix socket at {}: {e}. Co-located worker auto-trust disabled.",
+                        p.display()
+                    );
+                    None
+                }
+            }
+        }
+    };
+
+    // Two app instances share routes + state but the UDS variant inserts
+    // a `LocalSocket` extension marker so trust resolution can flip the
+    // request into the bypass path.
+    let tcp_app = app.clone();
+    let uds_app = app.layer(axum::middleware::from_fn(
+        |mut req: axum::extract::Request, next: axum::middleware::Next| async move {
+            req.extensions_mut()
+                .insert(physics_api::trust::LocalSocket);
+            next.run(req).await
+        },
+    ));
+
+    let shutdown_for_tcp = Arc::clone(&shutdown);
+    let shutdown_for_uds = Arc::clone(&shutdown);
+    let tcp_handle = tokio::spawn(async move {
+        let _ = axum::serve(
+            tcp_listener,
+            tcp_app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("Received shutdown signal (TCP)");
+            shutdown_for_tcp.store(true, Ordering::Relaxed);
+        })
+        .await;
+    });
+
+    let uds_handle = uds_listener.map(|listener| {
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, uds_app.into_make_service())
+                .with_graceful_shutdown(async move {
+                    tokio::signal::ctrl_c().await.ok();
+                    tracing::info!("Received shutdown signal (UDS)");
+                    shutdown_for_uds.store(true, Ordering::Relaxed);
+                })
+                .await;
+        })
+    });
+
+    let _ = tcp_handle.await;
+    if let Some(h) = uds_handle {
+        let _ = h.await;
+    }
 
     Ok(())
 }

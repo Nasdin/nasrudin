@@ -18,11 +18,11 @@
 //!
 //! All calls use the worker's `nsk_worker_…` bearer.
 
-use anyhow::{Context, Result};
-use reqwest::Client;
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use uuid::Uuid;
+
+use crate::worker_http::WorkerHttp;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ClaimBody {
@@ -31,7 +31,7 @@ pub struct ClaimBody {
     pub domains_supported: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct PaidJob {
     pub job_id: Uuid,
     pub hunch: String,
@@ -59,7 +59,7 @@ pub struct HeartbeatBody {
     pub current_best_chain_length: i32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct HeartbeatResp {
     #[serde(rename = "continue")]
     pub continue_: bool,
@@ -77,70 +77,89 @@ pub struct MarkProvedBody {
 pub struct PaidJobsClient {
     pub api_url: String,
     pub worker_key: String,
-    http: Client,
+    http: WorkerHttp,
 }
 
 impl PaidJobsClient {
     pub fn new(api_url: String, worker_key: String) -> Self {
+        let http = WorkerHttp::from_env(&api_url).expect("invalid NASRUDIN_API_URL");
         Self {
             api_url,
             worker_key,
-            http: Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("reqwest client"),
+            http,
         }
+    }
+
+    fn auth(&self) -> String {
+        format!("Bearer {}", self.worker_key)
     }
 
     /// `Ok(Some(job))` on award, `Ok(None)` on 204 (queue empty or
     /// explorer floor protection). `Err` is reserved for transport /
     /// auth failures the caller should log + retry on.
     pub async fn claim(&self, body: &ClaimBody) -> Result<Option<PaidJob>> {
-        let resp = self
+        let auth = self.auth();
+        let headers = [("authorization", auth.as_str())];
+        let body_bytes = serde_json::to_vec(body).context("serialize ClaimBody")?;
+        let (status, resp_bytes) = self
             .http
-            .post(format!("{}/api/jobs/claim", self.api_url))
-            .bearer_auth(&self.worker_key)
-            .json(body)
-            .send()
+            .post_bytes(
+                "/api/jobs/claim",
+                body_bytes.into(),
+                &[
+                    ("authorization", auth.as_str()),
+                    ("content-type", "application/json"),
+                ],
+            )
             .await
             .context("POST /api/jobs/claim")?;
-        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+        let _ = headers;
+        if status == 204 {
             return Ok(None);
         }
-        let resp = resp.error_for_status()?;
-        Ok(Some(resp.json::<PaidJob>().await?))
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("claim failed: {status}"));
+        }
+        let parsed: PaidJob = serde_json::from_slice(&resp_bytes).context("decode PaidJob")?;
+        Ok(Some(parsed))
     }
 
     pub async fn heartbeat(&self, id: Uuid, body: &HeartbeatBody) -> Result<HeartbeatResp> {
-        let resp = self
+        let auth = self.auth();
+        let headers = [("authorization", auth.as_str())];
+        let (status, parsed): (u16, HeartbeatResp) = self
             .http
-            .post(format!("{}/api/jobs/{id}/heartbeat", self.api_url))
-            .bearer_auth(&self.worker_key)
-            .json(body)
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(resp.json::<HeartbeatResp>().await?)
+            .post_json(&format!("/api/jobs/{id}/heartbeat"), body, &headers)
+            .await?;
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("heartbeat failed: {status}"));
+        }
+        Ok(parsed)
     }
 
     pub async fn release(&self, id: Uuid) -> Result<()> {
-        self.http
-            .post(format!("{}/api/jobs/{id}/release", self.api_url))
-            .bearer_auth(&self.worker_key)
-            .send()
-            .await?
-            .error_for_status()?;
+        let auth = self.auth();
+        let headers = [("authorization", auth.as_str())];
+        let (status, _) = self
+            .http
+            .post_bytes(&format!("/api/jobs/{id}/release"), bytes::Bytes::new(), &headers)
+            .await?;
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("release failed: {status}"));
+        }
         Ok(())
     }
 
     pub async fn mark_proved(&self, id: Uuid, body: &MarkProvedBody) -> Result<()> {
-        self.http
-            .post(format!("{}/api/jobs/{id}/mark_proved", self.api_url))
-            .bearer_auth(&self.worker_key)
-            .json(body)
-            .send()
-            .await?
-            .error_for_status()?;
+        let auth = self.auth();
+        let headers = [("authorization", auth.as_str())];
+        let (status, _): (u16, serde_json::Value) = self
+            .http
+            .post_json(&format!("/api/jobs/{id}/mark_proved"), body, &headers)
+            .await?;
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("mark_proved failed: {status}"));
+        }
         Ok(())
     }
 }

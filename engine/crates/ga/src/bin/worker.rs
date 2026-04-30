@@ -1256,19 +1256,25 @@ async fn submit_to_api(
             "worker_verified": worker_verified,
         }]
     });
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{api_url}/api/ingest"))
-        .bearer_auth(worker_key)
-        .json(&payload)
-        .send()
+    let http = nasrudin_ga::worker_http::WorkerHttp::from_env(api_url)?;
+    let auth = format!("Bearer {worker_key}");
+    let body_bytes = serde_json::to_vec(&payload)?;
+    let (status, body) = http
+        .post_bytes(
+            "/api/ingest",
+            body_bytes.into(),
+            &[
+                ("authorization", auth.as_str()),
+                ("content-type", "application/json"),
+            ],
+        )
         .await?;
-    let status = resp.status();
-    if status.is_success() || status == reqwest::StatusCode::CONFLICT {
+    // 200..299 success, 409 (CONFLICT) = duplicate, both treat as ok.
+    if (200..300).contains(&status) || status == 409 {
         return Ok(());
     }
-    let body = resp.text().await.unwrap_or_default();
-    anyhow::bail!("ingest failed: {status} body={body}");
+    let body_str = String::from_utf8_lossy(&body);
+    anyhow::bail!("ingest failed: {status} body={body_str}");
 }
 
 /// Translate a Lean module path (e.g.
@@ -1305,19 +1311,20 @@ async fn fetch_and_extend_store(
     use nasrudin_core::Expr;
     use nasrudin_derive::{Axiom, Chain, DerivationContext, RuleStep, strategies::DerivationStrategy};
 
-    let url = if domain.is_empty() {
-        format!("{api_url}/api/seed?top=200")
+    let path = if domain.is_empty() {
+        "/api/seed?top=200".to_string()
     } else {
-        format!("{api_url}/api/seed?domain={domain}&top=200")
+        format!("/api/seed?domain={domain}&top=200")
     };
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()?;
-    let resp = client.get(&url).send().await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("seed http {}: {}", resp.status(), resp.text().await.unwrap_or_default());
+    let http = nasrudin_ga::worker_http::WorkerHttp::from_env(api_url)?;
+    let (status, body_bytes) = http.get_bytes(&path, &[]).await?;
+    if !(200..300).contains(&status) {
+        anyhow::bail!(
+            "seed http {status}: {}",
+            String::from_utf8_lossy(&body_bytes)
+        );
     }
-    let body: serde_json::Value = resp.json().await?;
+    let body: serde_json::Value = serde_json::from_slice(&body_bytes)?;
 
     let mut axioms_added = 0usize;
     if let Some(arr) = body.get("axioms").and_then(|v| v.as_array()) {
@@ -1413,17 +1420,12 @@ async fn fetch_and_extend_store(
 async fn fetch_rejected_canonicals(
     api_url: &str,
 ) -> anyhow::Result<std::collections::HashSet<Vec<u8>>> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()?;
-    let resp = client
-        .get(format!("{api_url}/api/rejected_hashes"))
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("rejected_hashes http {}", resp.status());
+    let http = nasrudin_ga::worker_http::WorkerHttp::from_env(api_url)?;
+    let (status, body_bytes) = http.get_bytes("/api/rejected_hashes", &[]).await?;
+    if !(200..300).contains(&status) {
+        anyhow::bail!("rejected_hashes http {status}");
     }
-    let body: serde_json::Value = resp.json().await?;
+    let body: serde_json::Value = serde_json::from_slice(&body_bytes)?;
     let arr = body
         .get("hashes")
         .and_then(|v| v.as_array())
@@ -1459,26 +1461,28 @@ mod embed_autopull {
     /// One-shot refresh attempt. Returns `Ok(true)` if the index was
     /// actually swapped, `Ok(false)` if no change needed.
     pub async fn maybe_refresh(api_url: &str, local_path: &Path) -> Result<bool> {
-        let cs_url = format!(
-            "{}/api/embed/checksum",
-            api_url.trim_end_matches('/')
-        );
-        let client = reqwest::Client::new();
-        let resp = match client.get(&cs_url).send().await {
+        let http = match nasrudin_ga::worker_http::WorkerHttp::from_env(api_url) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::debug!("embed http build failed: {e}");
+                return Ok(false);
+            }
+        };
+        let (status, body) = match http.get_bytes("/api/embed/checksum", &[]).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::debug!("embed checksum fetch failed: {e}");
                 return Ok(false);
             }
         };
-        if !resp.status().is_success() {
+        if !(200..300).contains(&status) {
             return Ok(false);
         }
         #[derive(serde::Deserialize)]
         struct CsBody {
             hex: String,
         }
-        let cs: CsBody = match resp.json().await {
+        let cs: CsBody = match serde_json::from_slice(&body) {
             Ok(c) => c,
             Err(e) => {
                 tracing::debug!("embed checksum body parse failed: {e}");
@@ -1496,8 +1500,10 @@ mod embed_autopull {
             return Ok(false);
         }
         tracing::info!("embed: local checksum mismatch, downloading new index");
-        let bin_url = format!("{}/api/embed/index.bin", api_url.trim_end_matches('/'));
-        let bytes = client.get(&bin_url).send().await?.bytes().await?;
+        let (bin_status, bytes) = http.get_bytes("/api/embed/index.bin", &[]).await?;
+        if !(200..300).contains(&bin_status) {
+            anyhow::bail!("embed download http {bin_status}");
+        }
         if let Some(parent) = local_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
