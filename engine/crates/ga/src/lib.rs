@@ -18,6 +18,7 @@ pub mod individual;
 pub mod island;
 pub mod mutation;
 pub mod beam;
+pub mod corpus_sync;
 pub mod paid_jobs_client;
 pub mod paid_slice;
 pub mod population;

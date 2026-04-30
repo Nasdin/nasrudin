@@ -159,7 +159,89 @@ async fn main() {
     };
     println!();
 
-    let mut store = AxiomStore::new();
+    // ── Local cold-tier corpus boot ─────────────────────────────────
+    //
+    // Open a worker-local RocksDB at $NASRUDIN_WORKER_ROCKS (defaults
+    // to ~/.local/share/nasrudin-worker/rocks). On first boot the
+    // local corpus is empty; we hydrate from `/api/corpus/dump`
+    // (~150 MB streamed NDJSON, ~30 s on a typical home connection).
+    // Subsequent boots see a populated cold tier and skip the dump.
+    //
+    // This is the load-bearing change for Pi-class workers (1 GB RAM):
+    // the previous in-memory AxiomStore::new() + seed-sync path would
+    // OOM trying to fit the ~195k Mathlib corpus into a HashMap. With
+    // the cold tier, the worker's resident RAM stays bounded by the
+    // RocksDB block cache (64 MB on a Pi) + LRU (~5 MB).
+    //
+    // Opt out for tests / minimal dev runs with NASRUDIN_WORKER_NO_CORPUS=1
+    // — the worker falls back to a hot-only AxiomStore (the GA's
+    // `IntroduceAxiom` pool shrinks to the hand-coded postulates +
+    // peer-verified theorems from /api/seed, which is fine for sr/em
+    // domains but cripples pure-math).
+    let no_corpus: bool = std::env::var("NASRUDIN_WORKER_NO_CORPUS")
+        .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+
+    let mut store = if no_corpus {
+        println!("▶ Worker cold-tier corpus DISABLED (NASRUDIN_WORKER_NO_CORPUS=1)");
+        println!("    GA will run on hand-coded postulates + peer-verified theorems only.");
+        println!();
+        AxiomStore::new()
+    } else {
+        let rocks_path = nasrudin_ga::corpus_sync::resolve_local_path();
+        println!("▶ Worker corpus path: {}", rocks_path.display());
+        match nasrudin_ga::corpus_sync::open_local(&rocks_path) {
+            Ok(corpus) => {
+                use nasrudin_rocks::CorpusBackend;
+                let initial_count = corpus.count().unwrap_or(0);
+                if initial_count == 0 {
+                    let api_url_for_hydrate = std::env::var("NASRUDIN_API_URL").ok()
+                        .or_else(|| api_cfg.as_ref().map(|c| c.api_url.clone()))
+                        .unwrap_or_else(|| DEFAULT_API_URL.to_string());
+                    let worker_key = api_cfg
+                        .as_ref()
+                        .map(|c| c.worker_key.clone())
+                        .unwrap_or_default();
+                    println!(
+                        "▶ Worker cold-tier corpus is empty — hydrating from {api_url_for_hydrate} (~150 MB stream)..."
+                    );
+                    match nasrudin_ga::corpus_sync::hydrate_from_server(
+                        &corpus,
+                        &api_url_for_hydrate,
+                        &worker_key,
+                    )
+                    .await
+                    {
+                        Ok(n) => println!("    ✓ corpus hydrated: {n} axioms"),
+                        Err(e) => {
+                            eprintln!(
+                                "    ! corpus hydration failed: {e}\n    Worker will run on hand-coded postulates only this session.\n    Re-run with the API reachable to populate the local corpus."
+                            );
+                        }
+                    }
+                } else {
+                    println!(
+                        "▶ Worker cold-tier corpus already populated: {initial_count} axioms"
+                    );
+                }
+                let count_after = corpus.count().unwrap_or(0);
+                if count_after > 0 {
+                    let cold: std::sync::Arc<dyn nasrudin_rocks::CorpusBackend> =
+                        std::sync::Arc::new(corpus);
+                    AxiomStore::with_corpus(cold)
+                } else {
+                    AxiomStore::new()
+                }
+            }
+            Err(e) => {
+                eprintln!("    ! failed to open worker RocksDB at {}: {e}", rocks_path.display());
+                eprintln!("      Falling back to hot-only AxiomStore for this session.");
+                AxiomStore::new()
+            }
+        }
+    };
+    println!();
+
     // Always load the classical-mechanics postulate set: every domain's
     // ladder benefits from kinematic primitives (momentum, work, KE).
     // The chain firewall on the API side has the same postulates loaded

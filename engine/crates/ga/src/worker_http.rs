@@ -16,13 +16,21 @@
 //! boot and shares it; `Clone` is cheap (Arc inside).
 
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use futures::Stream;
 use http_body_util::BodyExt;
 
 use crate::worker_url::{parse_api_base, ApiBase};
+
+/// Streaming-body type returned by [`WorkerHttp::get_stream`]. `Send`
+/// so the caller can move the stream into a `tokio::spawn`'d task
+/// (the corpus-hydration loop runs on its own thread).
+pub type BoxByteStream =
+    Pin<Box<dyn Stream<Item = std::io::Result<Bytes>> + Send + 'static>>;
 
 #[derive(Clone)]
 pub struct WorkerHttp {
@@ -127,6 +135,64 @@ impl WorkerHttp {
         let v: T = serde_json::from_slice(&body)
             .with_context(|| format!("decode JSON from {path} (status {status})"))?;
         Ok((status, v))
+    }
+
+    /// `GET path` returning `(status, headers, streaming body)`.
+    ///
+    /// Used by the worker's corpus-hydration path against
+    /// `/api/corpus/dump` — the response body is ~150 MB on a 195 k
+    /// entry corpus, which we can't afford to buffer in RAM on a
+    /// 1 GB Pi. Stream-decoding NDJSON over this keeps the resident
+    /// overhead to a single line at a time.
+    ///
+    /// On the **TCP transport** this exposes
+    /// `reqwest::Response::bytes_stream()` directly. On the **UDS
+    /// transport** there's no native streaming response in
+    /// `hyper-util`'s legacy client API, so we fall back to a
+    /// single-shot buffered read and wrap the result in a
+    /// one-element stream. UDS is co-located dev only — production
+    /// workers always hit TCP/HTTPS — so the UDS fallback is
+    /// fine even though it materialises the whole body once.
+    pub async fn get_stream(
+        &self,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(u16, reqwest::header::HeaderMap, BoxByteStream)> {
+        match &*self.inner {
+            Inner::Tcp { client, base } => {
+                let url = base.join(path).context("join path")?;
+                let mut req = client.get(url);
+                for (k, v) in headers {
+                    req = req.header(*k, *v);
+                }
+                let resp = req.send().await.context("reqwest GET")?;
+                let status = resp.status().as_u16();
+                let resp_headers = resp.headers().clone();
+                use futures::StreamExt;
+                let stream = resp.bytes_stream().map(|r| {
+                    r.map_err(|e| std::io::Error::other(format!("body chunk: {e}")))
+                });
+                Ok((status, resp_headers, Box::pin(stream)))
+            }
+            Inner::Unix { client, sock } => {
+                let uri: hyper::Uri = hyperlocal::Uri::new(sock, path).into();
+                let mut req = hyper::Request::builder().method("GET").uri(uri);
+                for (k, v) in headers {
+                    req = req.header(*k, *v);
+                }
+                let req = req
+                    .body(http_body_util::Full::new(Bytes::new()))
+                    .context("hyper req build")?;
+                let resp = client.request(req).await.context("hyper GET")?;
+                let status = resp.status().as_u16();
+                let resp_headers = resp.headers().clone();
+                let body = resp.into_body().collect().await.context("hyper body")?.to_bytes();
+                let one_shot = futures::stream::once(async move {
+                    Ok::<_, std::io::Error>(body)
+                });
+                Ok((status, resp_headers, Box::pin(one_shot)))
+            }
+        }
     }
 
     /// `POST path` with a JSON body, returning (status, optional JSON body).
