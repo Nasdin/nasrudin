@@ -1,10 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { bytesToHex } from '~/lib/hex';
 import {
   useApiKeys,
+  useBillingMe,
   useLogout,
   useMe,
   useMeProfile,
@@ -15,25 +15,8 @@ import {
 
 export const Route = createFileRoute('/profile')({ component: ProfilePage });
 
-interface BillingMe {
-  plan_tier: 'free' | 'researcher' | 'institution' | 'enterprise';
-  current_period_end: string | null;
-  targeted_searches_used: number;
-  targeted_searches_limit: number;
-  api_used_today: number;
-  api_limit_per_day: number;
-}
-
 function BillingCard() {
-  const { data } = useQuery<BillingMe>({
-    queryKey: ['billing', 'me'],
-    queryFn: async () => {
-      const res = await fetch('/api/billing/me', { credentials: 'include' });
-      if (!res.ok) throw new Error(`/api/billing/me: ${res.status}`);
-      return res.json();
-    },
-    staleTime: 30_000,
-  });
+  const { data } = useBillingMe();
   if (!data) return null;
   const isPaid = data.plan_tier !== 'free';
   const onManage = async () => {

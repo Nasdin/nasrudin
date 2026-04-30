@@ -1,25 +1,8 @@
-import { useEffect, useState, useMemo } from 'react';
 import { Link } from '@tanstack/react-router';
+import { useEffect, useMemo, useState } from 'react';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import { useRecentTheorems } from '~/lib/queries';
-
-const FALLBACK_TICKER = [
-  'VERIFIED  thm:9f3a2c   ⟨x,y⟩² ≤ ⟨x,x⟩⟨y,y⟩   simp ∘ linarith',
-  'REJECTED  cand:7b41f8   simp made no progress; goal unchanged',
-  'VERIFIED  thm:c1d9e7   [x,p] = iℏ                ring ∘ exact',
-  'VERIFIED  thm:e88f01   tr(AB) = tr(BA)            Matrix.trace_mul_comm',
-  'REJECTED  cand:9f0021   timeout after 30s on goal: NormedSpace ℝ E',
-  'VERIFIED  thm:bb27d3   ⟨ψ|ψ⟩ ≥ 0                 inner_self_nonneg',
-];
-
-const FALLBACK_HERO = {
-  id: 'thm:0000000000000000',
-  domain: 'Inner product space',
-  generation: 0,
-  statement_latex: '|\\langle x,y\\rangle|^2 \\le \\langle x,x\\rangle \\langle y,y\\rangle',
-  name: 'Schwarz inequality',
-};
 
 function getTimeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -32,36 +15,51 @@ function getTimeAgo(date: Date): string {
   return `${days}d ago`;
 }
 
+/** Render a real recent theorem as a "VERIFIED  thm:<id>  <statement>" ticker line. */
+function tickerLineFor(t: {
+  id: number[];
+  latex?: string | null;
+  canonical_statement?: string | null;
+}): string {
+  const id = bytesToHex(t.id).slice(0, 6);
+  const stmt = (t.latex ?? t.canonical_statement ?? '').toString().slice(0, 80);
+  return `VERIFIED  thm:${id}…  ${stmt}`;
+}
+
 export function HeroLiveTheorem() {
   const recent = useRecentTheorems(12);
   const [idx, setIdx] = useState(0);
-  const [tickerLines, setTickerLines] = useState<string[]>(FALLBACK_TICKER);
+  const [tickerLines, setTickerLines] = useState<string[]>([]);
   const [tickIdx, setTickIdx] = useState(0);
 
-  // Shuffle theorems on load to avoid same order every time
+  // Shuffle theorems on load to avoid same order every render.
   const shuffledTheorems = useMemo(() => {
     if (!recent.data?.theorems) return [];
     const arr = [...recent.data.theorems];
     for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       const temp = arr[i];
-      if (arr[j] !== undefined) {
-        arr[i] = arr[j];
-      }
-      if (temp !== undefined) {
-        arr[j] = temp;
-      }
+      if (arr[j] !== undefined) arr[i] = arr[j];
+      if (temp !== undefined) arr[j] = temp;
     }
     return arr;
   }, [recent.data?.theorems]);
 
-  const total = shuffledTheorems.length ?? 1;
+  // Seed the ticker with REAL recent theorems as soon as the REST query lands.
   useEffect(() => {
-    const t = setInterval(() => setIdx((i) => (i + 1) % Math.max(total, 1)), 5500);
+    if (recent.data?.theorems?.length) {
+      setTickerLines(recent.data.theorems.slice(0, 8).map(tickerLineFor));
+    }
+  }, [recent.data]);
+
+  const total = shuffledTheorems.length;
+  useEffect(() => {
+    if (total === 0) return;
+    const t = setInterval(() => setIdx((i) => (i + 1) % total), 5500);
     return () => clearInterval(t);
   }, [total]);
 
-  // SSE subscription to /api/events/discoveries — falls back silently on errors.
+  // SSE subscription to /api/events/discoveries — prepends each verified theorem.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     let failures = 0;
@@ -80,8 +78,6 @@ export function HeroLiveTheorem() {
           return null;
         }
       })();
-      // SSE `theorem_*` events carry a hex-encoded `theorem_id`, not a full
-      // theorem object — see `nasrudin_api::reverify::DiscoveryEvent`.
       if (t && typeof t === 'object' && 'theorem_id' in t) {
         const ti = t as { theorem_id: string };
         setTickerLines((prev) =>
@@ -97,19 +93,50 @@ export function HeroLiveTheorem() {
   }, []);
 
   useEffect(() => {
+    if (tickerLines.length === 0) return;
     const t = setInterval(() => setTickIdx((i) => (i + 1) % tickerLines.length), 1800);
     return () => clearInterval(t);
   }, [tickerLines.length]);
 
   const t = shuffledTheorems[idx];
-  const stmt = t ? (t.latex ?? t.canonical_statement) : FALLBACK_HERO.statement_latex;
-  const id = t ? bytesToHex(t.id) : FALLBACK_HERO.id;
-  const domain = t?.domain ?? FALLBACK_HERO.domain;
-  const generation = t?.generation ?? FALLBACK_HERO.generation;
+  const stmt = t?.latex ?? t?.canonical_statement;
+  const id = t ? bytesToHex(t.id) : null;
+  const domain = t?.domain;
+  const generation = t?.generation;
   const verifiedAt = t?.verified_at ? new Date(t.verified_at) : null;
-  const timeAgo = verifiedAt
-    ? getTimeAgo(verifiedAt)
-    : null;
+  const timeAgo = verifiedAt ? getTimeAgo(verifiedAt) : null;
+
+  // No real theorem yet → skeleton card. Never invent one.
+  if (!t || !id || !stmt) {
+    return (
+      <div>
+        <div className="theorem-card theorem-card-loading" aria-live="polite">
+          <div className="theorem-card-head">
+            <span className="theorem-card-id" style={{ opacity: 0.4 }}>
+              thm:…
+            </span>
+            <span className="verified-badge">
+              <span className="verified-dot" /> waiting for live events…
+            </span>
+          </div>
+          <div className="theorem-card-body">
+            <div className="theorem-statement" style={{ opacity: 0.4 }}>
+              —
+            </div>
+            <div className="theorem-tag" style={{ opacity: 0.4 }}>
+              connecting…
+            </div>
+          </div>
+        </div>
+        <div className="ticker">
+          <span className="ticker-label">Live</span>
+          <span className="ticker-text" style={{ color: 'var(--ink-500)' }}>
+            waiting for live events…
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -137,7 +164,7 @@ export function HeroLiveTheorem() {
         <span className="ticker-label">Live</span>
         <span className="ticker-text" key={tickIdx}>
           <span className={tickerLines[tickIdx]?.startsWith('VERIFIED') ? 'ok' : 'reject'}>
-            {tickerLines[tickIdx]}
+            {tickerLines[tickIdx] ?? 'waiting for live events…'}
           </span>
         </span>
       </div>

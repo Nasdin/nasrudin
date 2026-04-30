@@ -1,4 +1,5 @@
 import { type QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
 
 import '~/styles/tokens.css';
@@ -32,6 +33,7 @@ function RootDocument() {
       <body>
         <QueryClientProvider client={queryClient}>
           <Outlet />
+          <ReactQueryDevtools initialIsOpen={false} />
         </QueryClientProvider>
         <Scripts />
       </body>

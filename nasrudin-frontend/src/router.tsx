@@ -4,13 +4,54 @@ import { routeTree } from './routeTree.gen';
 
 export function createRouter() {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { staleTime: 30_000 } },
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        gcTime: 5 * 60_000, // 5 minutes
+        retry: (failureCount, error) => {
+          // Don't retry on 401/403/404 errors
+          if (error && typeof error === 'object' && 'status' in error) {
+            const status = (error as { status: number }).status;
+            if ([401, 403, 404].includes(status)) return false;
+          }
+          // Retry up to 3 times for other errors
+          return failureCount < 3;
+        },
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: true,
+      },
+      mutations: {
+        retry: 1,
+      },
+    },
   });
   return createTanstackRouter({
     routeTree,
     context: { queryClient },
     defaultPreload: 'intent',
     scrollRestoration: true,
+    defaultErrorComponent: ({ error }) => (
+      <div style={{ padding: '64px', textAlign: 'center' }}>
+        <h1 style={{ fontSize: 24, marginBottom: 16 }}>Something went wrong</h1>
+        <p style={{ color: 'var(--ink-500)', marginBottom: 24 }}>
+          {error instanceof Error ? error.message : 'An unexpected error occurred'}
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          style={{
+            padding: '8px 16px',
+            background: 'var(--terracotta-600)',
+            color: 'white',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          Reload page
+        </button>
+      </div>
+    ),
   });
 }
 

@@ -89,6 +89,7 @@ export function useRecentTheorems(limit = 20) {
   return useQuery({
     queryKey: ['theorems', 'recent', limit],
     queryFn: () => apiFetch<TheoremListResponse>(`/api/theorems/recent?limit=${limit}`),
+    staleTime: 60_000,
   });
 }
 
@@ -126,6 +127,7 @@ export function useTheorem(id: string) {
     queryKey: ['theorem', id],
     queryFn: () => apiFetch<Theorem>(`/api/theorems/${id}`),
     enabled: !!id,
+    staleTime: 10 * 60_000, // 10 minutes - theorems don't change often
   });
 }
 
@@ -133,6 +135,7 @@ export function useDomains() {
   return useQuery({
     queryKey: ['domains'],
     queryFn: () => apiFetch<Record<string, number>>('/api/domains'),
+    staleTime: 5 * 60_000, // 5 minutes - domains rarely change
   });
 }
 
@@ -142,6 +145,7 @@ export function useApiKeys() {
   return useQuery({
     queryKey: ['api-keys'],
     queryFn: () => apiFetch<{ keys: ApiKeySummary[] }>('/api/api-keys'),
+    staleTime: 60_000,
   });
 }
 
@@ -169,6 +173,7 @@ export function useSavedSearches() {
   return useQuery({
     queryKey: ['saved-searches'],
     queryFn: () => apiFetch<{ saved_searches: SavedSearch[] }>('/api/saved-searches'),
+    staleTime: 60_000,
   });
 }
 
@@ -210,6 +215,7 @@ export function useLibraryTheorems(folderId?: string) {
   return useQuery({
     queryKey: libraryQueryKey(folderId),
     queryFn: () => apiFetch<LibraryListResponse>(`/api/me/library/theorems${qs}`),
+    staleTime: 60_000,
   });
 }
 
@@ -217,6 +223,7 @@ export function useLibraryFolders() {
   return useQuery({
     queryKey: ['library', 'folders'],
     queryFn: () => apiFetch<LibraryFoldersResponse>('/api/me/library/folders'),
+    staleTime: 60_000,
   });
 }
 
@@ -337,6 +344,7 @@ export function useMeStats() {
   return useQuery({
     queryKey: ['me', 'stats'],
     queryFn: () => apiFetch<MeStats>('/api/me/stats'),
+    staleTime: 60_000,
   });
 }
 
@@ -348,6 +356,7 @@ export function useMeProfile() {
   return useQuery({
     queryKey: meProfileQueryKey,
     queryFn: () => apiFetch<MeProfile>('/api/me/profile'),
+    staleTime: 60_000,
   });
 }
 
@@ -403,6 +412,7 @@ export function useLlmKeys() {
   return useQuery<LlmKeysListResponse>({
     queryKey: llmKeysQueryKey,
     queryFn: () => apiFetch<LlmKeysListResponse>('/api/me/llm-keys'),
+    staleTime: 60_000,
   });
 }
 
@@ -472,6 +482,7 @@ export function useConjecture(id: string) {
     queryKey: ['conjecture', id],
     queryFn: () => apiFetch<ConjectureView>(`/api/conjecture/${id}`),
     enabled: !!id,
+    staleTime: 30_000,
   });
 }
 
@@ -604,3 +615,26 @@ export {
   useResearchJobStream,
   useStatsStream,
 } from './sse';
+
+// --- billing ---
+
+export interface BillingMe {
+  plan_tier: 'free' | 'researcher' | 'institution' | 'enterprise';
+  current_period_end: string | null;
+  targeted_searches_used: number;
+  targeted_searches_limit: number;
+  api_used_today: number;
+  api_limit_per_day: number;
+}
+
+export function useBillingMe() {
+  return useQuery<BillingMe>({
+    queryKey: ['billing', 'me'],
+    queryFn: async () => {
+      const res = await fetch('/api/billing/me', { credentials: 'include' });
+      if (!res.ok) throw new Error(`/api/billing/me: ${res.status}`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+}

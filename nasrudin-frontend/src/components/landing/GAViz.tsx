@@ -1,22 +1,47 @@
 import { useEffect, useState } from 'react';
-
-const GA_GENERATIONS = [
-  { op: 'axiom', expr: '∂L/∂q̇ = p', status: 'seed', result: 'from postulate' },
-  { op: 'axiom', expr: 'L = T − V', status: 'seed', result: 'from postulate' },
-  { op: 'mutate', expr: 'dp/dt = ∂L/∂q', status: 'accepted', result: 'verified · 0.4s' },
-  { op: 'crossover', expr: 'dp/dt = −∂V/∂q', status: 'accepted', result: 'verified · 1.1s' },
-  { op: 'mutate', expr: 'F = dp/dt', status: 'accepted', result: 'verified · 0.2s' },
-  { op: 'compose', expr: 'F = ma', status: 'accepted', result: 'Newton II — verified' },
-  { op: 'mutate', expr: 'F = m²a', status: 'rejected', result: 'type mismatch' },
-  { op: 'crossover', expr: 'p² = 2mE', status: 'accepted', result: 'verified · 0.6s' },
-];
+import { gaVizFixture } from './ga-viz.fixture';
 
 export function GAViz() {
+  const { rows, workerId, generationStart, capturedAt } = gaVizFixture;
   const [gen, setGen] = useState(0);
+
   useEffect(() => {
-    const t = setInterval(() => setGen((g) => (g + 1) % GA_GENERATIONS.length), 1400);
+    if (rows.length === 0) return;
+    const t = setInterval(() => setGen((g) => (g + 1) % rows.length), 1400);
     return () => clearInterval(t);
-  }, []);
+  }, [rows.length]);
+
+  if (rows.length === 0) {
+    return (
+      <div className="ga-viz">
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            marginBottom: 20,
+          }}
+        >
+          <div>
+            <div className="overline" style={{ marginBottom: 6 }}>
+              Captured trace pending
+            </div>
+            <div
+              style={{
+                fontFamily: 'var(--font-serif)',
+                fontSize: 22,
+                fontStyle: 'italic',
+                color: 'var(--ink-500)',
+              }}
+            >
+              A real GA cycle will land here once the v0.1.0 worker has been captured against the
+              live network.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="ga-viz">
@@ -30,7 +55,7 @@ export function GAViz() {
       >
         <div>
           <div className="overline" style={{ marginBottom: 6 }}>
-            Generation 4,218,107 · live trace
+            Generation {generationStart?.toLocaleString() ?? '—'} · captured trace
           </div>
           <div
             style={{
@@ -40,16 +65,15 @@ export function GAViz() {
               color: 'var(--ink-700)',
             }}
           >
-            From the lagrangian axioms, two crossovers and three mutations later — Newton's second
-            law.
+            Real GA cycle from a worker run on {capturedAt ?? 'an undated capture'}.
           </div>
         </div>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--ink-500)' }}>
-          worker · home-pc-aklint
+          worker · {workerId ?? 'unknown'}
         </div>
       </div>
       <div className="ga-rows">
-        {GA_GENERATIONS.map((row, i) => {
+        {rows.map((row, i) => {
           const visible = i <= gen;
           const cls =
             row.status === 'accepted' ? 'accepted' : row.status === 'rejected' ? 'rejected' : '';

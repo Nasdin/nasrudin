@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { detectPlatform, type ArchKind, type OsKind } from './RunWorker.platform';
-import { TerminalPreview } from './TerminalPreview';
+import { useMemo, useState } from 'react';
+import { type ArchKind, detectPlatform, type OsKind } from './RunWorker.platform';
 import { runWorkerFixture } from './run-worker.fixture';
+import { TerminalPreview } from './TerminalPreview';
 
 const RELEASE_BASE = 'https://github.com/Nasdin/nasrudin/releases/latest/download';
 
@@ -54,7 +54,8 @@ const BUILDS: Build[] = [
 
 const ELAN_UNIX =
   'curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y';
-const ELAN_WIN = 'iwr -useb https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 | iex';
+const ELAN_WIN =
+  'iwr -useb https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1 | iex';
 
 function bundleName(b: Build): string {
   return `nasrudin-worker-${b.os}-${b.arch}`;

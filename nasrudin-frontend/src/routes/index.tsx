@@ -1,10 +1,10 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { GAViz } from '~/components/landing/GAViz';
 import { HeroLiveTheorem } from '~/components/landing/HeroLiveTheorem';
-import { InstallNode } from '~/components/landing/InstallNode';
 import { LandingFooter } from '~/components/landing/LandingFooter';
 import { PipelineDiagram } from '~/components/landing/PipelineDiagram';
 import { RediscoveryGrid } from '~/components/landing/RediscoveryGrid';
+import { RunWorker } from '~/components/landing/RunWorker';
 import { TheoremBrowser } from '~/components/landing/TheoremBrowser';
 import { WorkerMap } from '~/components/landing/WorkerMap';
 import { useStats, useWorkers } from '~/lib/queries';
@@ -15,16 +15,16 @@ function Landing() {
   const stats = useStats();
   const workers = useWorkers();
 
-  const liveWorkers = workers.data?.filter(w => w.status === 'Active' || w.status === 'active').length ?? 0;
+  const liveWorkers =
+    workers.data?.filter((w) => w.status === 'Active' || w.status === 'active').length ?? 0;
   const totalTheorems = stats.data?.total_theorems ?? 0;
   const totalVerified = stats.data?.total_verified ?? 0;
   const totalAxioms = stats.data?.total_axioms ?? 0;
   const maxGeneration = stats.data?.max_generation ?? 0;
 
   // Calculate acceptance rate (verified / total)
-  const acceptanceRate = totalTheorems > 0
-    ? ((totalVerified / totalTheorems) * 100).toFixed(1)
-    : '0.0';
+  const acceptanceRate =
+    totalTheorems > 0 ? ((totalVerified / totalTheorems) * 100).toFixed(1) : '0.0';
 
   return (
     <div className="page">
@@ -262,13 +262,13 @@ function Landing() {
                 Run a worker. <em>Help physics rediscover itself.</em>
               </h2>
               <p className="section-lede">
-                Three commands — install, register, run. Your machine starts mutating axioms in
-                seconds. Every theorem your node verifies and the server accepts gets your pseudonym
+                Four steps — key, Lean, download, run. Your machine starts mutating axioms in
+                minutes. Every theorem your node verifies and the server accepts gets your pseudonym
                 attached, forever.
               </p>
             </div>
           </div>
-          <InstallNode />
+          <RunWorker />
         </div>
       </section>
 
