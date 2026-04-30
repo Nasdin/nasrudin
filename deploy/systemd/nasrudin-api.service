@@ -1,0 +1,25 @@
+[Unit]
+Description=Nasrudin Physics API
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=nasrudin
+Group=nasrudin
+WorkingDirectory=/opt/nasrudin
+EnvironmentFile=/opt/nasrudin/.env
+Environment=PROVER_ROOT=/opt/nasrudin/prover
+Environment=LAKE_WORKSPACE_ROOT=/var/lib/nasrudin/lake-cache
+Environment=ROCKS_DB_PATH=/var/lib/nasrudin/rocks
+Environment=ELAN_HOME=/opt/nasrudin/elan
+Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/nasrudin/bin/physics-api
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

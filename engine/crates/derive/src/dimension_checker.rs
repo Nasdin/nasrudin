@@ -210,3 +210,94 @@ pub fn check_equation_dimensions(
         Err("expression is not an equation".to_string())
     }
 }
+
+/// Conservative dimension check used as a hard reject gate.
+///
+/// Returns `true` only when we can *definitively* prove that both sides
+/// of an equation have known but unequal dimensions. Returns `false` for:
+/// - Non-equations (we don't gate on those).
+/// - Equations where either side has unknown vars (could still be valid).
+/// - Equations where `infer_dimension` fails for any reason (e.g., internal
+///   `+`/`-` mismatch — handled separately in fitness).
+///
+/// The asymmetry is deliberate: hard-reject false positives waste candidates,
+/// hard-reject false negatives merely miss filtering opportunities and fall
+/// through to the elaborator anyway. Conservative = preserves novelty.
+pub fn equation_definitely_inconsistent(
+    expr: &Expr,
+    var_dims: &HashMap<String, Dimension>,
+) -> bool {
+    if let Expr::BinOp(BinOp::Eq, lhs, rhs) = expr {
+        if let (Some(dl), Some(dr)) =
+            (infer_dimension(lhs, var_dims), infer_dimension(rhs, var_dims))
+        {
+            return dl != dr;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nasrudin_core::PhysConst;
+
+    fn eq(lhs: Expr, rhs: Expr) -> Expr {
+        Expr::BinOp(BinOp::Eq, Box::new(lhs), Box::new(rhs))
+    }
+
+    #[test]
+    fn definitely_inconsistent_catches_known_mismatch() {
+        // E (energy) = m (mass) — definite mismatch, both sides known.
+        let dims = sr_variable_dimensions();
+        let expr = eq(Expr::Var("E".into()), Expr::Var("m".into()));
+        assert!(equation_definitely_inconsistent(&expr, &dims));
+    }
+
+    #[test]
+    fn definitely_inconsistent_passes_correct_emc2() {
+        // E = m * c^2 — consistent.
+        let dims = sr_variable_dimensions();
+        let expr = eq(
+            Expr::Var("E".into()),
+            Expr::BinOp(
+                BinOp::Mul,
+                Box::new(Expr::Var("m".into())),
+                Box::new(Expr::BinOp(
+                    BinOp::Pow,
+                    Box::new(Expr::Const(PhysConst::SpeedOfLight)),
+                    Box::new(Expr::Lit(2, 1)),
+                )),
+            ),
+        );
+        assert!(!equation_definitely_inconsistent(&expr, &dims));
+    }
+
+    #[test]
+    fn definitely_inconsistent_passes_unknown_vars() {
+        // x = y where neither is in the dim table — fall through, soft-pass.
+        let dims = sr_variable_dimensions();
+        let expr = eq(Expr::Var("x_unknown".into()), Expr::Var("y_unknown".into()));
+        assert!(!equation_definitely_inconsistent(&expr, &dims));
+    }
+
+    #[test]
+    fn definitely_inconsistent_passes_non_equation() {
+        // 1 + 1 — not an equation; gate doesn't apply.
+        let dims = sr_variable_dimensions();
+        let expr = Expr::BinOp(
+            BinOp::Add,
+            Box::new(Expr::Lit(1, 1)),
+            Box::new(Expr::Lit(1, 1)),
+        );
+        assert!(!equation_definitely_inconsistent(&expr, &dims));
+    }
+
+    #[test]
+    fn definitely_inconsistent_passes_pure_math() {
+        // With an empty dim table (pure-math run), nothing is rejected.
+        let dims: HashMap<String, Dimension> = HashMap::new();
+        let expr = eq(Expr::Var("a".into()), Expr::Var("b".into()));
+        assert!(!equation_definitely_inconsistent(&expr, &dims));
+    }
+}

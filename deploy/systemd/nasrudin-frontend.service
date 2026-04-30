@@ -1,0 +1,23 @@
+[Unit]
+Description=Nasrudin Frontend (TanStack Start SSR)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nasrudin
+Group=nasrudin
+WorkingDirectory=/opt/nasrudin/frontend
+EnvironmentFile=/opt/nasrudin/.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+ExecStart=/usr/bin/node dist/server/ssr.js
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

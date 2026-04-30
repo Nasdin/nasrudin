@@ -1,0 +1,38 @@
+# Native (non-docker) Caddyfile for the nasrudin-prod droplet.
+# Mirrors deploy/Caddyfile but reverse-proxies to localhost ports
+# instead of docker service hostnames.
+#
+# Cloudflare presents edge TLS; Caddy presents valid LE cert at origin so
+# Cloudflare's "Full (strict)" mode is satisfied. origin.nasrudin.org is the
+# DNS-only emergency bypass.
+
+nasrudin.org {
+	reverse_proxy 127.0.0.1:3000
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+api.nasrudin.org {
+	# SSE streams must not buffer — `flush_interval -1` flushes immediately,
+	# bypassing reverse-proxy and CDN buffering.
+	@sse path /api/events/*
+	handle @sse {
+		reverse_proxy 127.0.0.1:3001 {
+			flush_interval -1
+		}
+	}
+	reverse_proxy 127.0.0.1:3001
+	header Access-Control-Allow-Origin "https://nasrudin.org"
+	header Access-Control-Allow-Credentials "true"
+	header Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS"
+	header Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Cookie"
+}
+
+# Cloudflare-grey emergency bypass — DNS-only, hits the droplet directly.
+origin.nasrudin.org {
+	reverse_proxy 127.0.0.1:3001
+}

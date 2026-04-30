@@ -39,7 +39,7 @@ pub use cache_config::{CacheConfig, CacheStats};
 pub use chain::{Chain, RuleStep};
 pub use context::{DerivationContext, DerivationStep};
 pub use derivation::{DerivationEngine, DerivationResult};
-pub use dimension_checker::{check_equation_dimensions, domain_variable_dimensions, infer_dimension, sr_variable_dimensions};
+pub use dimension_checker::{check_equation_dimensions, domain_variable_dimensions, equation_definitely_inconsistent, infer_dimension, sr_variable_dimensions};
 pub use error::DeriveError;
 pub use lean_emitter::{emit_lean_file, expr_to_lean, LeanEmitConfig};
 pub use lean_verify::{LeanVerifier, LeanVerifyResult};

@@ -7,7 +7,7 @@
 # Build context is the monorepo root (deploy/docker-compose.yml uses
 # `context: ..`), so the Cargo workspace at `engine/` is visible.
 # ──────────────────────────────────────────────────────────────────────────
-FROM rust:1.93-bookworm AS builder
+FROM rust:1.95-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config libssl-dev clang cmake \

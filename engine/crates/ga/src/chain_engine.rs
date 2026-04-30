@@ -89,6 +89,19 @@ pub struct DiscoveryConfig {
     /// Set to 0 (default) for the legacy "verify locally before
     /// submitting" mode.
     pub submit_unverified_top_k: usize,
+    /// Layer 2: hard-reject candidates whose final equation has known,
+    /// definitively-mismatched dimensions on either side. Conservative —
+    /// only rejects when both LHS and RHS infer to known dimensions and
+    /// they differ; unknown vars / non-equations / pure-math fall through.
+    /// Default true (set false via `NASRUDIN_DIMENSION_HARD_REJECT=0` for
+    /// natural-units / non-SI research).
+    pub dimension_hard_reject: bool,
+    /// Variable→dimension table used by the hard-reject gate. Domain-aware:
+    /// the worker builds this from the active domain at boot. Empty map
+    /// is fine for pure-math runs where no variable has a known dimension.
+    pub dimension_var_dims: std::sync::Arc<
+        std::collections::HashMap<String, nasrudin_core::Dimension>,
+    >,
 }
 
 impl Default for DiscoveryConfig {
@@ -108,6 +121,8 @@ impl Default for DiscoveryConfig {
             novelty_bloom: None,
             mutation_priors: None,
             submit_unverified_top_k: 0,
+            dimension_hard_reject: true,
+            dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -277,6 +292,14 @@ pub fn run_discovery(
                     Some(e) => e,
                     None => continue,
                 };
+                if config.dimension_hard_reject
+                    && nasrudin_derive::equation_definitely_inconsistent(
+                        &final_expr,
+                        &config.dimension_var_dims,
+                    )
+                {
+                    continue;
+                }
                 let canonical = final_expr.to_canonical();
                 if !verified_canonicals.insert(canonical.clone()) {
                     continue;
@@ -321,6 +344,8 @@ pub fn run_discovery(
                     &config.rejected_canonicals,
                     config.novelty_bloom.as_deref(),
                     store,
+                    config.dimension_hard_reject,
+                    &config.dimension_var_dims,
                 ) {
                     report.lake_attempts += 1;
                     let basename = format!("DiscoverGen{gen_idx}");
@@ -469,18 +494,26 @@ fn run_chain_for_final(chain: &Chain, store: &AxiomStore) -> Option<Expr> {
     chain.execute(store, &mut ctx).ok()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pick_top_for_verify<'a>(
     offspring: &'a [ChainIndividual],
     seen: &HashSet<String>,
     rejected: &HashSet<Vec<u8>>,
     bloom: Option<&bloomfilter::Bloom<[u8]>>,
     store: &AxiomStore,
+    dim_hard_reject: bool,
+    dim_var_dims: &std::collections::HashMap<String, nasrudin_core::Dimension>,
 ) -> Option<&'a ChainIndividual> {
     for ind in offspring {
         if ind.fitness.novelty < 1.0 || ind.fitness.nasrudin_relevance < 1.0 {
             continue;
         }
         if let Some(expr) = run_chain_for_final(&ind.chain, store) {
+            if dim_hard_reject
+                && nasrudin_derive::equation_definitely_inconsistent(&expr, dim_var_dims)
+            {
+                continue;
+            }
             let canon = expr.to_canonical();
             // Skip canonicals we've verified this run, AND canonicals
             // any peer worker has already rejected via lake build.
@@ -529,7 +562,9 @@ mod tests {
             cache_ctx: None,
             novelty_bloom: None,
             mutation_priors: None,
-        submit_unverified_top_k: 0,
+            submit_unverified_top_k: 0,
+            dimension_hard_reject: false,
+            dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -557,7 +592,9 @@ mod tests {
             cache_ctx: None,
             novelty_bloom: None,
             mutation_priors: None,
-        submit_unverified_top_k: 0,
+            submit_unverified_top_k: 0,
+            dimension_hard_reject: false,
+            dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);

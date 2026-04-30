@@ -324,6 +324,34 @@ async fn main() {
     };
     println!();
 
+    // Layer 2: hard-reject candidates whose final equation has known,
+    // mismatched dimensions. Default on; disable with
+    // `NASRUDIN_DIMENSION_HARD_REJECT=0` (or `--soft-dimension`) for
+    // natural-units / non-SI research where the soft-fitness behaviour
+    // is the right call.
+    let dimension_hard_reject: bool = !args.iter().any(|a| a == "--soft-dimension")
+        && std::env::var("NASRUDIN_DIMENSION_HARD_REJECT")
+            .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+            .unwrap_or(true);
+    let primary_domain = match domain.as_str() {
+        "sr" => nasrudin_core::Domain::SpecialRelativity,
+        "em" => nasrudin_core::Domain::Electromagnetism,
+        // Pure-math / mixed: no canonical var→dim table; gate becomes
+        // a no-op because every var infers to None.
+        _ => nasrudin_core::Domain::PureMath,
+    };
+    let dimension_var_dims = std::sync::Arc::new(
+        nasrudin_derive::domain_variable_dimensions(&primary_domain),
+    );
+    if dimension_hard_reject {
+        println!(
+            "▶ Dimension hard-reject ON ({} known vars; pass --soft-dimension to disable)",
+            dimension_var_dims.len()
+        );
+    } else {
+        println!("▶ Dimension hard-reject OFF (soft fitness only)");
+    }
+
     let config = DiscoveryConfig {
         population_size: pop,
         generations: gens,
@@ -349,6 +377,8 @@ async fn main() {
         cache_ctx: None,
         mutation_priors: None,
         submit_unverified_top_k: submit_top_k,
+        dimension_hard_reject,
+        dimension_var_dims: dimension_var_dims.clone(),
     };
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
@@ -752,6 +782,22 @@ async fn run_seed_driven_chunk(
     let mut total_verified: u32 = 0;
     let mut submitted_any = false;
 
+    // Research-mode also benefits from the dimension hard-reject; same
+    // env-var check (workers run with one global config). Build a
+    // domain-aware var-dim table from the conjecture's nominal domain
+    // (string passed in from the parent run).
+    let research_domain = match domain {
+        "sr" => nasrudin_core::Domain::SpecialRelativity,
+        "em" => nasrudin_core::Domain::Electromagnetism,
+        _ => nasrudin_core::Domain::PureMath,
+    };
+    let research_dim_var_dims = std::sync::Arc::new(
+        nasrudin_derive::domain_variable_dimensions(&research_domain),
+    );
+    let research_dim_hard_reject = std::env::var("NASRUDIN_DIMENSION_HARD_REJECT")
+        .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(true);
+
     while started.elapsed().as_secs() < wall_seconds && total_attempted < max_candidates {
         let chunk_config = DiscoveryConfig {
             population_size: 32,
@@ -773,6 +819,8 @@ async fn run_seed_driven_chunk(
             // pattern here; if a research-mode worker wants to skip
             // local lake too it can be wired in a follow-up.
             submit_unverified_top_k: 0,
+            dimension_hard_reject: research_dim_hard_reject,
+            dimension_var_dims: research_dim_var_dims.clone(),
         };
         let report = run_discovery(&filtered, &chunk_config, rng);
         total_attempted += report.total_candidates as u64;
