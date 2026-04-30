@@ -1,6 +1,6 @@
 # Nasrudin
 
-**Derive physics from pure logic.** Nasrudin discovers theorems by generating candidates and formally proving them in Lean4A distributed theorem generation engine that starts from mathematical axioms and physics postulates, then uses genetic algorithms to evolve new theorems -- eventually rediscovering known physics (like E=mc^2) without being told what to find. Synthetic theorem generation with formal verification
+**Derive physics from pure logic.** Nasrudin discovers theorems by generating candidates and formally proving them in Lean 4. A distributed theorem generation engine that starts from mathematical axioms and physics postulates, then uses genetic algorithms to evolve new theorems -- eventually rediscovering known physics (like E=mc^2) without being told what to find. Synthetic theorem generation with formal verification.
 
 Named after [Nasrudin](https://en.wikipedia.org/wiki/Nasreddin), the wise fool of Sufi tradition who found truth through unconventional paths.
 
@@ -320,4 +320,25 @@ Sponsorship is a donation, not a subscription tier — it doesn't grant Research
 
 ## License
 
-MIT
+AGPL-3.0. See [`LICENSE`](./LICENSE).
+
+The platform has a SaaS component (`api.nasrudin.org`) — the network-use clause means anyone running modified versions as a hosted service must publish their changes.
+
+## Cutting a worker release
+
+All cross-platform worker binaries are built locally on macOS via `just`; we do not use GitHub Actions for release builds.
+
+```bash
+# release-worker requires a clean tree — stash any in-flight work first:
+git stash push -u -m "pre-release-WIP"
+
+# Cut the release. Cross-compiles the worker binary for Linux x86_64/aarch64,
+# macOS x86_64/arm64, and Windows x86_64 locally via cargo-zigbuild, then
+# uploads everything to a GitHub release.
+just release-worker v0.1.0
+
+# Pop your in-flight work:
+git stash pop
+```
+
+Prerequisites: `zig` and `cargo-zigbuild` installed (`brew install zig && cargo install cargo-zigbuild`); `gh auth status` shows write access to `Nasdin/nasrudin`. The recipe will add any missing rustup targets automatically.
