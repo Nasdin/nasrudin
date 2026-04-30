@@ -38,7 +38,12 @@ pub mod rewrite;
 pub mod rules;
 pub mod strategies;
 
-pub use axiom_store::{Axiom, AxiomStore};
+pub use axiom_store::AxiomStore;
+// Back-compat re-export: `Axiom` lives in `nasrudin-core` now (so
+// the rocks crate can encode/decode it without a derive→rocks→derive
+// dependency cycle). Existing callers `use nasrudin_derive::Axiom`
+// keep working unchanged.
+pub use nasrudin_core::Axiom;
 pub use cache_config::{CacheConfig, CacheStats};
 pub use chain::{Chain, RuleStep};
 pub use context::{DerivationContext, DerivationStep};

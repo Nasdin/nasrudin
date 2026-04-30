@@ -273,12 +273,22 @@ fn mutate_axiom_name(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) 
     let Some(&i) = axiom_steps.iter().choose(rng) else {
         return;
     };
-    let names = store.names();
-    let Some(new_name) = names.into_iter().choose(rng) else {
+    // Two-stage: pick across hot+cold by index to avoid a 195 k-name
+    // Vec allocation per mutation.
+    let hot_names = store.iter_hot_names();
+    let cold_names = store.cold_names();
+    let total = hot_names.len() + cold_names.len();
+    if total == 0 {
         return;
+    }
+    let idx = rng.random_range(0..total);
+    let new_name = if idx < hot_names.len() {
+        hot_names[idx].clone()
+    } else {
+        cold_names[idx - hot_names.len()].clone()
     };
     chain.0[i] = RuleStep::IntroduceAxiom {
-        axiom_name: new_name.to_string(),
+        axiom_name: new_name,
     };
 }
 
@@ -322,16 +332,21 @@ fn mutate_param(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
 /// Collect (axiom_name, statement) pairs for every `IntroduceAxiom`
 /// step in `chain`, by resolving names via `store`. Used by mutation
 /// to do fact-combining target synthesis.
-fn collect_chain_facts<'a>(
-    chain: &'a Chain,
-    store: &'a AxiomStore,
-) -> Vec<(&'a str, &'a Expr)> {
+///
+/// Returns owned `(String, Expr)` tuples — the cold-tier
+/// `AxiomStore::get` decodes fresh from RocksDB so there's no stable
+/// borrow lifetime to thread through. The clones are cheap relative
+/// to the chain-mutation work that consumes the facts.
+fn collect_chain_facts(
+    chain: &Chain,
+    store: &AxiomStore,
+) -> Vec<(String, Expr)> {
     chain
         .0
         .iter()
         .filter_map(|step| match step {
             RuleStep::IntroduceAxiom { axiom_name } => {
-                store.get(axiom_name).map(|ax| (axiom_name.as_str(), &ax.statement))
+                store.get(axiom_name).map(|ax| (axiom_name.clone(), ax.statement))
             }
             _ => None,
         })
@@ -357,7 +372,7 @@ fn collect_chain_facts<'a>(
 /// - `swap`: `a = b` → `b = a`.
 ///
 /// Falls back to atom-random synthesis when no facts are available.
-pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng) -> Expr {
+pub fn synthesize_target_from_facts(facts: &[(String, Expr)], rng: &mut impl Rng) -> Expr {
     if facts.is_empty() {
         return synthesize_physics_target(rng);
     }
@@ -367,7 +382,7 @@ pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng)
         // same
         0 => {
             let (_, expr) = facts.iter().choose(rng).unwrap();
-            (*expr).clone()
+            expr.clone()
         }
         // square
         1 => {
@@ -388,7 +403,7 @@ pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng)
                     )),
                 )
             } else {
-                (*expr).clone()
+                expr.clone()
             }
         }
         // mult by c²
@@ -412,7 +427,7 @@ pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng)
                     )),
                 )
             } else {
-                (*expr).clone()
+                expr.clone()
             }
         }
         // mult-pair: (a = b) ∧ (c = d) → a·c = b·d
@@ -423,7 +438,7 @@ pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng)
                 if let (
                     Expr::BinOp(BinOp::Eq, l1, r1),
                     Expr::BinOp(BinOp::Eq, l2, r2),
-                ) = (*f1, *f2)
+                ) = (f1, f2)
                 {
                     return Expr::BinOp(
                         BinOp::Eq,
@@ -440,7 +455,7 @@ pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng)
                     );
                 }
             }
-            (*facts[0].1).clone()
+            facts[0].1.clone()
         }
         // transitivity: try matching equal sides between two facts.
         4 => {
@@ -450,7 +465,7 @@ pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng)
                 if let (
                     Expr::BinOp(BinOp::Eq, l1, r1),
                     Expr::BinOp(BinOp::Eq, l2, r2),
-                ) = (*f1, *f2)
+                ) = (f1, f2)
                 {
                     if l1 == l2 {
                         return Expr::BinOp(
@@ -475,7 +490,7 @@ pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng)
                     }
                 }
             }
-            (*facts[0].1).clone()
+            facts[0].1.clone()
         }
         // swap: a = b → b = a
         _ => {
@@ -483,7 +498,7 @@ pub fn synthesize_target_from_facts(facts: &[(&str, &Expr)], rng: &mut impl Rng)
             if let Expr::BinOp(BinOp::Eq, lhs, rhs) = expr {
                 Expr::BinOp(BinOp::Eq, Box::new((**rhs).clone()), Box::new((**lhs).clone()))
             } else {
-                (*expr).clone()
+                expr.clone()
             }
         }
     }
@@ -638,7 +653,7 @@ fn random_physics_compound(rng: &mut impl Rng) -> Expr {
     }
 }
 
-fn random_step(store: &AxiomStore, facts: &[(&str, &Expr)], rng: &mut impl Rng) -> RuleStep {
+fn random_step(store: &AxiomStore, facts: &[(String, Expr)], rng: &mut impl Rng) -> RuleStep {
     // Weighted: most steps are IntroduceAxiom; the rest split between
     // the four transforming rules. RearrangeEquation gets a *fact-
     // combining* target (Phase 6.5.4) when facts are available, falling
@@ -646,11 +661,22 @@ fn random_step(store: &AxiomStore, facts: &[(&str, &Expr)], rng: &mut impl Rng) 
     let pick = rng.random_range(0..8u8);
     match pick {
         0 | 1 | 2 => {
-            let names = store.names();
-            if names.is_empty() {
+            // Two-stage pick to avoid materializing 195 k cold-tier
+            // names on every mutation. Hot names allocate a fresh
+            // Vec each call; cold names are a `&[String]` reference
+            // into the AxiomStore's preallocated snapshot.
+            let hot_names = store.iter_hot_names();
+            let cold_names = store.cold_names();
+            let total = hot_names.len() + cold_names.len();
+            if total == 0 {
                 return RuleStep::AlgebraicSimplify;
             }
-            let name = names.into_iter().choose(rng).unwrap().to_string();
+            let idx = rng.random_range(0..total);
+            let name = if idx < hot_names.len() {
+                hot_names[idx].clone()
+            } else {
+                cold_names[idx - hot_names.len()].clone()
+            };
             RuleStep::IntroduceAxiom { axiom_name: name }
         }
         3 => RuleStep::AlgebraicSimplify,

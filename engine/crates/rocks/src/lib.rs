@@ -5,12 +5,14 @@
 
 use anyhow::{Context, Result};
 use nasrudin_core::{Domain, ProofTree, Theorem, TheoremId, VerificationStatus};
-use rocksdb::{BlockBasedOptions, ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
+use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod attempts_cache;
 pub use attempts_cache::{AttemptOutcome, AttemptRecord, AttemptsCache};
+pub mod corpus;
+pub use corpus::{CorpusBackend, CorpusDb};
 pub mod tactic_priors;
 pub use tactic_priors::{TacticPriorRecord, TacticPriorsCache, TacticSuccess};
 
@@ -34,6 +36,24 @@ const CF_TACTIC_PRIORS: &str = "tactic_priors";
 /// re-enqueues anything that wasn't yet persisted to PG before the
 /// previous shutdown — so an API crash never loses a verified theorem.
 const CF_PG_INSERT_QUEUE: &str = "pg_insert_queue";
+/// Cold-tier corpus axiom store. Holds the ~195k Mathlib + Unknown
+/// entries that previously lived in the in-memory `AxiomStore`'s
+/// `HashMap`. `key = axiom_name_bytes`, `value = bincode(Axiom)`. Keeps
+/// API-process resident RAM bounded — the AxiomStore's hot tier
+/// remains the ~3-5 k hand-coded postulates + PhysLean catalog
+/// entries; the cold tier is paged on demand from this CF.
+pub(crate) const CF_CORPUS_AXIOM: &str = "corpus_axiom";
+/// Secondary index over `CF_CORPUS_AXIOM` for `by_domain` range scans.
+/// `key = domain_str | 0x00 | axiom_name_bytes`, `value = []` (empty —
+/// the key contains everything, the actual axiom payload comes from a
+/// follow-up `CF_CORPUS_AXIOM` lookup). The 0x00 separator guarantees
+/// that a `prefix_iterator_cf("special_relativity\0")` doesn't bleed
+/// into `"special_relativity_extras"` etc.
+pub(crate) const CF_CORPUS_DOMAIN: &str = "corpus_domain";
+/// Meta-state for the corpus CF: hydration version, total count,
+/// timestamp of the last hydration. JSON values keyed by string
+/// (`"version"`, `"count"`, `"hydrated_at"`).
+pub(crate) const CF_CORPUS_META: &str = "corpus_meta";
 /// Newest-first index over verified theorems for `/api/seed` and
 /// `/api/theorems/recent`. Keyed by `(verified_at_be_micros, theorem_id)`
 /// so a reverse iter yields most-recent-first. Written atomically
@@ -66,7 +86,64 @@ const ALL_CFS: &[&str] = &[
     CF_PG_INSERT_QUEUE,
     CF_BY_VERIFIED_AT,
     CF_LAKE_PROMOTION_QUEUE,
+    CF_CORPUS_AXIOM,
+    CF_CORPUS_DOMAIN,
+    CF_CORPUS_META,
 ];
+
+/// Compute the RocksDB block-cache budget in bytes.
+///
+/// Honors `NASRUDIN_ROCKS_BLOCK_CACHE_MB` if set; otherwise reserves
+/// 1 GB for everything else (Postgres `shared_buffers` ~300 MB,
+/// Caddy ~20 MB, Node SSR ~250 MB, GA worker + Lean ~400 MB,
+/// kernel/system ~300 MB, API process baseline excluding cache
+/// ~150 MB) and gives the rest to the RocksDB block cache, clamped
+/// to `[64 MB, 8 GB]`.
+///
+/// **Effective sizing on common instances:**
+///
+/// | RAM   | Cache         | % of total |
+/// |-------|---------------|------------|
+/// | 1 GB  | 64 MB (floor) | 6 %        |
+/// | 2 GB  | 1 GB          | 50 %       |
+/// | 4 GB  | 3 GB          | 75 %       |
+/// | 8 GB  | 7 GB          | 87 %       |
+/// | 16 GB | 8 GB (cap)    | 50 %       |
+/// | 32 GB | 8 GB (cap)    | 25 %       |
+///
+/// The 8 GB cap exists because past that the LRU lock contention
+/// and eviction overhead make the OS page cache more efficient
+/// than RocksDB's own. The floor exists for tiny dev VMs.
+///
+/// For the Mathlib-corpus working set (290 MB total, ~5–20 k
+/// entries hot during chain search), even the 1 GB sizing on a 2 GB
+/// droplet caches the entire corpus block-aligned and serves >99 %
+/// of GA lookups from RAM.
+///
+/// Returns `(cache_bytes, total_system_bytes)` — the second value is
+/// `0` when the env var override is in effect or `sysinfo` couldn't
+/// introspect, used only for the boot log line.
+pub fn compute_block_cache_bytes() -> (usize, usize) {
+    use sysinfo::System;
+    if let Some(mb) = std::env::var("NASRUDIN_ROCKS_BLOCK_CACHE_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        return (mb * 1024 * 1024, 0);
+    }
+    let mut sys = System::new();
+    sys.refresh_memory();
+    let total_bytes = sys.total_memory() as usize;
+    if total_bytes == 0 {
+        // sysinfo couldn't introspect (CI sandbox, exotic platform).
+        // Fall back to a conservative 256 MB.
+        return (256 * 1024 * 1024, 0);
+    }
+    const RESERVED_FOR_OTHERS: usize = 1024 * 1024 * 1024;
+    let avail = total_bytes.saturating_sub(RESERVED_FOR_OTHERS);
+    let clamped = avail.clamp(64 * 1024 * 1024, 8 * 1024 * 1024 * 1024);
+    (clamped, total_bytes)
+}
 
 /// Database statistics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -109,10 +186,33 @@ pub struct TheoremDb {
 
 impl TheoremDb {
     /// Open or create a theorem database at the given path.
+    ///
+    /// Allocates a single shared LRU block cache (sized via
+    /// [`compute_block_cache_bytes`]) and applies it to every column
+    /// family. Hot pages of any kind compete for the same RAM budget,
+    /// which is ideal under load: chain-search lookups (corpus-axiom
+    /// reads) and theorem reads (theorem CF) share the cache instead of
+    /// duplicating a tiny per-CF default.
     pub fn new(path: &str) -> Result<Self> {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
+
+        let (cache_bytes, total_bytes) = compute_block_cache_bytes();
+        let block_cache = Cache::new_lru_cache(cache_bytes);
+        if total_bytes > 0 {
+            tracing::info!(
+                "RocksDB block cache: {} MB ({}% of {} MB system RAM)",
+                cache_bytes / (1024 * 1024),
+                cache_bytes * 100 / total_bytes,
+                total_bytes / (1024 * 1024),
+            );
+        } else {
+            tracing::info!(
+                "RocksDB block cache: {} MB (env override / fallback)",
+                cache_bytes / (1024 * 1024),
+            );
+        }
 
         // Point-lookup CFs benefit from Bloom filters to avoid unnecessary
         // disk reads for non-existent keys.
@@ -121,15 +221,7 @@ impl TheoremDb {
 
         let cf_descriptors: Vec<ColumnFamilyDescriptor> = ALL_CFS
             .iter()
-            .map(|name| {
-                let mut cf_opts = Options::default();
-                if POINT_LOOKUP_CFS.contains(name) {
-                    let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_bloom_filter(10.0, false); // 10 bits/key, full filter
-                    cf_opts.set_block_based_table_factory(&block_opts);
-                }
-                ColumnFamilyDescriptor::new(*name, cf_opts)
-            })
+            .map(|name| build_cf_descriptor(name, &block_cache, POINT_LOOKUP_CFS))
             .collect();
 
         let db = DB::open_cf_descriptors(&db_opts, path, cf_descriptors)
@@ -1135,8 +1227,49 @@ impl TheoremDb {
     }
 }
 
+/// Build a `ColumnFamilyDescriptor` with per-CF tuning. Routes:
+///
+/// - `CF_CORPUS_AXIOM` → bloom filter + `optimize_for_point_lookup` so
+///   chain-engine name lookups hit the bloom filter on misses
+///   (RAM-speed) and the block cache on hits.
+/// - `CF_CORPUS_DOMAIN` → default block-based table; this CF is
+///   range-scanned, not point-looked-up, so bloom filters would just
+///   waste cache slots.
+/// - Other point-lookup CFs (theorems, proofs, etc.) → bloom filter
+///   only (their working set is small so they don't need the
+///   point-lookup optimization).
+/// - All CFs share the global LRU block cache.
+fn build_cf_descriptor(
+    name: &str,
+    block_cache: &Cache,
+    point_lookup_cfs: &[&str],
+) -> ColumnFamilyDescriptor {
+    let mut cf_opts = Options::default();
+    let mut block_opts = BlockBasedOptions::default();
+    block_opts.set_block_cache(block_cache);
+    if name == CF_CORPUS_AXIOM {
+        // 10 bits/key bloom — negative lookups (axiom not in corpus,
+        // common for hand-coded postulate names that only live in the
+        // hot tier) become RAM-speed without a disk seek.
+        block_opts.set_bloom_filter(10.0, false);
+        block_opts.set_whole_key_filtering(true);
+        cf_opts.set_block_based_table_factory(&block_opts);
+        // 64 MB hint — ignored under shared cache but enables the
+        // hash-index / whole-key-filter prefetch path that turns
+        // axiom-name lookups into <1 µs hits when the page is hot.
+        cf_opts.optimize_for_point_lookup(64);
+    } else if point_lookup_cfs.contains(&name) {
+        block_opts.set_bloom_filter(10.0, false);
+        cf_opts.set_block_based_table_factory(&block_opts);
+    } else {
+        // Range-scan / general CFs: just attach the shared cache.
+        cf_opts.set_block_based_table_factory(&block_opts);
+    }
+    ColumnFamilyDescriptor::new(name, cf_opts)
+}
+
 /// Convert a Domain enum to a string key for indexing.
-fn domain_to_key(domain: &Domain) -> String {
+pub(crate) fn domain_to_key(domain: &Domain) -> String {
     match domain {
         Domain::PureMath => "pure_math".to_string(),
         Domain::ClassicalMechanics => "classical_mechanics".to_string(),

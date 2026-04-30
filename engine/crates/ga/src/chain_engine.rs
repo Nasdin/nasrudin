@@ -682,10 +682,6 @@ fn random_chain_seed(
     rng: &mut impl Rng,
     _report: &mut DiscoveryReport,
 ) -> Chain {
-    let names: Vec<String> = store.names().into_iter().map(String::from).collect();
-    if names.is_empty() {
-        return Chain::new();
-    }
     // **Iter 19 — seed-bank diversification.** ~20 % of seeds load
     // ALL upstream axioms (in shuffled order); the rest seed with
     // 3-5 random axioms as before. This is *not* domain hard-coding:
@@ -693,7 +689,21 @@ fn random_chain_seed(
     // material loaded" — it doesn't tell the GA *what* to derive.
     // Without it, the GA rarely accumulates all 4 useful axioms
     // (four_momentum, mink, mass, rest_frame) in one chain.
-    if rng.random_bool(0.2) {
+    //
+    // Cold-tier note: this routine intentionally pulls only from
+    // the hot tier (hand-coded postulates + PhysLean catalog —
+    // ~2-5 k entries). Pre-loading all 195 k Mathlib lemmas into a
+    // single chain would explode chain length and search depth,
+    // defeating the diversification goal. The 3-5-axiom random fill
+    // path below still pulls from hot+cold via the bandwidth-
+    // bounded two-stage pick.
+    let hot_names_vec = store.iter_hot_names();
+    let cold_names = store.cold_names();
+    let names: Vec<String> = hot_names_vec.clone();
+    if names.is_empty() && cold_names.is_empty() {
+        return Chain::new();
+    }
+    if rng.random_bool(0.2) && !names.is_empty() {
         let mut shuffled = names.clone();
         // Fisher-Yates shuffle.
         for i in (1..shuffled.len()).rev() {
@@ -709,8 +719,17 @@ fn random_chain_seed(
 
     let n_axioms = rng.random_range(3..=5);
     let mut chain = Chain::new();
+    let total = hot_names_vec.len() + cold_names.len();
     for _ in 0..n_axioms {
-        let name = names.iter().choose(rng).unwrap().clone();
+        if total == 0 {
+            break;
+        }
+        let idx = rng.random_range(0..total);
+        let name = if idx < hot_names_vec.len() {
+            hot_names_vec[idx].clone()
+        } else {
+            cold_names[idx - hot_names_vec.len()].clone()
+        };
         chain.push(RuleStep::IntroduceAxiom { axiom_name: name });
     }
     chain

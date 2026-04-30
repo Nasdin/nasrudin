@@ -16,7 +16,7 @@
 //! — every entry is a target the system is supposed to *derive*.
 
 use crate::axiom_store::AxiomStore;
-use nasrudin_core::{BinOp, Expr, PhysConst, UnOp};
+use nasrudin_core::{Axiom, BinOp, Expr, PhysConst, UnOp};
 
 /// Build the deny-list of canonical-form statements that must never
 /// appear as starting axioms. Each entry is constructed as the same
@@ -207,6 +207,10 @@ pub fn forbidden_canonical_statements() -> Vec<(&'static str, String)> {
 pub fn audit(store: &AxiomStore) -> Vec<AuditViolation> {
     let forbidden = forbidden_canonical_statements();
     let mut violations = Vec::new();
+    // store.iter() yields owned Axioms (the cold tier decodes fresh
+    // from RocksDB). For the audit this is fine: ~195k entries × one
+    // canonical-form computation each takes a few seconds at boot,
+    // and only happens once before the API starts serving.
     for axiom in store.iter() {
         let canon = axiom.statement.to_canonical();
         for (label, denied) in &forbidden {

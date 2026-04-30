@@ -55,24 +55,46 @@ pub async fn reload_corpus(
 
     // Heavy I/O off the runtime.
     let prover_root = std::env::var("PROVER_ROOT").unwrap_or_else(|_| "../prover".into());
-    let rebuild = tokio::task::spawn_blocking(move || -> anyhow::Result<(AxiomStore, usize, usize)> {
-        let mut store = AxiomStore::new();
-        let catalog =
-            std::path::Path::new(&prover_root).join("../physlean-extract/output/catalog.json");
-        if catalog.exists() {
-            store.load_from_catalog(&catalog)?;
-        }
-        store.load_special_relativity_upstream();
-        store.load_electromagnetism_upstream();
-        store.load_classical_mechanics_postulates();
-        let math_corpus = std::path::Path::new(&prover_root)
-            .join("../physlean-extract/output/math_corpus.json");
-        let math_count = store.load_math_corpus(&math_corpus).unwrap_or(0);
-        nasrudin_derive::no_cheat_audit::audit_or_panic(&store, "reload_corpus");
-        let total = store.len();
-        Ok((store, total, math_count))
-    })
-    .await;
+    // Re-hydrate the cold tier from the on-disk math_corpus.json
+    // (overwriting in place — `put_corpus_axiom` is idempotent on
+    // axiom name) and re-load the hot tier from PhysLean catalog +
+    // hand-coded postulates. The fresh AxiomStore wraps the same
+    // underlying CorpusDb that the running process is already
+    // serving, so workers in flight observe the new hot tier on
+    // their next `state.axiom_store.load()` snapshot.
+    let corpus_db: Arc<dyn nasrudin_rocks::CorpusBackend> = Arc::new(
+        nasrudin_rocks::CorpusDb::on_existing_db(state.db.shared_db()),
+    );
+    let rebuild = {
+        let corpus_db_for_blocking = Arc::clone(&corpus_db);
+        tokio::task::spawn_blocking(move || -> anyhow::Result<(AxiomStore, usize, u64)> {
+            let math_corpus = std::path::Path::new(&prover_root)
+                .join("../physlean-extract/output/math_corpus.json");
+            let math_count = if math_corpus.exists() {
+                AxiomStore::hydrate_math_corpus_to_cold(&*corpus_db_for_blocking, &math_corpus)
+                    .unwrap_or(0)
+            } else {
+                corpus_db_for_blocking.count().unwrap_or(0)
+            };
+            let mut store = AxiomStore::with_corpus(corpus_db_for_blocking);
+            let catalog = std::path::Path::new(&prover_root)
+                .join("../physlean-extract/output/catalog.json");
+            if catalog.exists() {
+                store.load_from_catalog(&catalog)?;
+            }
+            store.load_special_relativity_upstream();
+            store.load_electromagnetism_upstream();
+            store.load_classical_mechanics_postulates();
+            store.load_quantum_mechanics_postulates();
+            store.load_thermodynamics_postulates();
+            store.load_statistical_mechanics_postulates();
+            store.load_general_relativity_postulates();
+            nasrudin_derive::no_cheat_audit::audit_or_panic(&store, "reload_corpus");
+            let total = store.len();
+            Ok((store, total, math_count))
+        })
+        .await
+    };
 
     let (store, total, math_count) = match rebuild {
         Ok(Ok(t)) => t,

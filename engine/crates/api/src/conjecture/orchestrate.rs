@@ -123,14 +123,26 @@ fn nearest_neighbours(state: &Arc<AppState>, _hunch: &str, _k: usize) -> Vec<Nei
     Vec::new()
 }
 
+/// Build the LLM's view of the axiom catalog.
+///
+/// **Cold-tier policy:** this handler runs on the conjecture-LLM
+/// path. Sending 195 k Mathlib axiom names as context would blow
+/// the prompt-token budget by ~100×; the LLM only needs to see the
+/// hot tier (hand-coded postulates + PhysLean catalog, ~few
+/// thousand entries) to plan a derivation. The chain-replay path
+/// resolves cold-tier axiom *names* on demand server-side, so a
+/// generated chain that references mathlib lemmas by name still
+/// works.
 fn axiom_catalog(state: &Arc<AppState>) -> Vec<AxiomEntry> {
     let store = state.axiom_store.load();
     store
-        .iter()
+        .iter_hot_names()
+        .into_iter()
+        .filter_map(|name| store.get(&name))
         .map(|a| AxiomEntry {
-            name: a.name.clone(),
+            name: a.name,
             domain: format!("{:?}", a.domain),
-            description: a.description.clone(),
+            description: a.description,
         })
         .collect()
 }

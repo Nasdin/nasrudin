@@ -87,17 +87,88 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Load PhysLean axioms from catalog, then layer the upstream SR + EM
-    // Expr-tree axioms on top so the server's AxiomStore mirrors what
-    // workers see. Workers can submit chains that reference upstream
-    // axioms by name; reverify::check_chain replays them server-side and
-    // rejects unknown names — so the server must know the same names.
-    let mut axiom_store = AxiomStore::new();
+    // ── AxiomStore boot — two-tier hot/cold construction ────────────
+    //
+    // Hot tier: hand-coded postulates + PhysLean catalog (~2-5 k
+    // axioms, ~10 MB resident). Cold tier: the ~195 k Mathlib +
+    // Unknown corpus, RocksDB-backed via the same shared block cache
+    // as the theorem store. First boot streams math_corpus.json into
+    // the cold tier (~30 s, ~50 MB peak); subsequent boots see
+    // `is_hydrated() == true` and skip the JSON parse entirely.
+    //
+    // This keeps the API process resident under ~500 MB on the 2 GB
+    // production droplet, where the previous eager-load peaked at
+    // ~3.8 GB during `serde_json::from_str` of the corpus file and
+    // OOMed.
     let prover_root = std::env::var("PROVER_ROOT").unwrap_or_else(|_| "../prover".into());
+    let math_corpus_path =
+        std::path::Path::new(&prover_root).join("../physlean-extract/output/math_corpus.json");
+    const MATHLIB_MIN_ENTRIES: u64 = 10_000;
+
+    let corpus_db: Arc<dyn nasrudin_rocks::CorpusBackend> = Arc::new(
+        nasrudin_rocks::CorpusDb::on_existing_db(db.shared_db()),
+    );
+
+    // First-boot cold-tier hydration. Idempotent — running on an
+    // already-hydrated DB is a no-op (we still bail loudly if the
+    // JSON is missing AND the cold tier is empty).
+    let already_hydrated = corpus_db.is_hydrated().unwrap_or(false);
+    if !already_hydrated {
+        tracing::warn!(
+            "Cold-tier corpus not hydrated. Streaming {} into RocksDB \
+             (one-time cost, ~30 s)...",
+            math_corpus_path.display()
+        );
+        let hydrate_path = math_corpus_path.clone();
+        let hydrate_corpus = Arc::clone(&corpus_db);
+        let hydrated = tokio::task::spawn_blocking(move || {
+            AxiomStore::hydrate_math_corpus_to_cold(
+                &*hydrate_corpus,
+                &hydrate_path,
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("hydration task join: {e}"))?;
+        match hydrated {
+            Ok(count) => {
+                if count < MATHLIB_MIN_ENTRIES {
+                    panic!(
+                        "Mathlib corpus too small after hydration ({count} entries, \
+                         need ≥{MATHLIB_MIN_ENTRIES}). Re-run `just extract-mathlib`."
+                    );
+                }
+                tracing::info!(
+                    count,
+                    "Cold-tier corpus hydration complete (one-time cost amortised)"
+                );
+            }
+            Err(e) => {
+                panic!(
+                    "Mathlib corpus REQUIRED at boot. Hydration failed for {}: {e}\n\
+                     Run `just extract-mathlib` first.",
+                    math_corpus_path.display()
+                );
+            }
+        }
+    } else {
+        let count = corpus_db.count().unwrap_or(0);
+        if count < MATHLIB_MIN_ENTRIES {
+            panic!(
+                "Cold-tier corpus too small ({count} entries, need ≥{MATHLIB_MIN_ENTRIES}). \
+                 Re-hydrate by wiping the corpus_axiom / corpus_domain / corpus_meta CFs \
+                 and re-running boot, or wipe ROCKS_DB_PATH and re-import."
+            );
+        }
+        tracing::info!(count, "Cold-tier corpus already hydrated");
+    }
+
+    // Hot tier: PhysLean catalog + hand-coded postulates. Each
+    // loader is O(few thousand) and runs in <100 ms.
+    let mut axiom_store = AxiomStore::with_corpus(Arc::clone(&corpus_db));
     let catalog_path =
         std::path::Path::new(&prover_root).join("../physlean-extract/output/catalog.json");
     match axiom_store.load_from_catalog(&catalog_path) {
-        Ok(count) => tracing::info!("Loaded {count} axioms from {}", catalog_path.display()),
+        Ok(count) => tracing::info!("Loaded {count} axioms from {} into hot tier", catalog_path.display()),
         Err(e) => tracing::warn!("Failed to load catalog ({e}): continuing with upstream only"),
     }
     axiom_store.load_special_relativity_upstream();
@@ -123,32 +194,11 @@ async fn main() -> anyhow::Result<()> {
     // equation, equivalence principle, Newtonian limit.
     axiom_store.load_general_relativity_postulates();
 
-    // Math corpus from Mathlib (real-arithmetic identities). HARD
-    // REQUIREMENT: missing or truncated corpus panics at boot. Run
-    // `just extract-mathlib` first; CI runs `just bootstrap`.
-    const MATHLIB_MIN_ENTRIES: usize = 10_000;
-    let math_corpus_path =
-        std::path::Path::new(&prover_root).join("../physlean-extract/output/math_corpus.json");
-    let math_count = axiom_store
-        .load_math_corpus(&math_corpus_path)
-        .unwrap_or_else(|e| {
-            panic!(
-                "Mathlib corpus REQUIRED at boot. Failed to load {}: {e}\n\
-                 Run `just extract-mathlib` first.",
-                math_corpus_path.display()
-            )
-        });
-    if math_count < MATHLIB_MIN_ENTRIES {
-        panic!(
-            "Mathlib corpus too small ({math_count} entries, need ≥{MATHLIB_MIN_ENTRIES}). \
-             Re-run `just extract-mathlib` — corpus appears truncated."
-        );
-    }
     tracing::info!(
-        "Loaded {math_count} math-corpus identities from {}",
-        math_corpus_path.display()
+        "AxiomStore boot complete — hot: {} entries, cold: {} entries (Mathlib + Unknown)",
+        axiom_store.iter_hot_names().len(),
+        corpus_db.count().unwrap_or(0),
     );
-    tracing::info!("AxiomStore size after upstream layering: {}", axiom_store.len());
 
     // No-cheat audit: hard-fail boot if any registered axiom matches a
     // known headline result. Headline results (E=mc², photon dispersion,
@@ -905,6 +955,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/domains", get(list_domains))
         .route("/api/axioms", get(list_axioms))
         .route("/api/seed", get(handlers::seed::seed))
+        // Cold-tier corpus dump for worker hydration. Streams every
+        // entry of `CF_CORPUS_AXIOM` as line-delimited JSON. Workers
+        // call this once on first boot to populate their local
+        // RocksDB; subsequent boots short-circuit on the ETag.
+        // ~150 MB transfer, ~30 s on a typical home connection.
+        .route("/api/corpus/dump", get(handlers::corpus_dump::corpus_dump))
         .route("/api/steering", get(handlers::steering::steering))
         .route("/api/search", post(handlers::search::search))
         .route(
@@ -1676,17 +1732,26 @@ struct AxiomParams {
     domain: Option<String>,
 }
 
-/// List seed axioms loaded from the PhysLean catalog.
+/// List seed axioms.
+///
+/// **Cold-tier policy:** when `domain` is unset this returns the
+/// hot tier only (~few thousand axioms). Listing the full
+/// hot+cold (~195 k) would balloon the response and is rarely what
+/// callers want — for cold-tier browsing pass an explicit `domain`,
+/// which range-scans the secondary index. Capped at 5 000 entries
+/// per response to keep the bandwidth bounded.
 async fn list_axioms(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AxiomParams>,
 ) -> Json<serde_json::Value> {
     let store = state.axiom_store.load();
+    const LIST_AXIOMS_CAP: usize = 5_000;
     let axioms: Vec<serde_json::Value> = if let Some(ref domain_str) = params.domain {
         match parse_domain(domain_str) {
             Some(domain) => store
                 .by_domain(&domain)
                 .into_iter()
+                .take(LIST_AXIOMS_CAP)
                 .map(|a| {
                     serde_json::json!({
                         "name": a.name,
@@ -1698,10 +1763,15 @@ async fn list_axioms(
             None => vec![],
         }
     } else {
+        // Hot-tier-only path. Walking the cold tier here would mean
+        // shipping ~195 k axioms in a single JSON payload — the
+        // existing /api/seed handler caps at 5 k for a reason. If
+        // the operator needs to enumerate the full corpus, pass
+        // `?domain=pure_math` explicitly.
         store
-            .names()
+            .iter_hot_names()
             .into_iter()
-            .filter_map(|name| store.get(name))
+            .filter_map(|name| store.get(&name))
             .map(|a| {
                 serde_json::json!({
                     "name": a.name,

@@ -210,6 +210,16 @@ fn axiom_injection_with_store(
 
 /// Sample a meaningful sub-expression from the AxiomStore. Returns
 /// `None` if the store has no usable axioms for the domain.
+///
+/// **Cold-tier hot path:** `store.iter()` walks both hot and cold
+/// tiers (~195 k entries). To keep the GA's per-mutation cost
+/// bounded we route the "any axiom" branch through
+/// [`AxiomStore::cold_names`] (a snapshot built once at boot) +
+/// `store.get(name)` — O(1) name pick + one bloom-filtered RocksDB
+/// fetch instead of a full O(N) iter walk per mutation. The
+/// per-domain branch still calls `by_domain(d)` and chooses from
+/// that bounded slice; for hot-only domains (SR, EM, classical)
+/// this stays in-RAM.
 fn sample_axiom_fragment(
     store: &AxiomStore,
     domain_hint: Option<&nasrudin_core::Domain>,
@@ -218,20 +228,44 @@ fn sample_axiom_fragment(
     // 70/30 split: domain-matched preferred, full store fallback for
     // cross-domain leverage.
     let prefer_domain = domain_hint.is_some() && rng.random_bool(0.7);
-    let chosen: Option<&nasrudin_derive::Axiom> = if prefer_domain {
+    let chosen: Option<nasrudin_derive::Axiom> = if prefer_domain {
         let dom = domain_hint.unwrap();
         let domain_set = store.by_domain(dom);
         if domain_set.is_empty() {
-            // Domain has no axioms; fall through to full store.
-            store.iter().choose(rng)
+            sample_any_axiom(store, rng)
         } else {
             domain_set.into_iter().choose(rng)
         }
     } else {
-        store.iter().choose(rng)
+        sample_any_axiom(store, rng)
     };
     let axiom = chosen?;
     Some(extract_meaningful_fragment(&axiom.statement, rng))
+}
+
+/// Pick a random axiom from the full store (hot ∪ cold) without
+/// iterating the cold tier on every call. Two-stage:
+///
+/// 1. Flip a weighted coin between hot and cold based on tier sizes.
+/// 2. Hot path: collect hot keys, choose one, look up.
+/// 3. Cold path: index into the pre-snapshotted `cold_names` list,
+///    look up via the bloom-filtered RocksDB CF.
+///
+/// Falls back gracefully when one tier is empty.
+fn sample_any_axiom(store: &AxiomStore, rng: &mut impl Rng) -> Option<nasrudin_derive::Axiom> {
+    let cold_names = store.cold_names();
+    let hot_keys: Vec<String> = store.iter_hot_names();
+    let total = hot_keys.len() + cold_names.len();
+    if total == 0 {
+        return None;
+    }
+    let pick = rng.random_range(0..total);
+    let name = if pick < hot_keys.len() {
+        &hot_keys[pick]
+    } else {
+        &cold_names[pick - hot_keys.len()]
+    };
+    store.get(name)
 }
 
 /// Pick a meaningful sub-expression from a propositional axiom.

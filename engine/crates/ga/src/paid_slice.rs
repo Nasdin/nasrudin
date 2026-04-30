@@ -159,12 +159,18 @@ fn subset_store_for_hunch(
     wanted_idents: &std::collections::HashSet<String>,
 ) -> AxiomStore {
     if wanted_idents.is_empty() {
-        return clone_store(full);
+        return full.clone();
     }
     let always: std::collections::HashSet<&str> =
         ALWAYS_KEEP_AXIOMS.iter().copied().collect();
     let mut out = AxiomStore::new();
     let mut kept = 0usize;
+    // `full.iter()` walks both hot and cold tiers. The cold half is
+    // ~195k entries; we walk it once at paid-slice init to subset
+    // down to the hunch-relevant axioms (typically <100 kept), then
+    // the resulting store is hot-only and the GA's hot path runs
+    // free of any RocksDB lookup. Acceptable cost for the
+    // hunch-narrowing stage.
     for ax in full.iter() {
         let always_keep = always.contains(ax.name.as_str());
         let mentions = {
@@ -174,7 +180,7 @@ fn subset_store_for_hunch(
                 .any(|ident| canon.contains(&format!("v:{ident}")))
         };
         if always_keep || mentions {
-            out.register(ax.clone());
+            out.register(ax);
             kept += 1;
         }
     }
@@ -182,16 +188,7 @@ fn subset_store_for_hunch(
         // Subsetting was too aggressive (e.g. exotic identifiers in
         // the hunch don't appear in any axiom). Fall back to the full
         // store rather than starve the GA.
-        return clone_store(full);
-    }
-    out
-}
-
-/// `AxiomStore` doesn't impl `Clone` directly, so iterate-and-register.
-fn clone_store(s: &AxiomStore) -> AxiomStore {
-    let mut out = AxiomStore::new();
-    for ax in s.iter() {
-        out.register(ax.clone());
+        return full.clone();
     }
     out
 }

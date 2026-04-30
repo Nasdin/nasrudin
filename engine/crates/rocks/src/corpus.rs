@@ -1,0 +1,478 @@
+//! Cold-tier corpus backend for [`nasrudin_derive::AxiomStore`].
+//!
+//! ## Why a cold tier
+//!
+//! The Mathlib math-corpus extract has ~195k entries (~290 MB JSON).
+//! Eager-loading it into a `HashMap<String, Axiom>` peaks at ~3.8 GB
+//! of resident RAM during `serde_json::from_str` on the production
+//! 4 GB droplet — boot OOMs and the API is unavailable. With this
+//! cold tier:
+//!
+//! - The hot tier (in-memory `HashMap`) holds the ~3-5 k hand-coded
+//!   postulates + PhysLean catalog entries that the GA's hot path
+//!   touches every chunk.
+//! - The cold tier (this module) holds the full 195 k Mathlib +
+//!   Unknown corpus on disk in RocksDB. Lookups are point-fetches
+//!   against [`CF_CORPUS_AXIOM`](super::CF_CORPUS_AXIOM) (bloom-filter-
+//!   gated, ~5–50 µs warm); domain scans are range-iterations over
+//!   [`CF_CORPUS_DOMAIN`](super::CF_CORPUS_DOMAIN).
+//!
+//! The shared block cache (configured in [`crate::TheoremDb::new`])
+//! catches >95 % of lookups in steady state for the typical chunk
+//! working set.
+//!
+//! ## Hydration
+//!
+//! First boot runs [`AxiomStore::hydrate_math_corpus_to_cold`](
+//! ../../../derive/src/axiom_store.rs) which streams the JSON file
+//! and `put_corpus_axiom`s in 1000-axiom batches. Subsequent boots
+//! see `is_hydrated() == true` and skip the JSON parse entirely —
+//! the hot tier loads in <100 ms and the cold tier is paged on
+//! demand.
+
+use anyhow::{Context, Result};
+use nasrudin_core::{Axiom, Domain};
+use rocksdb::{
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB,
+};
+use std::sync::Arc;
+
+use super::{
+    compute_block_cache_bytes, domain_to_key, CF_CORPUS_AXIOM, CF_CORPUS_DOMAIN, CF_CORPUS_META,
+};
+
+/// Abstract cold-tier corpus interface used by
+/// `nasrudin_derive::AxiomStore`. The derive crate doesn't see
+/// RocksDB directly — it holds an `Arc<dyn CorpusBackend>` so unit
+/// tests can mock the backend with an in-memory implementation.
+///
+/// Methods return owned `Axiom` values (decoded fresh from the
+/// underlying store) — there's no stable borrow lifetime across a
+/// RocksDB read.
+pub trait CorpusBackend: Send + Sync {
+    /// Look up a single axiom by name. Returns `Ok(None)` when the
+    /// name isn't in the cold tier. The bloom filter on
+    /// `CF_CORPUS_AXIOM` makes this RAM-speed for misses (~100 ns).
+    fn get(&self, name: &str) -> Result<Option<Axiom>>;
+
+    /// Iterate every cold-tier axiom in `CF_CORPUS_AXIOM` key order.
+    /// The iterator is lazy — it pulls one axiom at a time so callers
+    /// (e.g. `no_cheat_audit::audit`) can stream without loading
+    /// 195k entries into RAM. Yields `Err` on a corrupt encoding;
+    /// callers typically log and skip.
+    fn iter(&self) -> Box<dyn Iterator<Item = Result<(String, Axiom)>> + '_>;
+
+    /// Iterate cold-tier axioms whose `domain` matches `domain`.
+    /// Range-scans `CF_CORPUS_DOMAIN` for the prefix
+    /// `domain_str | 0x00`, then for each entry resolves the full
+    /// `Axiom` from `CF_CORPUS_AXIOM`.
+    fn iter_by_domain(
+        &self,
+        domain: &Domain,
+    ) -> Box<dyn Iterator<Item = Result<(String, Axiom)>> + '_>;
+
+    /// Total number of axioms in the cold tier. Reads the cached
+    /// `count` meta key — O(1).
+    fn count(&self) -> Result<u64>;
+
+    /// `true` when the cold tier has been populated at least once.
+    /// `AxiomStore` constructor uses this to decide whether to run
+    /// hydration on first boot.
+    fn is_hydrated(&self) -> Result<bool>;
+
+    /// Insert a single axiom (writes both `CF_CORPUS_AXIOM` and the
+    /// `CF_CORPUS_DOMAIN` index in one atomic `WriteBatch`).
+    /// Idempotent — re-inserting the same name overwrites the value.
+    /// Used by the streaming hydrator and by tests; the hot path is
+    /// read-only so the GA never calls this.
+    fn put(&self, axiom: &Axiom) -> Result<()>;
+
+    /// Mark the cold tier hydrated and persist the running count.
+    /// Called by the hydrator at end-of-stream so subsequent boots
+    /// short-circuit the JSON parse.
+    fn finish_hydration(&self, total: u64) -> Result<()>;
+
+    /// Snapshot every axiom name into a `Vec<String>`. Used by the
+    /// AxiomStore's mutation hot path: `store.iter().choose(rng)` on
+    /// 195k entries is O(N) and re-iterates RocksDB every call. We
+    /// cache this list in-process at construction time so name picks
+    /// become O(1) + a single RocksDB point-lookup. Bounded
+    /// memory: 195k × ~30 B avg = ~6 MB.
+    fn snapshot_names(&self) -> Result<Vec<String>>;
+}
+
+/// RocksDB-backed corpus store. Holds an `Arc<DB>` so it can be
+/// constructed from an existing [`TheoremDb`](super::TheoremDb)
+/// (`CorpusDb::on_existing_db(db.shared_db())`) — a separate
+/// RocksDB instance would defeat the shared block-cache budget.
+pub struct CorpusDb {
+    db: Arc<DB>,
+}
+
+impl CorpusDb {
+    /// Wrap an existing RocksDB handle. The caller's `TheoremDb` and
+    /// the returned `CorpusDb` share the same block cache (configured
+    /// at `TheoremDb::new` open time), the same column-family
+    /// registry, and the same on-disk write-ahead log. This is the
+    /// preferred constructor for the API server, where the cold tier
+    /// rides on the same RocksDB instance as the theorem store.
+    pub fn on_existing_db(db: Arc<DB>) -> Self {
+        Self { db }
+    }
+
+    /// Open a standalone CorpusDb at `path` — used by the **worker**
+    /// where there's no `TheoremDb` to share with. Opens only the
+    /// three corpus column families (`CF_CORPUS_AXIOM`,
+    /// `CF_CORPUS_DOMAIN`, `CF_CORPUS_META`) plus the implicit default
+    /// CF, with the same dynamic block-cache sizing
+    /// ([`compute_block_cache_bytes`]) and bloom-filter / point-lookup
+    /// optimisation as the API server's setup.
+    ///
+    /// Why a separate constructor instead of just calling `TheoremDb::new`:
+    /// the worker's RocksDB only holds the cold-tier corpus — it doesn't
+    /// participate in theorem CRUD, the reverify queue, the verified-at
+    /// recency index, etc. Opening 12+ unused CFs would waste table-cache
+    /// slots and double our open-file budget on the Pi. The worker only
+    /// needs the corpus tier, so we open exactly that.
+    ///
+    /// On the 1 GB Raspberry Pi target, `compute_block_cache_bytes()`
+    /// returns the 64 MB floor — enough to hold ~50–100 MB of hot corpus
+    /// pages plus the bloom filter + index blocks for the ~195k-entry
+    /// `CF_CORPUS_AXIOM`. Steady-state working-set hit rate stays >95%
+    /// for the typical 5–20 k-axiom GA chunk.
+    pub fn open_standalone(path: &std::path::Path) -> Result<Self> {
+        let mut db_opts = Options::default();
+        db_opts.create_if_missing(true);
+        db_opts.create_missing_column_families(true);
+
+        let (cache_bytes, total_bytes) = compute_block_cache_bytes();
+        let block_cache = Cache::new_lru_cache(cache_bytes);
+        if total_bytes > 0 {
+            tracing::info!(
+                "Worker RocksDB block cache: {} MB ({}% of {} MB system RAM)",
+                cache_bytes / (1024 * 1024),
+                cache_bytes * 100 / total_bytes,
+                total_bytes / (1024 * 1024),
+            );
+        } else {
+            tracing::info!(
+                "Worker RocksDB block cache: {} MB (env override / fallback)",
+                cache_bytes / (1024 * 1024),
+            );
+        }
+
+        // Build descriptors: corpus_axiom gets the bloom + point-lookup
+        // optimisation; the index and meta CFs are plain block-table.
+        let cf_descriptors: Vec<ColumnFamilyDescriptor> = [
+            CF_CORPUS_AXIOM,
+            CF_CORPUS_DOMAIN,
+            CF_CORPUS_META,
+        ]
+        .iter()
+        .map(|name| {
+            let mut cf_opts = Options::default();
+            let mut block_opts = BlockBasedOptions::default();
+            block_opts.set_block_cache(&block_cache);
+            if *name == CF_CORPUS_AXIOM {
+                block_opts.set_bloom_filter(10.0, false);
+                block_opts.set_whole_key_filtering(true);
+                cf_opts.set_block_based_table_factory(&block_opts);
+                cf_opts.optimize_for_point_lookup(64);
+            } else {
+                cf_opts.set_block_based_table_factory(&block_opts);
+            }
+            ColumnFamilyDescriptor::new(*name, cf_opts)
+        })
+        .collect();
+
+        let db = DB::open_cf_descriptors(&db_opts, path, cf_descriptors)
+            .with_context(|| format!("open standalone CorpusDb at {}", path.display()))?;
+        Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Build the secondary-index key:
+    /// `domain_str | 0x00 | axiom_name_bytes`.
+    fn domain_key(domain_str: &str, name: &str) -> Vec<u8> {
+        let mut k = Vec::with_capacity(domain_str.len() + 1 + name.len());
+        k.extend_from_slice(domain_str.as_bytes());
+        k.push(0u8);
+        k.extend_from_slice(name.as_bytes());
+        k
+    }
+}
+
+impl CorpusBackend for CorpusDb {
+    fn get(&self, name: &str) -> Result<Option<Axiom>> {
+        let cf = self
+            .db
+            .cf_handle(CF_CORPUS_AXIOM)
+            .context("Missing corpus_axiom CF")?;
+        match self.db.get_cf(&cf, name.as_bytes()).context("get corpus axiom")? {
+            Some(bytes) => {
+                let axiom: Axiom = bincode::deserialize(&bytes)
+                    .context("deserialize corpus axiom")?;
+                Ok(Some(axiom))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn iter(&self) -> Box<dyn Iterator<Item = Result<(String, Axiom)>> + '_> {
+        let cf = match self.db.cf_handle(CF_CORPUS_AXIOM) {
+            Some(cf) => cf,
+            None => return Box::new(std::iter::empty()),
+        };
+        let inner = self.db.iterator_cf(&cf, IteratorMode::Start);
+        Box::new(inner.map(|item| {
+            let (k, v) = item.context("iter corpus_axiom")?;
+            let name = String::from_utf8(k.to_vec())
+                .context("corpus_axiom key not utf8")?;
+            let axiom: Axiom = bincode::deserialize(&v)
+                .context("deserialize corpus axiom")?;
+            Ok((name, axiom))
+        }))
+    }
+
+    fn iter_by_domain(
+        &self,
+        domain: &Domain,
+    ) -> Box<dyn Iterator<Item = Result<(String, Axiom)>> + '_> {
+        let domain_str = domain_to_key(domain);
+        // Prefix is `domain_str | 0x00` — anything starting with this
+        // is in the requested domain.
+        let mut prefix = domain_str.clone().into_bytes();
+        prefix.push(0u8);
+
+        let idx_cf = match self.db.cf_handle(CF_CORPUS_DOMAIN) {
+            Some(cf) => cf,
+            None => return Box::new(std::iter::empty()),
+        };
+        // Verify CF_CORPUS_AXIOM exists once up front; the per-item
+        // closure re-resolves on each call (cheap pointer fetch) since
+        // the borrow doesn't escape this function's lifetime.
+        if self.db.cf_handle(CF_CORPUS_AXIOM).is_none() {
+            return Box::new(std::iter::empty());
+        }
+        let db = Arc::clone(&self.db);
+        let prefix_for_filter = prefix.clone();
+        let inner = self
+            .db
+            .prefix_iterator_cf(&idx_cf, &prefix)
+            .take_while(move |item| match item {
+                Ok((k, _)) => k.starts_with(&prefix_for_filter),
+                Err(_) => true,
+            });
+        Box::new(inner.map(move |item| {
+            let (k, _) = item.context("iter corpus_domain")?;
+            // Strip prefix to recover the axiom name.
+            let name_bytes = &k[prefix.len()..];
+            let name = std::str::from_utf8(name_bytes)
+                .context("corpus_domain index name not utf8")?
+                .to_string();
+            let axiom_cf = db
+                .cf_handle(CF_CORPUS_AXIOM)
+                .context("Missing corpus_axiom CF on lookup")?;
+            let payload = db
+                .get_cf(&axiom_cf, name.as_bytes())
+                .context("get corpus_axiom for domain index")?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("corpus_domain points to missing axiom: {name}")
+                })?;
+            let axiom: Axiom =
+                bincode::deserialize(&payload).context("deserialize corpus axiom")?;
+            Ok((name, axiom))
+        }))
+    }
+
+    fn count(&self) -> Result<u64> {
+        let cf = self
+            .db
+            .cf_handle(CF_CORPUS_META)
+            .context("Missing corpus_meta CF")?;
+        match self.db.get_cf(&cf, b"count").context("get corpus_meta count")? {
+            Some(v) => {
+                let s = std::str::from_utf8(&v).context("count meta not utf8")?;
+                Ok(s.parse::<u64>().unwrap_or(0))
+            }
+            None => Ok(0),
+        }
+    }
+
+    fn is_hydrated(&self) -> Result<bool> {
+        let cf = self
+            .db
+            .cf_handle(CF_CORPUS_META)
+            .context("Missing corpus_meta CF")?;
+        Ok(self
+            .db
+            .get_cf(&cf, b"hydrated_at")
+            .context("get corpus_meta hydrated_at")?
+            .is_some())
+    }
+
+    fn put(&self, axiom: &Axiom) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        let axiom_cf = self
+            .db
+            .cf_handle(CF_CORPUS_AXIOM)
+            .context("Missing corpus_axiom CF")?;
+        let domain_cf = self
+            .db
+            .cf_handle(CF_CORPUS_DOMAIN)
+            .context("Missing corpus_domain CF")?;
+
+        let value = bincode::serialize(axiom).context("serialize corpus axiom")?;
+        batch.put_cf(&axiom_cf, axiom.name.as_bytes(), &value);
+
+        let domain_str = domain_to_key(&axiom.domain);
+        let dkey = Self::domain_key(&domain_str, &axiom.name);
+        batch.put_cf(&domain_cf, &dkey, b"");
+
+        self.db.write(batch).context("write corpus batch")?;
+        Ok(())
+    }
+
+    fn finish_hydration(&self, total: u64) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(CF_CORPUS_META)
+            .context("Missing corpus_meta CF")?;
+        self.db
+            .put_cf(&cf, b"count", total.to_string().as_bytes())
+            .context("put corpus_meta count")?;
+        let now = chrono::Utc::now().to_rfc3339();
+        self.db
+            .put_cf(&cf, b"hydrated_at", now.as_bytes())
+            .context("put corpus_meta hydrated_at")?;
+        // Bump the version key so future schema migrations can
+        // detect a downlevel cold tier and re-hydrate.
+        self.db
+            .put_cf(&cf, b"version", b"1")
+            .context("put corpus_meta version")?;
+        Ok(())
+    }
+
+    fn snapshot_names(&self) -> Result<Vec<String>> {
+        let cf = self
+            .db
+            .cf_handle(CF_CORPUS_AXIOM)
+            .context("Missing corpus_axiom CF")?;
+        let mut names = Vec::new();
+        for item in self.db.iterator_cf(&cf, IteratorMode::Start) {
+            let (k, _) = item.context("iter corpus_axiom for snapshot_names")?;
+            let name = String::from_utf8(k.to_vec())
+                .context("corpus_axiom key not utf8 in snapshot_names")?;
+            names.push(name);
+        }
+        Ok(names)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TheoremDb;
+    use nasrudin_core::{BinOp, Domain, Expr};
+    use tempfile::TempDir;
+
+    fn open() -> (TheoremDb, CorpusDb, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db = TheoremDb::new(tmp.path().to_str().unwrap()).unwrap();
+        let cdb = CorpusDb::on_existing_db(db.shared_db());
+        (db, cdb, tmp)
+    }
+
+    fn mk(name: &str, domain: Domain) -> Axiom {
+        Axiom {
+            name: name.to_string(),
+            domain,
+            statement: Expr::BinOp(
+                BinOp::Eq,
+                Box::new(Expr::Var(name.to_string())),
+                Box::new(Expr::Lit(0, 1)),
+            ),
+            description: format!("doc for {name}"),
+        }
+    }
+
+    #[test]
+    fn write_then_read_round_trip() {
+        let (_db, cdb, _tmp) = open();
+        for i in 0..100 {
+            let dom = if i % 3 == 0 {
+                Domain::PureMath
+            } else {
+                Domain::SpecialRelativity
+            };
+            cdb.put(&mk(&format!("ax_{i}"), dom)).unwrap();
+        }
+        cdb.finish_hydration(100).unwrap();
+
+        assert_eq!(cdb.count().unwrap(), 100);
+        assert!(cdb.is_hydrated().unwrap());
+
+        // Point lookup hit
+        let ax = cdb.get("ax_42").unwrap().unwrap();
+        assert_eq!(ax.name, "ax_42");
+        assert_eq!(ax.domain, Domain::PureMath); // 42 % 3 == 0
+
+        // Point lookup miss
+        assert!(cdb.get("nonexistent").unwrap().is_none());
+
+        // Full iter
+        let all: Vec<_> = cdb.iter().filter_map(|r| r.ok()).collect();
+        assert_eq!(all.len(), 100);
+
+        // by_domain index
+        let pm: Vec<_> = cdb
+            .iter_by_domain(&Domain::PureMath)
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(pm.len(), 34); // 0, 3, ..., 99 → 34 entries
+        for (_, a) in &pm {
+            assert_eq!(a.domain, Domain::PureMath);
+        }
+        let sr: Vec<_> = cdb
+            .iter_by_domain(&Domain::SpecialRelativity)
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(sr.len(), 66);
+
+        // snapshot_names returns every name
+        let names = cdb.snapshot_names().unwrap();
+        assert_eq!(names.len(), 100);
+        assert!(names.contains(&"ax_0".to_string()));
+    }
+
+    #[test]
+    fn fresh_db_is_not_hydrated() {
+        let (_db, cdb, _tmp) = open();
+        assert!(!cdb.is_hydrated().unwrap());
+        assert_eq!(cdb.count().unwrap(), 0);
+    }
+
+    #[test]
+    fn domain_separator_does_not_bleed() {
+        // A regression test for the 0x00 separator: without it, a
+        // prefix scan for "special_relativity" could match
+        // "special_relativity_extras" or any other domain whose key
+        // is a prefix.
+        let (_db, cdb, _tmp) = open();
+        cdb.put(&mk("real_axiom", Domain::SpecialRelativity)).unwrap();
+        // Synthesize a different domain whose `domain_to_key` happens
+        // to start with "special" — Domain::CrossDomain([SR, ...])
+        // produces "cross:special_relativity+...". No risk of bleed,
+        // but assert the round trip anyway.
+        let cross = Domain::CrossDomain(vec![
+            Domain::SpecialRelativity,
+            Domain::PureMath,
+        ]);
+        cdb.put(&mk("cross_axiom", cross.clone())).unwrap();
+        let sr: Vec<_> = cdb
+            .iter_by_domain(&Domain::SpecialRelativity)
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(sr.len(), 1, "SR should not match cross: prefix");
+        assert_eq!(sr[0].1.name, "real_axiom");
+    }
+}

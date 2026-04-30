@@ -28,6 +28,28 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::state::{AppState, ComputeArmsSnapshot, DirectiveArmsSnapshot, SeedCacheKey};
+use nasrudin_core::Domain;
+
+/// Parse the `domain` query-string into a `Domain`. Accepts either
+/// the snake_case Display form (`special_relativity`) or the
+/// PascalCase Rust enum form (`SpecialRelativity`). Mirrors the
+/// (private) helper in `main.rs`.
+fn parse_domain_for_seed(s: &str) -> Option<Domain> {
+    match s.to_lowercase().replace('-', "_").as_str() {
+        "pure_math" | "puremath" => Some(Domain::PureMath),
+        "classical_mechanics" | "classicalmechanics" => Some(Domain::ClassicalMechanics),
+        "electromagnetism" => Some(Domain::Electromagnetism),
+        "special_relativity" | "specialrelativity" => Some(Domain::SpecialRelativity),
+        "general_relativity" | "generalrelativity" => Some(Domain::GeneralRelativity),
+        "quantum_mechanics" | "quantummechanics" => Some(Domain::QuantumMechanics),
+        "quantum_field_theory" | "quantumfieldtheory" => Some(Domain::QuantumFieldTheory),
+        "statistical_mechanics" | "statisticalmechanics" => Some(Domain::StatisticalMechanics),
+        "thermodynamics" => Some(Domain::Thermodynamics),
+        "optics" => Some(Domain::Optics),
+        "fluid_dynamics" | "fluiddynamics" => Some(Domain::FluidDynamics),
+        _ => None,
+    }
+}
 
 /// Compact the compute-arm snapshot into per-(island, strength_bucket)
 /// slots with the 5 multiplier_choice arms inlined. ~30 slots × 120 B
@@ -189,31 +211,69 @@ pub async fn seed(
     // Display form ("special_relativity") or the Rust enum name
     // ("SpecialRelativity") so callers can use whichever convention their
     // local DSL prefers.
+    //
+    // **Cold-tier policy:** post-refactor, `store.iter()` walks both
+    // hot (~few thousand) and cold (~195 k Mathlib) tiers. Shipping
+    // all 195 k entries on every /api/seed poll would balloon the
+    // response to ~290 MB and defeat the whole point of the cold
+    // tier. Workers don't need the full Mathlib corpus pushed at
+    // them — they introduce mathlib axioms by *name* via
+    // `RuleStep::IntroduceAxiom`, and the chain-replay path resolves
+    // those names on demand server-side. So `/api/seed` ships:
+    //
+    // 1. The full hot tier (always — these are the postulates
+    //    workers compose chains over locally).
+    // 2. When `domain` is set, the cold-tier slice for that domain
+    //    (range-scanned, capped at 5 000 entries to keep the
+    //    response under ~5 MB).
+    // 3. When `domain` is unset, hot only — workers who want
+    //    cold-tier introductions reference them by name via the
+    //    submit/chain pipeline.
     let domain_filter = q.domain.clone();
     let store = state.axiom_store.load();
-    let axioms: Vec<serde_json::Value> = store
-        .iter()
-        .filter(|a| {
-            domain_filter.as_ref().is_none_or(|d| {
-                let dom_dbg = format!("{:?}", a.domain);
-                let dom_disp = format!("{}", a.domain);
-                dom_dbg == *d || dom_disp == *d
-            })
-        })
-        .map(|a| {
-            // Expr has no Display impl; serialise to JSON so a worker can
-            // round-trip it back into an Expr tree. Falls back to the Rust
-            // Debug form on the (unreachable) serde failure.
-            let statement = serde_json::to_string(&a.statement)
-                .unwrap_or_else(|_| format!("{:?}", a.statement));
-            serde_json::json!({
-                "name": a.name,
-                "statement": statement,
-                "domain": format!("{}", a.domain),
-                "description": a.description,
-            })
-        })
-        .collect();
+    const SEED_COLD_TIER_CAP: usize = 5_000;
+    let mut axioms: Vec<serde_json::Value> = Vec::new();
+    // Hot tier — always included.
+    for name in store.iter_hot_names() {
+        let Some(a) = store.get(&name) else { continue };
+        if let Some(d) = &domain_filter {
+            let dom_dbg = format!("{:?}", a.domain);
+            let dom_disp = format!("{}", a.domain);
+            if dom_dbg != *d && dom_disp != *d {
+                continue;
+            }
+        }
+        let statement = serde_json::to_string(&a.statement)
+            .unwrap_or_else(|_| format!("{:?}", a.statement));
+        axioms.push(serde_json::json!({
+            "name": a.name,
+            "statement": statement,
+            "domain": format!("{}", a.domain),
+            "description": a.description,
+        }));
+    }
+    // Cold tier — only when the caller passed a domain filter,
+    // capped to keep the response bounded.
+    if let Some(d) = &domain_filter {
+        let parsed = parse_domain_for_seed(d);
+        if let Some(domain) = parsed {
+            let mut cold_count = 0usize;
+            for a in store.by_domain(&domain) {
+                if cold_count >= SEED_COLD_TIER_CAP {
+                    break;
+                }
+                cold_count += 1;
+                let statement = serde_json::to_string(&a.statement)
+                    .unwrap_or_else(|_| format!("{:?}", a.statement));
+                axioms.push(serde_json::json!({
+                    "name": a.name,
+                    "statement": statement,
+                    "domain": format!("{}", a.domain),
+                    "description": a.description,
+                }));
+            }
+        }
+    }
 
     // Seed theorems: top-N Verified, newest-first. RocksDB-primary
     // (Task 4): the verified-at index is populated by `flip_verified`

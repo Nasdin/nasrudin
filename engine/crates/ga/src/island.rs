@@ -132,34 +132,36 @@ impl Island {
         } else {
             (target * 7) / 10
         };
+        // by_domain now returns owned Vec<Axiom> (the cold tier
+        // decodes fresh from RocksDB).
         let axioms = store.by_domain(&domain);
         for axiom in axioms {
             if self.population.len() >= domain_target {
                 break;
             }
-            self.try_add_axiom(axiom, &domain);
+            self.try_add_axiom(&axiom, &domain);
         }
 
         // Phase 2 — math substrate cross-pollination for physics islands.
         // Pulls from PureMath (the algebraic identities the GA needs to
-        // recombine with physics postulates).
+        // recombine with physics postulates). Routed through
+        // `by_domain(PureMath)` instead of `iter().filter(...)` so we
+        // do one cold-tier range scan instead of a full O(N) iter.
         if !matches!(domain, Domain::PureMath) {
             use rand::seq::IteratorRandom;
-            let math_pool: Vec<&nasrudin_derive::Axiom> = store
-                .iter()
-                .filter(|a| matches!(a.domain, Domain::PureMath))
-                .collect();
+            let math_pool: Vec<nasrudin_derive::Axiom> =
+                store.by_domain(&Domain::PureMath);
             let need = target.saturating_sub(self.population.len());
             // Cap math substrate at population capacity remaining; chosen
             // uniformly at random (so each generation re-sampling
             // surfaces different lemmas as starting individuals).
-            let math_sample: Vec<&nasrudin_derive::Axiom> =
+            let math_sample: Vec<nasrudin_derive::Axiom> =
                 math_pool.into_iter().choose_multiple(rng, need);
             for axiom in math_sample {
                 if self.population.len() >= target {
                     break;
                 }
-                self.try_add_axiom(axiom, &domain);
+                self.try_add_axiom(&axiom, &domain);
             }
         }
 

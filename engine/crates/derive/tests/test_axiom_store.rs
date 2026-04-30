@@ -65,6 +65,11 @@ fn test_names_list() {
 
     let names = store.names();
     assert_eq!(names.len(), 4);
-    assert!(names.contains(&"mass_shell_condition"));
-    assert!(names.contains(&"c_positive"));
+    // names() now returns Vec<String> (the cold tier yields owned
+    // strings; back-compat with the previous Vec<&str> would force
+    // every name to live in the AxiomStore for the duration of the
+    // returned reference, which the cold-tier semantics can't
+    // guarantee).
+    assert!(names.iter().any(|n| n == "mass_shell_condition"));
+    assert!(names.iter().any(|n| n == "c_positive"));
 }

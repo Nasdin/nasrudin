@@ -59,7 +59,7 @@ fn main() {
     let store = engine.store();
     println!("  Loaded {} axioms:", store.len());
     for name in store.names() {
-        let ax = store.get(name).unwrap();
+        let ax = store.get(&name).unwrap();
         println!("    • {} — {}", ax.name, ax.description);
     }
     println!();
