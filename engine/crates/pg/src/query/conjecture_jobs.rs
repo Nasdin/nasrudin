@@ -361,3 +361,178 @@ pub async fn requeue_expired_leases(db: &DatabaseConnection) -> Result<Vec<Uuid>
     }
     Ok(ids)
 }
+
+// ---------------------------------------------------------------------------
+// Paid Researcher tier — atomic claim against the new state values
+// (`queued` / `claimed` / `running`), distinct from the legacy
+// `QueuedForWorker` flow above. Uses FOR UPDATE SKIP LOCKED + the
+// (state, slice_priority DESC, created_at ASC) compound index.
+// ---------------------------------------------------------------------------
+
+/// Atomically claim the highest-priority queued paid conjecture for a
+/// worker. Sets state='claimed', stamps lease 5min ahead, records
+/// `claimed_by`. Returns the full Model row for the worker to act on.
+pub async fn atomic_claim_paid(
+    db: &DatabaseConnection,
+    worker_id: &str,
+) -> Result<Option<conjecture_jobs::Model>, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        UPDATE conjecture_jobs SET
+            claimed_by = $1,
+            claimed_at = NOW(),
+            lease_expires_at = NOW() + INTERVAL '5 minutes',
+            last_heartbeat_at = NOW(),
+            state = 'claimed'
+        WHERE id = (
+            SELECT id FROM conjecture_jobs
+            WHERE state = 'queued'
+              AND (lake_slot_hours_quota::float - lake_slot_hours_consumed) > 0
+            ORDER BY slice_priority DESC, created_at ASC
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        )
+        RETURNING *
+        "#,
+        [worker_id.into()],
+    );
+    let model = conjecture_jobs::Entity::find()
+        .from_raw_sql(stmt)
+        .one(db)
+        .await?;
+    Ok(model)
+}
+
+/// Heartbeat: extend the lease by 5 minutes, accumulate progress
+/// counters, debit lake-slot-hours. Returns `(new_consumed, exhausted)`
+/// — when `exhausted` the caller must release_paid_claim with state
+/// `budget_exhausted`. Sanity-cap on the consumed delta is applied
+/// here using the row's last_heartbeat_at so a lying worker can't
+/// burn the quota by reporting a huge delta.
+pub async fn heartbeat_paid(
+    db: &DatabaseConnection,
+    id: Uuid,
+    worker_id: &str,
+    cand_attempted_delta: i32,
+    cand_verified_delta: i32,
+    consumed_delta_requested: f32,
+    slots_held: f32,
+) -> Result<Option<(f32, bool)>, DbErr> {
+    let job = match get_by_id(db, id).await? {
+        Some(j) => j,
+        None => return Ok(None),
+    };
+    if job.claimed_by.as_deref() != Some(worker_id) {
+        return Ok(None);
+    }
+    // Sanity cap: max 2× the wallclock since last heartbeat × slot
+    // count. Defeats workers that report a huge fake delta.
+    let wallclock_s = job
+        .last_heartbeat_at
+        .map(|t| (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds() as f32)
+        .unwrap_or(60.0);
+    let max_delta = 2.0 * (wallclock_s / 3600.0) * slots_held.max(1.0);
+    let consumed_delta = consumed_delta_requested.clamp(0.0, max_delta);
+    let new_consumed = job.lake_slot_hours_consumed + consumed_delta;
+    let exhausted = new_consumed >= job.lake_slot_hours_quota as f32;
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"UPDATE conjecture_jobs SET
+            last_heartbeat_at = NOW(),
+            lease_expires_at = NOW() + INTERVAL '5 minutes',
+            state = 'running',
+            candidates_attempted = candidates_attempted + $2,
+            candidates_verified = candidates_verified + $3,
+            lake_slot_hours_consumed = lake_slot_hours_consumed + $4
+           WHERE id = $1 AND claimed_by = $5"#,
+        [
+            id.into(),
+            cand_attempted_delta.into(),
+            cand_verified_delta.into(),
+            consumed_delta.into(),
+            worker_id.into(),
+        ],
+    );
+    db.execute_raw(stmt).await?;
+    Ok(Some((new_consumed, exhausted)))
+}
+
+/// Release a paid claim, transitioning to a terminal or back-to-queue
+/// state. Valid `new_state` values: `"queued"` (release & requeue),
+/// `"budget_exhausted"`, `"cancelled"`, `"proved"`. Clears
+/// claim/lease columns. No-op if the worker doesn't own the lease.
+pub async fn release_paid_claim(
+    db: &DatabaseConnection,
+    id: Uuid,
+    worker_id: Option<&str>,
+    new_state: &str,
+) -> Result<u64, DbErr> {
+    let stmt = if let Some(w) = worker_id {
+        Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"UPDATE conjecture_jobs SET
+                state = $3,
+                claimed_by = NULL,
+                claimed_at = NULL,
+                lease_expires_at = NULL
+               WHERE id = $1 AND claimed_by = $2"#,
+            [id.into(), w.into(), new_state.into()],
+        )
+    } else {
+        Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"UPDATE conjecture_jobs SET
+                state = $2,
+                claimed_by = NULL,
+                claimed_at = NULL,
+                lease_expires_at = NULL
+               WHERE id = $1"#,
+            [id.into(), new_state.into()],
+        )
+    };
+    let r = db.execute_raw(stmt).await?;
+    Ok(r.rows_affected())
+}
+
+/// Mark a paid job as `proved` on a verified-theorem hit. Appends the
+/// theorem's id (8 bytes, hex-encoded by the caller) to the existing
+/// `verified_theorem_ids` array, stamps `completed_at`, clears claim
+/// columns. Idempotent — calling twice with the same hex still leaves
+/// the row in `proved` state.
+pub async fn mark_paid_proved(
+    db: &DatabaseConnection,
+    id: Uuid,
+    worker_id: &str,
+    theorem_id_hex: &str,
+) -> Result<u64, DbErr> {
+    let id_bytes = hex::decode(theorem_id_hex).unwrap_or_default();
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"UPDATE conjecture_jobs SET
+            state = 'proved',
+            outcome = 'Verified',
+            verified_theorem_ids = COALESCE(verified_theorem_ids, ARRAY[]::BYTEA[]) || ARRAY[$3::BYTEA],
+            completed_at = NOW(),
+            claimed_by = NULL,
+            claimed_at = NULL,
+            lease_expires_at = NULL
+           WHERE id = $1 AND claimed_by = $2"#,
+        [id.into(), worker_id.into(), id_bytes.into()],
+    );
+    let r = db.execute_raw(stmt).await?;
+    Ok(r.rows_affected())
+}
+
+/// Count rows in any of the given states.
+pub async fn count_in_states(
+    db: &DatabaseConnection,
+    states: &[&str],
+) -> Result<u64, DbErr> {
+    use sea_orm::*;
+    let owned: Vec<String> = states.iter().map(|s| (*s).to_owned()).collect();
+    conjecture_jobs::Entity::find()
+        .filter(conjecture_jobs::Column::State.is_in(owned))
+        .count(db)
+        .await
+}

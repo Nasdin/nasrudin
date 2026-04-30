@@ -2926,6 +2926,7 @@ dependencies = [
  "chrono",
  "data-encoding",
  "dotenvy",
+ "hex",
  "nasrudin-core",
  "password-auth",
  "rand 0.9.2",

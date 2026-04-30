@@ -746,6 +746,23 @@ async fn main() -> anyhow::Result<()> {
                 get(handlers::conjecture::get_paper),
             )
             .route("/api/me/conjectures", get(handlers::conjecture::list_mine))
+            .route(
+                "/api/research/jobs",
+                post(handlers::research_jobs::create)
+                    .get(handlers::research_jobs::list),
+            )
+            .route(
+                "/api/research/jobs/{id}",
+                get(handlers::research_jobs::detail),
+            )
+            .route(
+                "/api/research/jobs/{id}/events",
+                get(handlers::research_jobs::events),
+            )
+            .route(
+                "/api/research/jobs/{id}/cancel",
+                post(handlers::research_jobs::cancel),
+            )
             .route("/api/billing/checkout", post(handlers::billing::checkout))
             .route("/api/billing/portal", post(handlers::billing::portal))
             .route("/api/billing/me", get(handlers::billing::me))
@@ -789,6 +806,26 @@ async fn main() -> anyhow::Result<()> {
             .route(
                 "/api/conjecture/{id}/complete",
                 axum::routing::post(handlers::conjecture::complete_handler),
+            )
+            // Paid-Researcher worker endpoints (Phase 4 of cluster-steerer
+            // plan). Distinct from the legacy /api/conjecture/* claim path
+            // because these run against the new {queued, claimed, running,
+            // proved, budget_exhausted, cancelled} state machine.
+            .route(
+                "/api/jobs/claim",
+                axum::routing::post(handlers::jobs_claim::claim),
+            )
+            .route(
+                "/api/jobs/{id}/heartbeat",
+                axum::routing::post(handlers::jobs_claim::heartbeat),
+            )
+            .route(
+                "/api/jobs/{id}/release",
+                axum::routing::post(handlers::jobs_claim::release),
+            )
+            .route(
+                "/api/jobs/{id}/mark_proved",
+                axum::routing::post(handlers::jobs_claim::mark_proved),
             )
             .layer(GovernorLayer::new(rate_limit::platform_worker()));
 

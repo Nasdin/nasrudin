@@ -20,6 +20,7 @@ rand = { workspace = true }
 dotenvy = { workspace = true }
 tracing-subscriber = { workspace = true }
 base64 = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 nasrudin-core = { path = "../core" }

@@ -78,3 +78,38 @@ pub async fn update_display_name(
 pub async fn delete_user(db: &DatabaseConnection, id: Uuid) -> Result<DeleteResult, DbErr> {
     users::Entity::delete_by_id(id).exec(db).await
 }
+
+/// Atomic credit decrement for the paid Researcher tier. Returns
+/// `Ok(true)` when one credit was successfully consumed; `Ok(false)`
+/// when the user has zero credits (the UPDATE matches no rows). The
+/// `WHERE research_credits > 0` clause makes this safe under
+/// concurrent submission attempts — only one wins.
+pub async fn try_decrement_research_credits(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+) -> Result<bool, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE users SET research_credits = research_credits - 1 \
+         WHERE id = $1 AND research_credits > 0",
+        [user_id.into()],
+    );
+    let r = db.execute_raw(stmt).await?;
+    Ok(r.rows_affected() == 1)
+}
+
+/// Refund one research credit. Used by cancel-before-progress and the
+/// (rare) atomic create-failure path. No bound check — refunds are
+/// privileged operations the caller has already justified.
+pub async fn refund_research_credit(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+) -> Result<u64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE users SET research_credits = research_credits + 1 WHERE id = $1",
+        [user_id.into()],
+    );
+    let r = db.execute_raw(stmt).await?;
+    Ok(r.rows_affected())
+}
