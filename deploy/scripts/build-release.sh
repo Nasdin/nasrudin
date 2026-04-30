@@ -60,12 +60,30 @@ mkdir -p "$BUILD_CACHE/target" "$BUILD_CACHE/registry"
 # ── 1. Cross-compile Rust binaries via docker (linux/amd64) ──────────────
 echo "[build] cross-compiling rust binaries via docker (linux/amd64)..."
 echo "        (slow on apple silicon — qemu emulation. cache mounted at $BUILD_CACHE)"
+# Apple Silicon under qemu can OOM-kill the Linux VM if cargo spawns too
+# many parallel rustc workers — large monomorphisations (e.g. axum,
+# fastembed, sea-orm) easily push a single compile-job past 2 GiB. We cap
+# CARGO_BUILD_JOBS based on the host memory and Docker memory allocation.
+# 2 jobs is conservative and finishes the cold build in ~20 min on a
+# 16 GiB MacBook Pro; bump via CARGO_BUILD_JOBS_OVERRIDE when you have
+# headroom or are running on a more capable host.
+CARGO_BUILD_JOBS_DEFAULT=2
+CARGO_BUILD_JOBS_BUILD="${CARGO_BUILD_JOBS_OVERRIDE:-$CARGO_BUILD_JOBS_DEFAULT}"
+echo "[build] using CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS_BUILD inside docker"
+# Memory limit on the container itself: Docker Desktop on Apple Silicon
+# defaults to ~8 GiB but the VM can be sized higher. Setting --memory
+# tells the qemu emulator to throttle at the limit instead of swap-thrashing
+# the host. 6g leaves headroom for Docker's own overhead and keeps the
+# host responsive while builds run.
 docker run --rm --platform linux/amd64 \
+  --memory=6g \
+  --memory-swap=10g \
   -v "$PWD/engine":/src \
   -v "$PWD/$BUILD_CACHE/target":/cargo-target \
   -v "$PWD/$BUILD_CACHE/registry":/cargo-home \
   -e CARGO_TARGET_DIR=/cargo-target \
   -e CARGO_HOME=/cargo-home \
+  -e CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS_BUILD" \
   -w /src \
   rust:1.95-bookworm \
   bash -c "set -e
