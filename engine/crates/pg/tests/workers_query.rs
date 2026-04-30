@@ -124,14 +124,16 @@ async fn count_distinct_contributors_returns_distinct_user_ids() {
     let Some((db, _g)) = fresh_db().await else { return };
 
     // Two users, with one and two worker keys respectively → 2 distinct contributors.
-    let alice = nasrudin_pg::query::users::create_user(
-        &db, "alice@test", Some("h"), None,
+    let alice = nasrudin_pg::query::users::create_firebase_user(
+        &db, "fb_alice", "alice@test", None,
     )
     .await
     .unwrap();
-    let bob = nasrudin_pg::query::users::create_user(&db, "bob@test", Some("h"), None)
-        .await
-        .unwrap();
+    let bob = nasrudin_pg::query::users::create_firebase_user(
+        &db, "fb_bob", "bob@test", None,
+    )
+    .await
+    .unwrap();
 
     nasrudin_pg::query::api_keys::create(
         &db,

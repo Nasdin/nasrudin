@@ -3,19 +3,18 @@ use uuid::Uuid;
 
 use crate::entity::users;
 
-/// Create a new user account. Pass `None` for `password_hash` to create an
-/// OAuth-only user (sign-in flows that lack a password). Returns the inserted
-/// model.
-pub async fn create_user(
+/// Create a new user backed by a Firebase identity. The caller has already
+/// verified the Firebase ID token; `firebase_uid` is the verified `sub`
+/// claim. Returns the inserted model.
+pub async fn create_firebase_user(
     db: &DatabaseConnection,
+    firebase_uid: &str,
     email: &str,
-    password_hash: Option<&str>,
     display_name: Option<&str>,
 ) -> Result<users::Model, DbErr> {
     let model = users::ActiveModel {
         id: Set(Uuid::new_v4()),
         email: Set(email.to_owned()),
-        password_hash: Set(password_hash.map(|s| s.to_owned())),
         display_name: Set(display_name.map(|s| s.to_owned())),
         created_at: Set(chrono::Utc::now().into()),
         plan_tier: Set("free".to_owned()),
@@ -24,95 +23,21 @@ pub async fn create_user(
         current_period_end: Set(None),
         plan_cycle_start: Set(None),
         research_credits: Set(0),
-        github_id: Set(None),
-        github_login: Set(None),
+        firebase_uid: Set(firebase_uid.to_owned()),
     };
     model.insert(db).await
 }
 
-/// Find or create a user from a verified GitHub OAuth response.
-///
-/// Resolution order:
-/// 1. Match by `github_id` → return existing row, refresh `github_login` and
-///    `display_name` if changed.
-/// 2. Match by lowercased email and `github_id IS NULL` → link: set
-///    `github_id` and `github_login` on that row, return updated row.
-/// 3. Else create a new row with `password_hash = NULL`.
-///
-/// Caller must already have verified that GitHub flagged this email as
-/// `primary == true && verified == true`. We do **not** trust unverified
-/// emails to identify pre-existing accounts.
-pub async fn find_or_create_from_github(
+/// Find a user by Firebase UID. Used by the session-exchange endpoint
+/// to decide insert-vs-return.
+pub async fn find_by_firebase_uid(
     db: &DatabaseConnection,
-    github_id: i64,
-    github_login: &str,
-    primary_verified_email: &str,
-    display_name: Option<&str>,
-) -> Result<users::Model, DbErr> {
-    let email_norm = primary_verified_email.to_lowercase();
-
-    // 1. Match by github_id.
-    if let Some(existing) = users::Entity::find()
-        .filter(users::Column::GithubId.eq(github_id))
+    firebase_uid: &str,
+) -> Result<Option<users::Model>, DbErr> {
+    users::Entity::find()
+        .filter(users::Column::FirebaseUid.eq(firebase_uid))
         .one(db)
-        .await?
-    {
-        let needs_login_update =
-            existing.github_login.as_deref() != Some(github_login);
-        let needs_name_update = display_name.is_some()
-            && existing.display_name.as_deref() != display_name;
-        if needs_login_update || needs_name_update {
-            let mut active: users::ActiveModel = existing.clone().into();
-            if needs_login_update {
-                active.github_login = Set(Some(github_login.to_owned()));
-            }
-            if needs_name_update {
-                active.display_name = Set(display_name.map(|s| s.to_owned()));
-            }
-            return active.update(db).await;
-        }
-        return Ok(existing);
-    }
-
-    // 2. Match by email.
-    if let Some(existing) = users::Entity::find()
-        .filter(users::Column::Email.eq(&email_norm))
-        .one(db)
-        .await?
-    {
-        // Only auto-link when the row has no GitHub identity yet — never
-        // overwrite an existing link (would be a hijack vector).
-        if existing.github_id.is_none() {
-            let mut active: users::ActiveModel = existing.into();
-            active.github_id = Set(Some(github_id));
-            active.github_login = Set(Some(github_login.to_owned()));
-            return active.update(db).await;
-        }
-        // Email collision but the row already has a different github_id —
-        // treat as conflict so the caller surfaces a clear error.
-        return Err(DbErr::Custom(format!(
-            "email {} is linked to a different github account",
-            email_norm
-        )));
-    }
-
-    // 3. Create new.
-    let model = users::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        email: Set(email_norm),
-        password_hash: Set(None),
-        display_name: Set(display_name.map(|s| s.to_owned())),
-        created_at: Set(chrono::Utc::now().into()),
-        plan_tier: Set("free".to_owned()),
-        stripe_customer_id: Set(None),
-        stripe_subscription_id: Set(None),
-        current_period_end: Set(None),
-        plan_cycle_start: Set(None),
-        research_credits: Set(0),
-        github_id: Set(Some(github_id)),
-        github_login: Set(Some(github_login.to_owned())),
-    };
-    model.insert(db).await
+        .await
 }
 
 /// Persist a Stripe customer id on the user row. Called the first time we

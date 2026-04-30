@@ -71,7 +71,7 @@ async fn fresh_db() -> Option<(DatabaseConnection, MutexGuard<'static, ()>)> {
 
 async fn seed_owner(db: &DatabaseConnection, suffix: &str) -> Uuid {
     let email = format!("paid-{suffix}@test");
-    let m = u::create_user(db, &email, Some("x"), Some("Paid Test"))
+    let m = u::create_firebase_user(db, &format!("fb_paid_{suffix}"), &email, Some("Paid Test"))
         .await
         .unwrap();
     m.id
