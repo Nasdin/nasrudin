@@ -22,6 +22,7 @@
 //! the cycle reuses the most recent successfully-validated config.
 //! See `cycle::run_one_cycle`.
 
+pub mod bandit;
 pub mod cycle;
 pub mod demand;
 pub mod outcome;

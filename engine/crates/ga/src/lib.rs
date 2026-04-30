@@ -8,6 +8,7 @@ pub mod auto_size;
 pub mod cache_bundle;
 pub mod chain_engine;
 pub mod chain_ga;
+pub mod clustering;
 pub mod config;
 pub mod crossover;
 pub mod dedup;
@@ -24,6 +25,8 @@ pub mod research_client;
 pub mod selection;
 pub mod steering_knobs;
 pub mod target;
+pub mod worker_http;
+pub mod worker_url;
 
 pub use cache_bundle::CacheBundle;
 pub use config::GaConfig;
