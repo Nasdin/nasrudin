@@ -669,6 +669,33 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
+        // Daily purge of directive_pull_events older than 30 days.
+        // The bandit's running aggregate (cluster_directive_arms)
+        // holds the long-running statistics; the event log is for
+        // offline training only and a 30-day window is plenty.
+        let pg_for_events_purge = pg.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(86_400));
+            tick.tick().await; // skip the immediate first tick
+            loop {
+                tick.tick().await;
+                let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+                match nasrudin_pg::query::directive_pull_events::purge_older_than(
+                    &pg_for_events_purge,
+                    cutoff,
+                )
+                .await
+                {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(n, "purged old directive_pull_events rows")
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error=%e,
+                        "directive_pull_events purge failed"),
+                }
+            }
+        });
+
         let steerer_disabled = std::env::var("STEERER_DISABLED").is_ok();
         if !steerer_disabled {
             match nasrudin_llm::GradientProvider::from_env() {

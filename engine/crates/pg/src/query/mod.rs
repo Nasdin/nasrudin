@@ -10,6 +10,7 @@ pub mod cluster_bandit_arms;
 pub mod cluster_directive_arms;
 pub mod cluster_reports;
 pub mod cluster_steering;
+pub mod directive_pull_events;
 pub mod conjecture_jobs;
 pub mod library;
 pub mod me_workers;

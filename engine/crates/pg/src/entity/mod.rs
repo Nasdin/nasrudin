@@ -8,6 +8,7 @@ pub mod refund_records;
 pub mod cluster_bandit_arms;
 pub mod cluster_directive_arms;
 pub mod cluster_reports;
+pub mod directive_pull_events;
 pub mod cluster_steering;
 pub mod conjecture_events;
 pub mod conjecture_jobs;

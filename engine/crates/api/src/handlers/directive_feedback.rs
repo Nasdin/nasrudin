@@ -67,6 +67,8 @@ pub async fn handler(
         }
         // Defensive clamp — the bandit math assumes bounded rewards.
         let reward = e.reward.clamp(0.0, 1.0);
+
+        // Update the running aggregate (live UCB1 reads this).
         match nasrudin_pg::query::cluster_directive_arms::record_pull(
             pg,
             &e.island_domain,
@@ -78,7 +80,26 @@ pub async fn handler(
         .await
         {
             Ok(_) => applied += 1,
-            Err(err) => tracing::warn!(error=%err, "directive_feedback record_pull failed"),
+            Err(err) => {
+                tracing::warn!(error=%err, "directive_feedback record_pull failed");
+                continue;
+            }
+        }
+
+        // Append to the raw event log (replay buffer). Soft-fail on
+        // error — the aggregate update already happened so the live
+        // bandit isn't impaired; only offline training is.
+        if let Err(err) = nasrudin_pg::query::directive_pull_events::insert_event(
+            pg,
+            &e.island_domain,
+            &e.action,
+            e.strength_bucket,
+            e.multiplier_choice,
+            reward,
+        )
+        .await
+        {
+            tracing::debug!(error=%err, "directive_pull_events insert failed (non-blocking)");
         }
     }
     (
