@@ -100,6 +100,25 @@ ls -lh "$OUT_DIR/bin/"
 # ── 2. Build frontend SSR bundle ──────────────────────────────────────────
 # VITE_* vars are baked into the client bundle at build time, so they have
 # to be set HERE — runtime systemd env doesn't reach the client code.
+#
+# Hard-require VITE_FIREBASE_* up front. Vite silently bakes empty
+# strings if these aren't exported in the environment, and the prod
+# bundle crashes at runtime ("Missing env var: VITE_FIREBASE_API_KEY").
+# Better to fail the build with a clear pointer than ship a dead
+# /signin page. Source these from the project root .env via:
+#   set -a && . ./.env && set +a && deploy/scripts/deploy.sh nasrudin-prod
+for var in VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN \
+           VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_STORAGE_BUCKET \
+           VITE_FIREBASE_MESSAGING_SENDER_ID VITE_FIREBASE_APP_ID; do
+  if [ -z "${!var:-}" ]; then
+    echo "[build] error: $var is not set in the environment." >&2
+    echo "        Source it (and the rest of the VITE_FIREBASE_* block)" >&2
+    echo "        from .env before invoking deploy:" >&2
+    echo "        set -a && . ./.env && set +a && deploy/scripts/deploy.sh ..." >&2
+    exit 1
+  fi
+done
+
 echo "[build] building frontend (pnpm install + build)..."
 pnpm install --frozen-lockfile --silent
 (cd nasrudin-frontend && \
