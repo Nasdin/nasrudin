@@ -20,7 +20,10 @@ the outcomes of your last 10 cycles, then emit a SteeringConfig JSON \
 that biases the GA exploration of thousands of workers. Output ONLY \
 valid JSON matching the schema. Honor the scope: in scope B (paid \
 jobs running) set hard_targets=[] and mutation_knobs=null; in scope C \
-you have full authority. Keep rationale ≤500 chars.";
+you have full authority. When you observe a cluster making productive \
+use of `append_productive_suffix` or `mutate_axiom_name`, bias \
+`mutation_priors` toward those operators (default uniform 1.0). \
+Keep rationale ≤500 chars.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveJobSummary {
@@ -55,6 +58,11 @@ const SCHEMA_HINT: &str = r#"{
   "mutation_knobs": { "rate": <0.05..0.30>, "suffix_bias": <0..1>,
                       "population_size": <32..512>, "elitism_fraction": <0..0.2> }
                      -- null in B,
+  "mutation_priors": { "<op_name>": <0..2> }
+                     -- op_name ∈ ["insert_random", "delete_random",
+                                   "swap_adjacent", "mutate_axiom_name",
+                                   "mutate_param", "append_productive_suffix"];
+                        unknown keys ignored; missing → uniform 1.0,
   "rationale": "<= 500 chars"
 }"#;
 
@@ -134,6 +142,25 @@ mod tests {
             "mutation_knobs",
         ] {
             assert!(p.contains(f), "prompt missing schema field: {f}");
+        }
+    }
+
+    #[test]
+    fn schema_hint_lists_mutation_priors_and_op_names() {
+        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[]);
+        assert!(
+            p.contains("mutation_priors"),
+            "schema must mention mutation_priors"
+        );
+        for op in &[
+            "insert_random",
+            "delete_random",
+            "swap_adjacent",
+            "mutate_axiom_name",
+            "mutate_param",
+            "append_productive_suffix",
+        ] {
+            assert!(p.contains(op), "schema must list operator name {op}");
         }
     }
 }
