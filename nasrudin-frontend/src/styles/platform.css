@@ -1488,6 +1488,19 @@
 
   .lead-tabs { flex-wrap: wrap; }
   .lead-tab { font-size: 12px; padding: 6px 12px; }
+
+  .thm-page { gap: 28px; }
+  .thm-name { font-size: clamp(32px, 8vw, 44px); }
+  .thm-statement-block { padding: 32px 20px; margin-bottom: 24px; }
+  .thm-statement-big { font-size: clamp(22px, 6vw, 32px); }
+  .thm-section { margin-top: 32px; }
+  .thm-section h3 { font-size: 20px; }
+  .thm-actions { gap: 8px; }
+  .thm-actions .btn { flex: 1 1 auto; min-width: 0; }
+  .uses-grid { grid-template-columns: 1fr; }
+  .lineage li { grid-template-columns: 24px 1fr; gap: 12px; }
+  .thm-proof-pre { padding: 18px 16px; font-size: 12.5px; }
+  .thm-side .meta-list li { font-size: 12.5px; }
 }
 
 @media (max-width: 480px) {
@@ -1505,4 +1518,12 @@
   .result-stmt { font-size: 17px; }
   .result-name { font-size: 15px; word-break: break-all; }
   .result-meta { font-size: 11px; }
+
+  .thm-name { font-size: clamp(26px, 9vw, 36px); }
+  .thm-statement-block { padding: 24px 14px; }
+  .thm-statement-big { font-size: clamp(18px, 6.5vw, 26px); }
+  .thm-proof-pre { padding: 16px 14px; font-size: 12px; }
+  .thm-side .meta-list li { font-size: 12px; gap: 8px; }
+  .thm-actions { flex-direction: column; }
+  .thm-actions .btn { width: 100%; justify-content: center; }
 }
