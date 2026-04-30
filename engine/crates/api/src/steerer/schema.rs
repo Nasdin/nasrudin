@@ -8,6 +8,7 @@
 //! that forgot a constraint emits something rejectable rather than
 //! something that quietly causes drift.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -15,7 +16,7 @@ use thiserror::Error;
 /// Top-level steering payload. Workers read `mutation_knobs` and the
 /// fitness weights every chunk; targets and emphasis affect chain
 /// composition and seed selection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SteeringConfig {
     /// Schema version. Bumped when the wire format changes
     /// incompatibly so workers can refuse a future config they don't
@@ -76,6 +77,7 @@ pub struct SteeringConfig {
     /// at ~16 KB by the LLM's max_tokens budget; nothing else
     /// validates it.
     #[serde(default)]
+    #[schemars(skip)]
     pub extension: serde_json::Value,
     /// Indefinite-horizon LLM memory. The LLM rewrites this each
     /// cycle as a rolling summary of what worked, what didn't, and
@@ -94,7 +96,7 @@ pub struct SteeringConfig {
 /// Fitness shaping weights. The cluster's effective fitness is a
 /// convex combination of these four components plus the dimensional
 /// soundness gate.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, JsonSchema)]
 pub struct FitnessWeights {
     pub novelty: f32,
     pub dimensional_elegance: f32,
@@ -102,7 +104,7 @@ pub struct FitnessWeights {
     pub target_proximity: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SoftTarget {
     pub latex: String,
     pub domain: String,
@@ -120,13 +122,13 @@ pub struct SoftTarget {
 /// target. Status transitions: open → proving → proved | abandoned.
 /// The LLM judges progress by inspecting recent verified theorems in
 /// the prompt; the server doesn't auto-detect proofs.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct TargetStatusUpdate {
     pub target_id: String,
     pub new_status: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HardTarget {
     pub latex: String,
     pub domain: String,
@@ -135,7 +137,7 @@ pub struct HardTarget {
 
 /// GA mutation knobs. Bounded so the steerer can't accidentally turn
 /// the GA into pure random search (rate=1.0) or freeze it (rate=0.0).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct MutationKnobs {
     /// Per-allele mutation probability. Bounded [0.05, 0.30].
     pub rate: f32,
@@ -167,7 +169,7 @@ impl Default for MutationKnobs {
 /// compute bandit picks a population_size / generations multiplier
 /// from the learned arm table — AlphaProof-style test-time-compute
 /// scaling at the steering layer.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ComputeDirective {
     /// `None` = apply to every island; `Some(domain)` = scoped.
     pub island_domain: Option<String>,
@@ -180,7 +182,7 @@ pub struct ComputeDirective {
 /// every chunk so id-based addressing is unstable. Workers match by
 /// minimum Hamming distance on the hash with a fixed threshold; if no
 /// new cluster is close enough, the directive is silently dropped.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ClusterDirective {
     pub island_domain: String,
     pub centroid_skeleton_hash: u64,
@@ -190,7 +192,7 @@ pub struct ClusterDirective {
     pub strength: f32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClusterAction {
     /// Multiply per-individual mutation rate inside this cluster.

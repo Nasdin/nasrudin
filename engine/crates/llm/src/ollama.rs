@@ -85,7 +85,11 @@ impl LlmProvider for OllamaProvider {
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
         let format = match &req.response_format {
             ResponseFormat::Free => None,
-            ResponseFormat::Json { .. } => Some("json"),
+            // Ollama supports `format=json` for plain JSON mode but
+            // not OpenAI's strict json_schema. Map both Json variants
+            // to "json" — strict shape isn't enforced here, callers
+            // post-validate.
+            ResponseFormat::Json { .. } | ResponseFormat::JsonSchema { .. } => Some("json"),
         };
         let body = GenerateRequest {
             model: &req.model,

@@ -184,6 +184,20 @@ impl LlmProvider for GradientProvider {
         let response_format = match &req.response_format {
             ResponseFormat::Free => None,
             ResponseFormat::Json { .. } => Some(serde_json::json!({"type": "json_object"})),
+            ResponseFormat::JsonSchema { name, schema } => {
+                // OpenAI-compatible strict structured outputs. Kimi K2.5
+                // and gpt-4o-class models support this; older / smaller
+                // models may 400 with "unknown response_format" — caller
+                // is responsible for falling back to plain `Json` mode.
+                Some(serde_json::json!({
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": name,
+                        "strict": true,
+                        "schema": schema,
+                    }
+                }))
+            }
         };
         let body = ChatRequest {
             model: &req.model,

@@ -101,7 +101,14 @@ impl LlmProvider for AnthropicProvider {
             }],
             stop_sequences: match &req.response_format {
                 ResponseFormat::Free => req.stop_sequences.clone(),
-                ResponseFormat::Json { .. } => req.stop_sequences.clone(),
+                // Anthropic uses tool-use for strict schemas, not the
+                // OpenAI response_format. Both Json variants degrade
+                // to plain text + stop sequences here; callers that
+                // need strict shape should route through the
+                // OpenAI-compatible providers (or Gradient).
+                ResponseFormat::Json { .. } | ResponseFormat::JsonSchema { .. } => {
+                    req.stop_sequences.clone()
+                }
             },
         };
         let url = format!("{}/v1/messages", self.base_url);

@@ -23,6 +23,7 @@ license = "MIT"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["unbounded_depth"] }
+schemars = { version = "0.8", features = ["preserve_order"] }
 
 # Async runtime
 tokio = { version = "1.49", features = ["full"] }

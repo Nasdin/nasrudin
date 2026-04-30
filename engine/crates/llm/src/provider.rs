@@ -23,9 +23,31 @@ pub struct CompletionRequest {
 pub enum ResponseFormat {
     #[default]
     Free,
-    /// JSON output expected. `schema` is provider-specific (Anthropic/
-    /// OpenAI both accept JSON Schema; Ollama just sets format=json).
+    /// Plain JSON-object output. The model is constrained to emit
+    /// syntactically valid JSON, but no schema enforcement — any
+    /// shape goes. Maps to OpenAI / Gradient
+    /// `response_format: {"type": "json_object"}`. The `schema` field
+    /// is currently unused; kept for backwards compat with callers
+    /// that pass an empty `{}`. Use `JsonSchema` for strict mode.
     Json {
+        schema: serde_json::Value,
+    },
+    /// Strict JSON Schema mode: the model is constrained to emit
+    /// JSON matching `schema` exactly. OpenAI and Gradient/Kimi K2.5
+    /// support this via
+    /// `response_format: {"type": "json_schema", "json_schema":
+    ///   {"name": ..., "strict": true, "schema": ...}}`.
+    /// Token-level constrained decoding makes missing required
+    /// fields, wrong types, and out-of-enum values impossible —
+    /// validation failures shrink to zero for shape errors. Provider
+    /// behaviour: OpenAI gpt-4o + Kimi K2.5 enforce; older models
+    /// may 400 on unknown response_format and the caller should fall
+    /// back to `Json { schema: {} }` with post-hoc validation.
+    JsonSchema {
+        /// Human-readable schema name (OpenAI requires this).
+        name: String,
+        /// Full JSON Schema document. Typically derived via the
+        /// `schemars` crate at the call site.
         schema: serde_json::Value,
     },
 }

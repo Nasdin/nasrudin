@@ -95,6 +95,14 @@ impl LlmProvider for OpenAiProvider {
         let response_format = match &req.response_format {
             ResponseFormat::Free => None,
             ResponseFormat::Json { .. } => Some(serde_json::json!({"type": "json_object"})),
+            ResponseFormat::JsonSchema { name, schema } => Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": name,
+                    "strict": true,
+                    "schema": schema,
+                }
+            })),
         };
         let body = ChatRequest {
             model: &req.model,

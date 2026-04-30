@@ -533,14 +533,43 @@ async fn last_known_good(
 /// Adapter that calls the Gradient provider through the `LlmCaller`
 /// trait. Lives here next to the trait so it can stay a private impl
 /// detail of the cycle module.
+///
+/// Schema-mode behaviour. The caller starts in **strict json_schema
+/// mode**: every request includes the full `SteeringConfig` JSON
+/// Schema with `strict: true`, and Kimi K2.5 / Gradient enforce the
+/// shape via constrained decoding. Missing required fields, wrong
+/// types, and out-of-enum values become impossible at the token
+/// level. If Gradient ever returns a 400 (e.g. a future model on the
+/// catalog doesn't accept the strict variant), the caller flips an
+/// internal flag and falls back permanently to plain `json_object`
+/// mode — `parse_and_validate` then catches shape errors post-hoc as
+/// before. The flag persists for the lifetime of the daemon so we
+/// don't pay the failed-request cost every cycle.
 pub struct GradientCaller {
     provider: nasrudin_llm::GradientProvider,
     model: String,
+    /// Atomic so the fallback can flip without `&mut self`.
+    strict_failed: std::sync::atomic::AtomicBool,
 }
 
 impl GradientCaller {
     pub fn new(provider: nasrudin_llm::GradientProvider, model: String) -> Self {
-        Self { provider, model }
+        Self {
+            provider,
+            model,
+            strict_failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Build the `SteeringConfig` JSON Schema for strict-mode
+    /// requests. Derived via `schemars` from the Rust struct so the
+    /// schema stays in sync automatically as fields are added /
+    /// renamed. The `extension` field is `#[schemars(skip)]` so it
+    /// is absent from this schema — strict mode requires concrete
+    /// types and the extension is "any JSON" by design.
+    fn steering_config_schema() -> serde_json::Value {
+        let schema = schemars::schema_for!(crate::steerer::schema::SteeringConfig);
+        serde_json::to_value(&schema.schema).unwrap_or_else(|_| serde_json::json!({}))
     }
 }
 
@@ -559,6 +588,22 @@ impl LlmCaller for GradientCaller {
         // a long chain-of-thought comfortably below the wall. If the
         // model truncates anyway, the parse will fail and the cycle
         // falls back to last-known-good — see parse_and_validate.
+        let response_format = if self
+            .strict_failed
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            // We've already learned this provider/model doesn't
+            // accept json_schema mode. Stay on the soft path; the
+            // post-hoc validator catches shape errors.
+            ResponseFormat::Json {
+                schema: serde_json::json!({}),
+            }
+        } else {
+            ResponseFormat::JsonSchema {
+                name: "SteeringConfig".into(),
+                schema: Self::steering_config_schema(),
+            }
+        };
         let req = CompletionRequest {
             model: self.model.clone(),
             system_prompt: system.to_owned(),
@@ -566,20 +611,57 @@ impl LlmCaller for GradientCaller {
             max_tokens: 8192,
             temperature: 0.4,
             stop_sequences: vec![],
-            response_format: ResponseFormat::Json {
-                schema: serde_json::json!({}),
-            },
+            response_format: response_format.clone(),
         };
-        let r = self
-            .provider
-            .complete(req)
-            .await
-            .map_err(|e| CycleError::Llm(e.to_string()))?;
-        Ok((
-            r.text,
-            Some(r.input_tokens as i32),
-            Some(r.output_tokens as i32),
-        ))
+        match self.provider.complete(req).await {
+            Ok(r) => Ok((
+                r.text,
+                Some(r.input_tokens as i32),
+                Some(r.output_tokens as i32),
+            )),
+            Err(e) => {
+                // If we tried strict mode and got an HTTP 400, the
+                // provider doesn't accept json_schema. Flip the
+                // fallback flag and retry once with plain json_object.
+                let was_strict = matches!(response_format, ResponseFormat::JsonSchema { .. });
+                let is_400 = matches!(
+                    &e,
+                    nasrudin_llm::LlmError::Http { status: 400, .. }
+                );
+                if was_strict && is_400 {
+                    self.strict_failed
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    tracing::warn!(
+                        error=%e,
+                        "Gradient rejected json_schema response_format; \
+                         falling back to json_object for the rest of the daemon's lifetime"
+                    );
+                    let retry_req = CompletionRequest {
+                        model: self.model.clone(),
+                        system_prompt: system.to_owned(),
+                        user_prompt: user.to_owned(),
+                        max_tokens: 8192,
+                        temperature: 0.4,
+                        stop_sequences: vec![],
+                        response_format: ResponseFormat::Json {
+                            schema: serde_json::json!({}),
+                        },
+                    };
+                    let r = self
+                        .provider
+                        .complete(retry_req)
+                        .await
+                        .map_err(|e2| CycleError::Llm(e2.to_string()))?;
+                    Ok((
+                        r.text,
+                        Some(r.input_tokens as i32),
+                        Some(r.output_tokens as i32),
+                    ))
+                } else {
+                    Err(CycleError::Llm(e.to_string()))
+                }
+            }
+        }
     }
 }
 
@@ -587,6 +669,47 @@ impl LlmCaller for GradientCaller {
 mod tests {
     use super::*;
     use crate::steerer::schema::default_config;
+
+    #[test]
+    fn steering_config_schema_has_required_fields() {
+        let schema = GradientCaller::steering_config_schema();
+        let s = serde_json::to_string(&schema).unwrap();
+        // The strict-mode schema must declare every load-bearing
+        // field so the LLM is constrained to emit them.
+        for field in [
+            "scope",
+            "domain_weights",
+            "fitness_weights",
+            "mutation_knobs",
+            "cluster_directives",
+            "compute_directives",
+            "lessons_learned",
+            "rationale",
+        ] {
+            assert!(
+                s.contains(&format!("\"{field}\"")),
+                "schema missing field: {field}; full schema: {s}"
+            );
+        }
+        // The cluster action enum must enumerate all four variants.
+        for variant in ["boost", "exploit", "diversify", "kill"] {
+            assert!(s.contains(variant), "schema missing ClusterAction::{variant}");
+        }
+    }
+
+    #[test]
+    fn steering_config_schema_skips_extension_field() {
+        let schema = GradientCaller::steering_config_schema();
+        let s = serde_json::to_string(&schema).unwrap();
+        // `extension` is `serde_json::Value` (any JSON), incompatible
+        // with strict mode's concrete-types requirement. Skipped from
+        // the schema by design — strict guarantees on every other
+        // field, extension stays available via soft fallback.
+        assert!(
+            !s.contains("\"extension\""),
+            "extension field must be skipped from strict schema; got {s}"
+        );
+    }
 
     #[test]
     fn parse_strips_markdown_fence() {
