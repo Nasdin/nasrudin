@@ -166,6 +166,17 @@ pub struct AppState {
     /// Default spot-check rate (`TRUSTED_SPOT_CHECK_RATE` env var).
     /// Used when neither the api_key nor the user has an override set.
     pub trusted_spot_check_rate: u32,
+    /// Reusable HTTP client for direct Stripe REST calls (refund flow).
+    /// Distinct from `BillingClient.stripe` (which is `stripe::Client`)
+    /// because the refund + reconciler use raw REST for explicit
+    /// idempotency-key control.
+    pub stripe_http: reqwest::Client,
+    /// Base URL for direct Stripe REST calls. `https://api.stripe.com`
+    /// in production; tests override to a wiremock server.
+    pub stripe_base_url: String,
+    /// `STRIPE_SECRET_KEY` env var, or empty string when unset (in
+    /// which case the refund handler returns 503).
+    pub stripe_secret: String,
 }
 
 /// Cache key for the `/api/seed` JSON response cache. Distinct

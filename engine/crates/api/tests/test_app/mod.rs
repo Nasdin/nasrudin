@@ -214,6 +214,9 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         firebase_jwks: opts
             .firebase_jwks
             .unwrap_or_else(|| Arc::new(physics_api::firebase_auth::JwksCache::new())),
+        stripe_http: reqwest::Client::new(),
+        stripe_base_url: "https://stripe.invalid".into(),
+        stripe_secret: String::new(),
         trust_cache: physics_api::trust::TrustCache::new(
             std::time::Duration::from_secs(30),
             128,

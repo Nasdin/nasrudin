@@ -6,6 +6,7 @@ pub mod api_keys;
 pub mod audit_log;
 pub mod corpus;
 pub mod jobs;
+pub mod refund;
 pub mod stats;
 pub mod steering;
 pub mod users;

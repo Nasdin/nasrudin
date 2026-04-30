@@ -455,6 +455,10 @@ async fn main() -> anyhow::Result<()> {
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
         firebase_project_id,
         firebase_jwks,
+        stripe_http: reqwest::Client::new(),
+        stripe_base_url: std::env::var("STRIPE_BASE_URL")
+            .unwrap_or_else(|_| "https://api.stripe.com".into()),
+        stripe_secret: std::env::var("STRIPE_SECRET_KEY").unwrap_or_default(),
         trust_cache: trust_cache.clone(),
         trust_invalidation_tx: trust_invalidation_tx.clone(),
         trusted_spot_check_rate,
@@ -507,6 +511,19 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Conjecture lease reaper spawned");
     } else {
         tracing::info!("Conjecture lease reaper disabled (no PostgreSQL)");
+    }
+
+    // Refund reconciler. Walks `refund_records` rows still pending after
+    // 90s and asks Stripe whether they actually went through; mirrors
+    // the result back into refund_records.status. No-op when
+    // STRIPE_SECRET_KEY is unset.
+    if state.pg.is_some() {
+        physics_api::billing::refund_reconciler::spawn(
+            state.pg.as_ref().unwrap().clone(),
+            state.stripe_http.clone(),
+            state.stripe_base_url.clone(),
+            state.stripe_secret.clone(),
+        );
     }
 
     // RocksDB-primary ingest write-behind: spawn the PG drain loop iff
@@ -825,6 +842,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/admin/jobs/{id}/cancel",
             post(handlers::admin::jobs::cancel),
+        )
+        .route(
+            "/api/admin/users/{id}/refund",
+            post(handlers::admin::refund::refund),
         )
         .route("/api/admin/audit", get(handlers::admin::audit_log::list))
         .route("/api/admin/stats", get(handlers::admin::stats::stats))
