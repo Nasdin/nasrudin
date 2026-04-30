@@ -521,6 +521,50 @@
 .result-side .verified-badge { margin-bottom: 8px; }
 
 /* ============================================================
+   SEARCH (semantic + concept)
+   ============================================================ */
+.search-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 32px;
+  align-items: start;
+}
+.search-aside-blurb {
+  position: sticky;
+  top: 96px;
+  padding: 16px;
+  border: 1px solid var(--paper-200);
+  border-radius: 10px;
+  background: var(--paper-50);
+}
+
+.concept-search-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.concept-search-input {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 10px 14px;
+  font-size: 15px;
+  font-family: var(--font-sans);
+  background: var(--bg-raised);
+  border: 1px solid var(--paper-200);
+  border-radius: var(--radius-md);
+  color: var(--ink-900);
+}
+.concept-search-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-700);
+}
+
+/* ============================================================
    LIBRARY
    ============================================================ */
 .library-grid {
@@ -1391,6 +1435,8 @@
   .thm-page { grid-template-columns: 1fr; }
   .thm-side { border-left: none; padding-left: 0; border-top: 1px dashed var(--paper-300); padding-top: 32px; }
   .search-layout { grid-template-columns: 1fr; }
+  .search-shell { grid-template-columns: 1fr; }
+  .search-aside-blurb { position: static; }
   .api-grid { grid-template-columns: 1fr; }
   .api-toc { position: static; border-left: none; padding-left: 0; border-bottom: 1px dashed var(--paper-300); padding-bottom: 16px; }
   .tier-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1423,6 +1469,14 @@
   .library-folders { position: static; }
   .saved-list li { grid-template-columns: 1fr auto; gap: 8px 12px; }
   .saved-list .saved-date { display: none; }
+
+  .facet-group { margin-bottom: 16px; }
+  .facet-group h5 { margin-bottom: 8px; }
+  .facet-list li { padding: 4px 8px; font-size: 12.5px; }
+
+  .concept-search-bar { gap: 8px; }
+  .concept-search-input { flex: 1 1 100%; font-size: 16px; }
+  .concept-search-submit { width: 100%; justify-content: center; }
 }
 
 @media (max-width: 480px) {

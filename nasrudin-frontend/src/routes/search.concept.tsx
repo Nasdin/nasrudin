@@ -45,35 +45,15 @@ function ConceptSearchPage() {
           </p>
         </div>
 
-        <form
-          onSubmit={onSubmit}
-          style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16 }}
-        >
+        <form onSubmit={onSubmit} className="concept-search-bar">
           <input
             type="text"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="all the equations that have to do with Energy"
-            style={{
-              flex: 1,
-              padding: '10px 14px',
-              fontSize: 15,
-              fontFamily: 'var(--font-sans)',
-              background: 'var(--bg-raised)',
-              border: '1px solid var(--paper-200)',
-              borderRadius: 'var(--radius-md)',
-              color: 'var(--ink-900)',
-            }}
+            className="concept-search-input"
           />
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              fontSize: 13,
-              color: 'var(--ink-700)',
-            }}
-          >
+          <label className="concept-search-toggle">
             <input
               type="checkbox"
               checked={includePending}
@@ -83,7 +63,7 @@ function ConceptSearchPage() {
           </label>
           <button
             type="submit"
-            className="btn btn-primary"
+            className="btn btn-primary concept-search-submit"
             disabled={draft.trim().length === 0}
           >
             Search

@@ -71,7 +71,7 @@ function SearchPage() {
           </p>
         </div>
 
-        <div style={layoutStyle}>
+        <div className="search-shell">
           <div style={{ display: 'grid', gap: 18 }}>
             <SearchBox
               mode={mode}
@@ -138,7 +138,7 @@ function SearchPage() {
             {!result && !search.isPending && <EmptyStateGuide onPick={fillExample} />}
           </div>
 
-          <aside>
+          <aside className="search-aside">
             <SidebarBlurb />
           </aside>
         </div>
@@ -150,7 +150,7 @@ function SearchPage() {
 
 function SidebarBlurb() {
   return (
-    <div style={asideStyle}>
+    <div className="search-aside-blurb">
       <h3 style={{ marginTop: 0, fontSize: 14, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
         How matching works
       </h3>
@@ -172,13 +172,6 @@ function SidebarBlurb() {
   );
 }
 
-const layoutStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) 280px',
-  gap: 32,
-  alignItems: 'start',
-};
-
 const errorBox: React.CSSProperties = {
   border: '1px solid var(--terracotta-700)',
   borderRadius: 8,
@@ -195,11 +188,3 @@ const emptyBox: React.CSSProperties = {
   background: 'var(--paper-50)',
 };
 
-const asideStyle: React.CSSProperties = {
-  position: 'sticky',
-  top: 96,
-  padding: 16,
-  border: '1px solid var(--ink-200)',
-  borderRadius: 10,
-  background: 'var(--paper-50)',
-};
