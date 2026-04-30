@@ -147,10 +147,14 @@ if [ ! -x "$ELAN_HOME/bin/elan" ]; then
 else
   log "elan already installed; ensuring toolchain $LEAN_TC is current"
   # elan 4.x's `toolchain install` doesn't accept --no-self-update
-  # (only `elan-init.sh` does during initial bootstrap). The toolchain
-  # subcommand always installs the requested toolchain idempotently
-  # without touching elan itself.
-  sudo -u nasrudin env ELAN_HOME="$ELAN_HOME" PATH="$ELAN_HOME/bin:$PATH" bash -c "elan toolchain install '$LEAN_TC' >/dev/null"
+  # (only `elan-init.sh` does during initial bootstrap). It also exits
+  # non-zero with "already installed" — which is a success state for
+  # us — so we swallow that specific outcome.
+  sudo -u nasrudin env ELAN_HOME="$ELAN_HOME" PATH="$ELAN_HOME/bin:$PATH" bash -c "
+    out=\$(elan toolchain install '$LEAN_TC' 2>&1) || \
+      echo \"\$out\" | grep -q 'already installed' || \
+      { echo \"\$out\" >&2; exit 1; }
+  "
 fi
 chown -R nasrudin:nasrudin "$ELAN_HOME"
 
