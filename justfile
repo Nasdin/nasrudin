@@ -270,10 +270,11 @@ build-worker:
     (cd dist && tar czf "${PKG}.tar.gz" "${PKG}")
     echo "[worker] -> dist/${PKG}.tar.gz"
 
-# Tag a worker release (e.g. `just release-worker version=v0.1.0`); CI builds + publishes the tarballs
+# Tag a worker release `vX.Y.Z` (AI-summarized commits via claude CLI; CI builds Linux/macOS/Windows + publishes GitHub release)
 release-worker version:
     #!/usr/bin/env bash
     set -euo pipefail
+    cd {{justfile_directory()}}
     if [[ ! "{{version}}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9]+)?$ ]]; then
       echo "error: version must look like vX.Y.Z (got '{{version}}')" >&2
       exit 1
@@ -287,11 +288,93 @@ release-worker version:
       echo "error: working tree is dirty; commit first" >&2
       exit 1
     fi
-    echo "[release] tagging $TAG"
-    git tag -a "$TAG" -m "Worker release {{version}}"
+    if ! command -v claude >/dev/null 2>&1; then
+      echo "error: 'claude' CLI not found on PATH" >&2
+      echo "  install: npm i -g @anthropic-ai/claude-code" >&2
+      exit 1
+    fi
+
+    git fetch --tags origin >/dev/null 2>&1 || true
+
+    PREV_TAG="$(git tag -l 'worker-v*' --sort=-v:refname | head -n 1 || true)"
+    if [ -z "$PREV_TAG" ]; then
+      RANGE="HEAD"
+      RANGE_LABEL="initial release (full history)"
+    else
+      RANGE="${PREV_TAG}..HEAD"
+      RANGE_LABEL="${PREV_TAG} → ${TAG}"
+    fi
+
+    LOG_FILE="$(mktemp)"
+    NOTES_FILE="$(mktemp)"
+    trap 'rm -f "$LOG_FILE" "$NOTES_FILE"' EXIT
+
+    git log "$RANGE" --no-merges --pretty=format:'- %h %s%n%b' > "$LOG_FILE"
+    if [ ! -s "$LOG_FILE" ]; then
+      echo "error: no commits since ${PREV_TAG:-repository start}" >&2
+      exit 1
+    fi
+
+    COMMIT_COUNT=$(git rev-list --no-merges --count "$RANGE")
+    echo "[release] summarizing ${COMMIT_COUNT} commits (${RANGE_LABEL}) via claude code..."
+
+    # Pipe prompt + git log via stdin: --disallowed-tools is variadic in
+    # commander.js and would otherwise eat the positional prompt argument.
+    {
+      cat <<EOF
+    Write GitHub release notes for the Nasrudin discovery worker — a Rust
+    binary that contributes compute to a centralized physics-derivation
+    system. Audience: developers who downloaded a prior worker release.
+
+    Style rules:
+    - Plain GitHub-flavored markdown. No preamble, no closing sign-off, no emoji.
+    - Group by theme: ### Features / ### Fixes / ### Performance / ### Internal.
+      Only include sections that have entries.
+    - Bullet points are short, written in past tense, and reference user-visible
+      behavior — not commit hashes or file paths.
+    - Skip merge commits, version bumps, dependency-only churn, and generated-file noise.
+    - End with one blank line, then a single line: "**Install:** download the
+      bundle for your platform below, extract, and follow \`README.md\`."
+    - Total length under 250 words.
+
+    Range: ${RANGE_LABEL}
+    Commits:
+
+    EOF
+      cat "$LOG_FILE"
+    } | claude -p \
+        --no-session-persistence \
+        --output-format text \
+        --disallowed-tools "Bash Edit Write Glob Grep Read WebFetch WebSearch Agent NotebookEdit" \
+        > "$NOTES_FILE"
+
+    if [ ! -s "$NOTES_FILE" ]; then
+      echo "error: claude returned empty release notes" >&2
+      exit 1
+    fi
+
+    echo
+    echo "═════════════════ release notes ($TAG) ═════════════════"
+    cat "$NOTES_FILE"
+    echo
+    echo "═════════════════════════════════════════════════════════"
+    echo
+
+    if [ -t 0 ]; then
+      read -r -p "[release] tag $TAG with these notes and push to origin? [y/N] " confirm
+    else
+      confirm="n"
+    fi
+    case "$confirm" in
+      y|Y|yes|YES) ;;
+      *) echo "[release] aborted (no tag created)"; exit 1 ;;
+    esac
+
+    git tag -a "$TAG" -F "$NOTES_FILE"
     git push origin "$TAG"
-    echo "[release] pushed; GitHub Actions will build + publish at:"
-    echo "    https://github.com/nasdin/nasrudin/actions"
+    echo "[release] pushed $TAG; CI will build + publish at:"
+    echo "    https://github.com/Nasdin/nasrudin/actions"
+    echo "    https://github.com/Nasdin/nasrudin/releases/tag/${TAG}"
 
 # ── Continuous Operation ───────────────────────────────────
 

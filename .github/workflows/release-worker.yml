@@ -29,6 +29,10 @@ jobs:
             target: aarch64-apple-darwin
             bundle_arch: arm64
             bundle_os: darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundle_arch: x86_64
+            bundle_os: windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -52,15 +56,17 @@ jobs:
 
       - name: Build worker binary
         working-directory: engine
-        run: cargo build --release --target ${{ matrix.target }} -p nasrudin-ga --bin discover_emc2
+        run: cargo build --release --target ${{ matrix.target }} -p nasrudin-ga --bin worker
 
-      - name: Stage tarball
+      - name: Stage bundle (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
           set -euo pipefail
           PKG="nasrudin-worker-${{ matrix.bundle_os }}-${{ matrix.bundle_arch }}"
           OUT="dist/${PKG}"
           mkdir -p "$OUT/prover"
-          cp engine/target/${{ matrix.target }}/release/discover_emc2 "$OUT/nasrudin-worker"
+          cp engine/target/${{ matrix.target }}/release/worker "$OUT/nasrudin-worker"
           cp -R prover/PhysicsGenerator "$OUT/prover/"
           cp prover/PhysicsGenerator.lean prover/lakefile.lean prover/lake-manifest.json prover/lean-toolchain "$OUT/prover/"
           cp deploy/worker-bundle/README.md "$OUT/README.md"
@@ -69,11 +75,28 @@ jobs:
           (cd dist && tar czf "${PKG}.tar.gz" "${PKG}")
           (cd dist && shasum -a 256 "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256")
 
+      - name: Stage bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pkg = "nasrudin-worker-${{ matrix.bundle_os }}-${{ matrix.bundle_arch }}"
+          $out = "dist/$pkg"
+          New-Item -ItemType Directory -Path "$out/prover" -Force | Out-Null
+          Copy-Item "engine/target/${{ matrix.target }}/release/worker.exe" "$out/nasrudin-worker.exe"
+          Copy-Item "prover/PhysicsGenerator" "$out/prover/" -Recurse
+          Copy-Item -Path "prover/PhysicsGenerator.lean","prover/lakefile.lean","prover/lake-manifest.json","prover/lean-toolchain" -Destination "$out/prover/"
+          Copy-Item "deploy/worker-bundle/README.md" "$out/README.md"
+          Copy-Item "deploy/worker-bundle/run.ps1" "$out/run.ps1"
+          Compress-Archive -Path "$out" -DestinationPath "dist/$pkg.zip" -Force
+          $hash = (Get-FileHash "dist/$pkg.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $pkg.zip" | Out-File -Encoding ascii "dist/$pkg.zip.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: nasrudin-worker-${{ matrix.bundle_os }}-${{ matrix.bundle_arch }}
-          path: dist/nasrudin-worker-*.tar.gz*
+          path: dist/nasrudin-worker-*
           if-no-files-found: error
 
   release:
@@ -83,21 +106,38 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
           TAG="${GITHUB_REF#refs/tags/}"
           if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF" ]; then
             TAG="${{ github.event.inputs.tag }}"
           fi
           VERSION="${TAG#worker-}"
+
+          git fetch --tags --force origin
+          NOTES_FILE="$(mktemp)"
+          git tag -l --format='%(contents)' "$TAG" > "$NOTES_FILE"
+          if [ ! -s "$NOTES_FILE" ]; then
+            cat > "$NOTES_FILE" <<'EOF'
+          Distributed discovery worker for nasrudin.org. Download the bundle for your platform, extract, and follow README.md.
+          EOF
+          fi
+
+          files=( dist/*.tar.gz dist/*.zip dist/*.sha256 )
           gh release create "$TAG" \
             --title "Nasrudin Worker $VERSION" \
-            --notes "Distributed discovery worker for nasrudin.org. Download the tarball for your platform, then \`tar xzf …\` and follow README.md." \
-            dist/*.tar.gz dist/*.sha256
+            --notes-file "$NOTES_FILE" \
+            "${files[@]}"
