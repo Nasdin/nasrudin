@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, isApiError } from './api';
+import {
+  firebaseSignOut,
+  getCurrentIdToken,
+  sendPasswordReset,
+  sendVerificationEmail,
+  signInWithEmail,
+  signInWithGoogle,
+  signUpWithEmail,
+} from './firebase';
 import type {
   ApiKeySummary,
   AuthUser,
@@ -46,29 +55,104 @@ export function useMe() {
   });
 }
 
+/**
+ * Sign in with email + password. Calls Firebase, then exchanges the ID
+ * token for a session cookie via POST /api/auth/firebase-session. The
+ * `useMe` query is invalidated so the new identity propagates.
+ */
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (creds: { email: string; password: string }) =>
-      apiFetch<AuthUser>('/api/auth/login', { method: 'POST', body: JSON.stringify(creds) }),
+    mutationFn: async (creds: { email: string; password: string }) => {
+      await signInWithEmail(creds.email, creds.password);
+      const idToken = await getCurrentIdToken();
+      return apiFetch<AuthUser>('/api/auth/firebase-session', {
+        method: 'POST',
+        body: JSON.stringify({ id_token: idToken }),
+      });
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
   });
 }
 
+/**
+ * Create a new account with email + password. Sends the verification
+ * email automatically. The session-exchange call returns 403
+ * `email_not_verified` until the user clicks the link; the form catches
+ * that and shows the verify-your-email alert.
+ */
 export function useRegister() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { email: string; password: string; display_name?: string }) =>
-      apiFetch<AuthUser>('/api/auth/register', { method: 'POST', body: JSON.stringify(input) }),
+    mutationFn: async (input: { email: string; password: string }) => {
+      await signUpWithEmail(input.email, input.password);
+      await sendVerificationEmail();
+      const idToken = await getCurrentIdToken();
+      try {
+        return await apiFetch<AuthUser>('/api/auth/firebase-session', {
+          method: 'POST',
+          body: JSON.stringify({ id_token: idToken }),
+        });
+      } catch (e) {
+        if (
+          isApiError(e) &&
+          e.status === 403 &&
+          (e.body as { error?: string } | null)?.error === 'email_not_verified'
+        ) {
+          // Expected — frontend renders the verification alert.
+          return null;
+        }
+        throw e;
+      }
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
   });
 }
 
+/** Sign in with Google (popup). Same exchange pattern as useLogin. */
+export function useGoogleLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      await signInWithGoogle();
+      const idToken = await getCurrentIdToken();
+      return apiFetch<AuthUser>('/api/auth/firebase-session', {
+        method: 'POST',
+        body: JSON.stringify({ id_token: idToken }),
+      });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
+  });
+}
+
+/** Sign out from both Firebase and the backend session. */
 export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiFetch<{ logged_out: true }>('/api/auth/logout', { method: 'POST' }),
+    mutationFn: async () => {
+      await firebaseSignOut();
+      try {
+        await apiFetch<{ logged_out: true }>('/api/auth/logout', { method: 'POST' });
+      } catch (e) {
+        // 401 is expected if the session was already cleared.
+        if (!isApiError(e) || e.status !== 401) throw e;
+      }
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
+  });
+}
+
+/** Trigger Firebase to send a password-reset email. Server is not involved. */
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (email: string) => sendPasswordReset(email),
+  });
+}
+
+/** Re-send the verification email to the currently signed-in Firebase user. */
+export function useResendVerification() {
+  return useMutation({
+    mutationFn: () => sendVerificationEmail(),
   });
 }
 

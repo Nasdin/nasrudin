@@ -94,6 +94,7 @@ export interface AuthUser {
   email: string;
   display_name: string | null;
   created_at: string;
+  firebase_uid: string;
 }
 
 export type ApiKeyKind = 'live' | 'worker';
