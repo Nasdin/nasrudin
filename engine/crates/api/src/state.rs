@@ -139,6 +139,8 @@ pub struct AppState {
             tokio::sync::broadcast::Sender<crate::jobs::JobEvent>,
         >,
     >,
+    /// 60-second cache backing `GET /api/stats/landing`.
+    pub landing_stats: Arc<crate::handlers::stats::LandingStatsCache>,
 }
 
 /// Cache key for the `/api/seed` JSON response cache. Distinct

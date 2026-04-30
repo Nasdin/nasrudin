@@ -47,7 +47,10 @@ use physics_api::state::AppState;
 /// prevents that.
 pub static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
-const RESET_SQL: &str = "DROP TABLE IF EXISTS conjecture_events CASCADE; \
+const RESET_SQL: &str = "DROP TABLE IF EXISTS user_saved_theorems CASCADE; \
+     DROP TABLE IF EXISTS library_folders CASCADE; \
+     DROP TABLE IF EXISTS cluster_steering CASCADE; \
+     DROP TABLE IF EXISTS conjecture_events CASCADE; \
      DROP TABLE IF EXISTS conjecture_jobs CASCADE; \
      DROP TABLE IF EXISTS manual_verifications CASCADE; \
      DROP TABLE IF EXISTS targeted_search_usage CASCADE; \
@@ -163,6 +166,7 @@ pub async fn build() -> Option<TestApp> {
         steering: Arc::new(arc_swap::ArcSwap::from_pointee(initial_snapshot)),
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
+        landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the
@@ -213,6 +217,10 @@ pub async fn build() -> Option<TestApp> {
         .route(
             "/api/me/stats",
             axum::routing::get(handlers::me::stats),
+        )
+        .route(
+            "/api/stats/landing",
+            axum::routing::get(handlers::stats::landing),
         )
         .route(
             "/api/me/llm-keys",
