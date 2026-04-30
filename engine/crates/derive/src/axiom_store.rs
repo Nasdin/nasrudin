@@ -187,17 +187,15 @@ impl AxiomStore {
     /// get a real `Expr` registered, the rest fall back to the
     /// placeholder `Var(name)` form.
     ///
-    /// Returns `Ok(0)` (and logs a warning) if the file doesn't exist,
-    /// so a missing math corpus doesn't block boot — the AxiomStore
-    /// just runs with whatever upstream postulates are available.
+    /// Returns `Err` if the file is missing or unreadable. Callers
+    /// decide whether to panic (production boot does — Mathlib is a
+    /// hard requirement, see `physics-api::main`) or fall back.
     pub fn load_math_corpus(&mut self, corpus_path: &std::path::Path) -> anyhow::Result<usize> {
         if !corpus_path.exists() {
-            tracing::warn!(
-                "Math corpus not found at {} (run `just extract-mathlib` to build it); \
-                 continuing with upstream-only AxiomStore",
+            anyhow::bail!(
+                "Math corpus not found at {}. Run `just extract-mathlib` to build it.",
                 corpus_path.display()
             );
-            return Ok(0);
         }
         self.load_from_catalog(corpus_path)
     }

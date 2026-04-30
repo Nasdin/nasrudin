@@ -38,8 +38,10 @@ up:
 dev-frontend:
     cd nasrudin-frontend && pnpm dev
 
-# Start API server + GA engine daemon
+# Start API server + GA engine daemon (requires `just bootstrap` first)
 dev-engine:
+    @test -f physlean-extract/output/math_corpus.json \
+        || (echo "error: math_corpus.json missing — run 'just bootstrap' first" >&2; exit 1)
     cd engine && PROVER_ROOT=../prover cargo run --release --bin physics-api
 
 # ── Build ────────────────────────────────────────────────
@@ -161,6 +163,13 @@ generate-axioms:
 # Full pipeline: extract → generate → build prover
 refresh-axioms: extract-physlean generate-axioms
     cd prover && lake build
+
+# Full bootstrap: extract PhysLean + Mathlib, generate axioms, build prover.
+# Required before first `just dev-engine` / `just up` — Mathlib is now a
+# hard requirement at API boot (≥10k entries; physics-api panics otherwise).
+bootstrap: extract-physlean extract-mathlib generate-axioms
+    cd prover && lake build
+    @echo "[bootstrap] complete. Run 'just up' or 'just dev-engine'."
 
 # ── Utilities ────────────────────────────────────────────
 

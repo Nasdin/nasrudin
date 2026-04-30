@@ -109,16 +109,31 @@ async fn main() -> anyhow::Result<()> {
     // `nasrudin_derive::postulates_classical`.
     axiom_store.load_classical_mechanics_postulates();
 
-    // Math corpus from Mathlib (real-arithmetic identities). Optional —
-    // missing file is a soft warning, not a boot failure, so dev
-    // environments without `just extract-mathlib` keep working.
+    // Math corpus from Mathlib (real-arithmetic identities). HARD
+    // REQUIREMENT: missing or truncated corpus panics at boot. Run
+    // `just extract-mathlib` first; CI runs `just bootstrap`.
+    const MATHLIB_MIN_ENTRIES: usize = 10_000;
     let math_corpus_path =
         std::path::Path::new(&prover_root).join("../physlean-extract/output/math_corpus.json");
-    match axiom_store.load_math_corpus(&math_corpus_path) {
-        Ok(0) => {} // already logged
-        Ok(n) => tracing::info!("Loaded {n} math-corpus identities from {}", math_corpus_path.display()),
-        Err(e) => tracing::warn!("Math corpus load failed ({e}): continuing without"),
+    let math_count = axiom_store
+        .load_math_corpus(&math_corpus_path)
+        .unwrap_or_else(|e| {
+            panic!(
+                "Mathlib corpus REQUIRED at boot. Failed to load {}: {e}\n\
+                 Run `just extract-mathlib` first.",
+                math_corpus_path.display()
+            )
+        });
+    if math_count < MATHLIB_MIN_ENTRIES {
+        panic!(
+            "Mathlib corpus too small ({math_count} entries, need ≥{MATHLIB_MIN_ENTRIES}). \
+             Re-run `just extract-mathlib` — corpus appears truncated."
+        );
     }
+    tracing::info!(
+        "Loaded {math_count} math-corpus identities from {}",
+        math_corpus_path.display()
+    );
     tracing::info!("AxiomStore size after upstream layering: {}", axiom_store.len());
 
     // No-cheat audit: hard-fail boot if any registered axiom matches a
