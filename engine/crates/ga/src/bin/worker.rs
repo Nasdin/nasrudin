@@ -61,16 +61,28 @@ async fn main() {
             .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
     // Paid Researcher tier ($19/mo) — distinct from --research-mode.
-    // When set, the worker polls /api/jobs/claim *before* the legacy
-    // /api/conjecture/claim path, runs a paid GA slice for up to 24h,
-    // heartbeats every 30s with slot-hour debits, and calls
-    // /api/jobs/{id}/mark_proved on a verified-theorem hit. The 96
-    // slot-hour quota and explorer-floor protection are enforced
-    // server-side; this flag just opts the worker in.
-    let paid_jobs_mode: bool = args.iter().any(|a| a == "--paid-jobs-mode")
+    // **Default: ON.** Volunteers running a vanilla worker contribute
+    // to paid-conjecture compute by default; the platform is sustained
+    // by paying customers, so untargeted spare capacity should pick
+    // up paid load whenever the queue has any. Opt out with
+    // `--no-paid-jobs` (or `NASRUDIN_NO_PAID_JOBS=1`) if you want
+    // your worker to do background research only.
+    //
+    // The 96 slot-hour quota per job + the cluster's 10% explorer
+    // floor mean a vanilla worker still spends most of its compute
+    // on background research even with this on; paid claims are
+    // gated server-side so they can never starve the explorer fleet.
+    let opt_out_paid: bool = args.iter().any(|a| a == "--no-paid-jobs")
+        || std::env::var("NASRUDIN_NO_PAID_JOBS")
+            .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+    // Legacy explicit-on flag is still honored (no-op if opt-out is
+    // also set — opt-out wins).
+    let _legacy_paid_on: bool = args.iter().any(|a| a == "--paid-jobs-mode")
         || std::env::var("NASRUDIN_PAID_JOBS_MODE")
             .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
+    let paid_jobs_mode: bool = !opt_out_paid;
     // P-Task 11/12: `--no-local-lake` is a DEV-ONLY mode that submits
     // candidate chains *without* first running local lake verification.
     // The production architecture requires workers to lake-build

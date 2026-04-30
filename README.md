@@ -183,21 +183,26 @@ just dev-frontend
 Download the latest release binary for your platform, then:
 
 ```bash
-# Connect to the Nasrudin network and start generating theorems
+# Connect to the Nasrudin network. By default the worker contributes
+# to paid-Researcher compute alongside background research — the
+# platform is sustained by paying customers, so spare capacity helps
+# pay the bills.
 ./nasrudin-worker --server https://nasrudin.org
 
-# Opt in to claiming paid Researcher conjectures alongside background work
-./nasrudin-worker --server https://nasrudin.org --paid-jobs-mode
+# Background research only (skip paid jobs):
+./nasrudin-worker --server https://nasrudin.org --no-paid-jobs
 
-# Or, the legacy LLM-guided FunSearch flow:
+# Legacy LLM-guided FunSearch flow:
 ./nasrudin-worker --server https://nasrudin.org --research-mode
 ```
 
 The worker binary bundles the Rust GA engine and Lean4 prover. It runs locally on your machine, generates and verifies theorems, and submits discoveries to the central server. Your local RocksDB persists across restarts so no work is lost.
 
+The 96 slot-hour quota per paid job and the cluster's 10 % explorer floor mean a vanilla worker still spends the bulk of its compute on background research even with paid-jobs enabled — paid claims are gated server-side so they can never starve the explorer fleet.
+
 **What workers do each chunk** (a chunk is a few generations of GA, roughly 30–60 s):
 
-1. **Try a paid claim first** (if `--paid-jobs-mode`). POST `/api/jobs/claim` with the worker's currently-available lake slots. On award, hand the entire chunk to the paid-slice runner — it heartbeats every 30 s with deltas (candidates attempted, candidates verified, slot-hours consumed) and on a kernel-verified theorem calls `/api/jobs/{id}/mark_proved`.
+1. **Try a paid claim first** (default; suppress with `--no-paid-jobs`). POST `/api/jobs/claim` with the worker's currently-available lake slots. On award, hand the entire chunk to the paid-slice runner — it heartbeats every 30 s with deltas (candidates attempted, candidates verified, slot-hours consumed) and on a kernel-verified theorem calls `/api/jobs/{id}/mark_proved`.
 2. **Otherwise**, sync from `/api/seed`: pull any new peer-verified theorems into the local AxiomStore, refresh the `rejected_canonicals` memo (so we skip lake-builds the cluster has already failed), and read the current `SteeringConfig`.
 3. **Run a chunk of GA** under the active config and submit kernel-verified discoveries to `/api/ingest`.
 
