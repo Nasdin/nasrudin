@@ -968,6 +968,13 @@ async fn main() -> anyhow::Result<()> {
                 "/api/ingest",
                 axum::routing::post(handlers::ingest::ingest),
             )
+            // Per-chunk per-cluster summaries pushed by workers; the
+            // steerer reads recent rows for both UCB1 reward and the
+            // LLM prompt's cluster_summaries field.
+            .route(
+                "/api/cluster-report",
+                axum::routing::post(handlers::cluster_report::handler),
+            )
             // Phase E: conjecture worker endpoints (claim/heartbeat/submit/complete).
             // Each consumes from the same per-worker rate-limit bucket as /api/ingest.
             .route(
