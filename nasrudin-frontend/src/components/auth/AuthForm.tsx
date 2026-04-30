@@ -48,6 +48,16 @@ export function AuthForm() {
           ? 'Sign in to your library, citations, and targeted searches.'
           : 'Free for individual academics. No card required.'}
       </p>
+
+      <a href="/api/auth/github/start" className="oauth-primary">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 .3a12 12 0 0 0-3.79 23.4c.6.11.82-.26.82-.58v-2.05c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.21.09 1.85 1.24 1.85 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.66-.3-5.46-1.33-5.46-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.3-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .3" />
+        </svg>
+        Continue with GitHub
+      </a>
+
+      <div className="divider">or</div>
+
       <div className="auth-tabs">
         <button
           type="button"
@@ -120,14 +130,6 @@ export function AuthForm() {
             ? 'Creating…'
             : 'Create free account'}
       </button>
-      <div className="divider">Or continue with</div>
-      <div className="oauth-grid">
-        {['ORCID', 'GitHub', 'Google', 'Institution SSO'].map((p) => (
-          <button key={p} type="button" className="oauth-btn" disabled title="Coming soon">
-            {p}
-          </button>
-        ))}
-      </div>
       <p
         style={{
           marginTop: 32,

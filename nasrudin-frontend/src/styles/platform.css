@@ -1333,6 +1333,24 @@
   font-family: var(--font-sans);
 }
 .oauth-btn:hover { background: var(--paper-100); }
+.oauth-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--ink-900);
+  background: var(--ink-900);
+  color: var(--paper-50);
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 120ms ease;
+}
+.oauth-primary:hover { background: var(--ink-700); border-color: var(--ink-700); }
+.oauth-primary svg { width: 18px; height: 18px; fill: currentColor; }
 .divider {
   display: flex;
   align-items: center;
