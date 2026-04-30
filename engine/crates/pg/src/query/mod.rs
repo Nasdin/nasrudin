@@ -3,7 +3,6 @@ pub mod api_keys;
 pub mod api_usage;
 pub mod billing;
 pub mod bulk_runs;
-pub mod email_outbox;
 pub mod impersonation;
 pub mod refund_records;
 pub mod cluster_bandit_arms;

@@ -34,6 +34,7 @@ mod m20260430_000027_last_admin_trigger;
 mod m20260430_000017_cluster_reports;
 mod m20260430_000018_cluster_bandit_arms;
 mod m20260430_000028_theorems_trust_state;
+mod m20260430_000029_drop_email_outbox;
 
 pub struct Migrator;
 
@@ -75,6 +76,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260430_000017_cluster_reports::Migration),
             Box::new(m20260430_000018_cluster_bandit_arms::Migration),
             Box::new(m20260430_000028_theorems_trust_state::Migration),
+            Box::new(m20260430_000029_drop_email_outbox::Migration),
         ]
     }
 }
