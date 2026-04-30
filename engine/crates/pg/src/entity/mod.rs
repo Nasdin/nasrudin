@@ -6,6 +6,7 @@ pub mod bulk_runs;
 pub mod impersonation_sessions;
 pub mod refund_records;
 pub mod cluster_bandit_arms;
+pub mod cluster_directive_arms;
 pub mod cluster_reports;
 pub mod cluster_steering;
 pub mod conjecture_events;
