@@ -3,23 +3,36 @@
 //! Lifecycle (paired with `paid_jobs_client::PaidJobsClient`):
 //!  1. Caller `PaidJobsClient::claim()`s a job → `PaidJob`.
 //!  2. Caller invokes `run_paid_slice(...)` — this function.
-//!  3. We loop short `run_discovery` chunks (a few generations each),
+//!  3. We compile the user's hunch (LaTeX) → Expr → AC-canonical hash
+//!     once at the start of the slice. That hash is the success
+//!     criterion: a verified theorem matches the conjecture iff its
+//!     `final_expr`'s AC-canonical hash equals the hunch's. The match
+//!     is tolerant of trivial restatements (commutativity, associativity,
+//!     identity simplifications) because `canonical_ac_hash` is the
+//!     same canonical form the rest of the platform uses for dedup.
+//!  4. We loop short `run_discovery` chunks (a few generations each),
 //!     heartbeating every 30 s with the actual progress counters and
 //!     the slot-hours debited since the last heartbeat.
-//!  4. On any verified theorem we synchronously call `mark_proved`
-//!     (the conjecture target's exact symbolic form is hard to compile
-//!     from natural-language hunches — for v1 we treat the first
-//!     verified theorem in the slice as the proof; v2 will pin a
-//!     compiled `TargetSpec` and only mark on canonical-hash match).
-//!  5. When the server reports `continue: false` (budget exhausted),
+//!  5. On a verified theorem whose hash matches, call `mark_proved` and
+//!     end the slice. Theorems verified during the slice that *don't*
+//!     match the conjecture get logged but not marked — they're still
+//!     useful corpus growth (the chain_engine submission path picks
+//!     them up via the worker's normal /api/ingest flow elsewhere).
+//!  6. When the server reports `continue: false` (budget exhausted),
 //!     or wallclock hits 24 h, the slice ends. On any error before
 //!     that, we attempt a `release` so another worker can pick up the
 //!     job within seconds instead of waiting for the lease reaper.
 //!
-//! v1 simplifications:
+//! When the hunch fails to parse as LaTeX (e.g. a free-form English
+//! sentence), we fall back to "first verified theorem in the slice
+//! is treated as the proof" — same as v1. This keeps the runner
+//! useful for hunches even before the parser stack supports plain
+//! English. The fallback is logged at WARN so ops can see when it
+//! kicks in.
+//!
+//! v1 simplifications still in effect:
 //!  * Every slice gets the worker's whole AxiomStore + classical
 //!    mechanics postulates. No conjecture-specific axiom subsetting.
-//!  * `target_shape` matching is left to v2 (LaTeX → Expr compiler).
 //!  * Slot-hour accounting uses `(elapsed_seconds / 3600) * slot_count`
 //!    where `slot_count = 4` (matches the 96 slot-hour quota = 4 × 24h).
 //!  * Heartbeat cadence is hard-coded to 30 s.
@@ -76,10 +89,38 @@ pub async fn run_paid_slice(
     let mut cum_verified: i32 = 0;
     let mut consumed_h_unsent: f32 = 0.0;
 
+    // Compile the hunch into the AC-canonical hash we'll match
+    // against. None = parser couldn't make sense of the hunch (free-
+    // form English, exotic notation, etc.) — fall back to v1 "first
+    // verified theorem is the proof" semantics so the slice still
+    // produces *something* for the user.
+    let target_hash: Option<[u8; 8]> =
+        match nasrudin_core::parse::parse_latex(job.hunch.trim()) {
+            Ok(expr) => {
+                let h = nasrudin_core::canonical_ac_hash(&expr);
+                tracing::info!(
+                    %job_id,
+                    target_hash = hex::encode(h),
+                    "paid slice target compiled from hunch"
+                );
+                Some(h)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    %job_id,
+                    error = %e,
+                    hunch = job.hunch.chars().take(80).collect::<String>(),
+                    "paid slice could not parse hunch as LaTeX; falling back to first-verified semantics"
+                );
+                None
+            }
+        };
+
     tracing::info!(
         %job_id,
         hunch = job.hunch.chars().take(80).collect::<String>(),
         remaining_h = job.lake_slot_hours_remaining,
+        target_compiled = target_hash.is_some(),
         "starting paid GA slice"
     );
 
@@ -91,14 +132,22 @@ pub async fn run_paid_slice(
         cum_attempted += report.total_candidates as i32;
         cum_verified += report.verified.len() as i32;
 
-        // mark_proved on the first kernel-verified discovery in this
-        // chunk. The theorem id used by the API is the canonical-hash
-        // bytes hex-encoded — see `theorem_id_from_canonical`.
-        if let Some(d) = report.verified.first() {
-            let id_bytes =
-                nasrudin_core::canonical_hash(&d.canonical);
+        // Look for a verified theorem whose AC-canonical hash matches
+        // the conjecture target. With `target_hash = None` (parse
+        // fallback) the first verified theorem wins.
+        let matched = report.verified.iter().find(|d| match target_hash {
+            Some(target) => nasrudin_core::canonical_ac_hash(&d.final_expr) == target,
+            None => true,
+        });
+        if let Some(d) = matched {
+            let id_bytes = nasrudin_core::canonical_hash(&d.canonical);
             let theorem_id_hex = hex::encode(id_bytes);
-            tracing::info!(%job_id, theorem_id_hex, "paid slice produced verified theorem; marking proved");
+            tracing::info!(
+                %job_id,
+                theorem_id_hex,
+                matched_target = target_hash.is_some(),
+                "paid slice produced matching theorem; marking proved"
+            );
             // Best-effort: a 4xx here usually means another worker
             // raced us to the same job — let the slice exit gracefully.
             if let Err(e) = client
@@ -114,6 +163,17 @@ pub async fn run_paid_slice(
                 tracing::warn!(%job_id, error = %e, "mark_proved failed");
             }
             return Ok(());
+        }
+        // Verified theorems that didn't match the target are NOT
+        // marked-proved — they're still useful corpus growth and
+        // get submitted via the worker's normal /api/ingest flow
+        // (chain_engine produces the submission elsewhere).
+        if !report.verified.is_empty() && target_hash.is_some() {
+            tracing::debug!(
+                %job_id,
+                non_matching = report.verified.len(),
+                "paid slice verified theorems didn't match target; continuing"
+            );
         }
 
         // Accumulate slot-hours since the last heartbeat. We send the
