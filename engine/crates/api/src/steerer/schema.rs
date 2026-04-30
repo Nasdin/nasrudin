@@ -40,6 +40,12 @@ pub struct SteeringConfig {
     pub hard_targets: Vec<HardTarget>,
     /// GA tuning knobs. `None` in scope=B; `Some` in C.
     pub mutation_knobs: Option<MutationKnobs>,
+    /// Per-operator mutation weight bias. Keys must be in MUTATION_OPS
+    /// (defined in nasrudin_ga::chain_ga::MUTATION_OPS); unknown keys
+    /// silently ignored on the GA side. Each value in [0.0, 2.0]; 1.0
+    /// neutral. Empty/missing → uniform fallback.
+    #[serde(default)]
+    pub mutation_priors: HashMap<String, f32>,
     /// Free-form rationale (≤500 chars). Stored for the next cycle
     /// to read; never affects worker behaviour.
     pub rationale: String,
@@ -106,6 +112,8 @@ pub enum SteeringValidationError {
     FitnessSum(f32),
     #[error("axiom_emphasis values must be in [0.0, 2.0]")]
     BadEmphasis,
+    #[error("mutation_priors values must be in [0.0, 2.0]")]
+    BadMutationPrior,
     #[error("scope=B must have empty hard_targets")]
     BHasHardTargets,
     #[error("scope=B must have null mutation_knobs")]
@@ -138,6 +146,13 @@ impl SteeringConfig {
             .any(|v| !(0.0..=2.0).contains(v))
         {
             return Err(SteeringValidationError::BadEmphasis);
+        }
+        if self
+            .mutation_priors
+            .values()
+            .any(|v| !(0.0..=2.0).contains(v))
+        {
+            return Err(SteeringValidationError::BadMutationPrior);
         }
         if self.scope == "B" {
             if !self.hard_targets.is_empty() {
@@ -197,6 +212,7 @@ pub fn default_config() -> SteeringConfig {
         soft_targets: vec![],
         hard_targets: vec![],
         mutation_knobs: Some(MutationKnobs::default()),
+        mutation_priors: HashMap::new(),
         rationale: "default cold-start config".into(),
     }
 }
@@ -270,6 +286,35 @@ mod tests {
             rate: 0.5,
             ..MutationKnobs::default()
         });
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn mutation_priors_round_trip() {
+        let mut c = default_config();
+        c.mutation_priors
+            .insert("append_productive_suffix".into(), 1.5);
+        c.mutation_priors.insert("mutate_axiom_name".into(), 0.5);
+        let json = serde_json::to_string(&c).unwrap();
+        let parsed: SteeringConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.mutation_priors.len(), 2);
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn mutation_priors_value_above_2_rejected() {
+        let mut c = default_config();
+        c.mutation_priors.insert("insert_random".into(), 2.5);
+        assert!(matches!(
+            c.validate(),
+            Err(SteeringValidationError::BadMutationPrior)
+        ));
+    }
+
+    #[test]
+    fn mutation_priors_negative_rejected() {
+        let mut c = default_config();
+        c.mutation_priors.insert("insert_random".into(), -0.1);
         assert!(c.validate().is_err());
     }
 }
