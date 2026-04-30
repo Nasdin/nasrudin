@@ -1,6 +1,15 @@
 import { type QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
+import { lazy, Suspense } from 'react';
+
+// Devtools is a devDependency — exclude it from prod node_modules + SSR
+// runtime by gating the dynamic import on import.meta.env.DEV. Vite
+// tree-shakes the dynamic import branch when DEV is false at build time.
+const ReactQueryDevtools = import.meta.env.DEV
+  ? lazy(() =>
+      import('@tanstack/react-query-devtools').then((m) => ({ default: m.ReactQueryDevtools })),
+    )
+  : null;
 
 import '~/styles/tokens.css';
 import '~/styles/styles.css';
@@ -33,7 +42,11 @@ function RootDocument() {
       <body>
         <QueryClientProvider client={queryClient}>
           <Outlet />
-          <ReactQueryDevtools initialIsOpen={false} />
+          {ReactQueryDevtools && (
+            <Suspense fallback={null}>
+              <ReactQueryDevtools initialIsOpen={false} />
+            </Suspense>
+          )}
         </QueryClientProvider>
         <Scripts />
       </body>
