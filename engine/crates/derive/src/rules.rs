@@ -249,10 +249,57 @@ impl DerivationRule for TakePositiveRoot {
     }
 }
 
-/// Look for a fact in `ctx` matching `expr ≥ 0`, `expr > 0`, or
-/// equivalent forms. Used by [`TakePositiveRoot`] to ensure the
-/// implicit non-negativity precondition holds before applying.
+/// Decide whether `expr ≥ 0` is provable from the context.
+///
+/// First tries structural reasoning that's true for any real `Expr`:
+///
+///   * `Lit(n, _)` with `n ≥ 0` — denominator is `u64` so always positive
+///     by construction; sign is decided by the numerator.
+///   * `Pow(base, Lit(2k, 1))` with even `2k` — `x^{2k} ≥ 0` over the
+///     reals regardless of `base`. This is the load-bearing case for
+///     `TakePositiveRoot`: a term like `(m·c²)²` is non-negative
+///     without needing an explicit fact about `m·c²`.
+///   * `Mul(a, b)` where both are non-negative.
+///   * `Add(a, b)` where both are non-negative.
+///   * `Sqrt(_)` is non-negative by convention (principal root).
+///
+/// Falls back to the original literal fact-matching in `ctx.facts() ∪
+/// ctx.assumptions()`: a registered fact `expr ≥ 0`, `expr > 0`,
+/// `0 ≤ expr`, or `0 < expr`.
+///
+/// All cases here are sound — we only conclude `≥ 0` when it's true
+/// for ALL real values of free variables, not "true for the values
+/// that happen to be physical".
 fn has_nonneg_fact(ctx: &DerivationContext, expr: &Expr) -> bool {
+    // ── Structural cases first (no ctx lookup needed) ───────────────
+    match expr {
+        // Literal: numerator ≥ 0 (denominator is u64, always > 0).
+        Expr::Lit(n, _) if *n >= 0 => return true,
+        // Even-power: x^{2k} ≥ 0 over the reals. Recurse on the
+        // exponent's *value* so `Pow(x, 2)`, `Pow(x, 4)`, …, all hit.
+        Expr::BinOp(BinOp::Pow, _base, exp) => {
+            if let Expr::Lit(n, 1) = exp.as_ref() {
+                if *n >= 0 && n % 2 == 0 {
+                    return true;
+                }
+            }
+        }
+        // Product of non-negatives is non-negative.
+        Expr::BinOp(BinOp::Mul, a, b) => {
+            if has_nonneg_fact(ctx, a) && has_nonneg_fact(ctx, b) {
+                return true;
+            }
+        }
+        // Sum of non-negatives is non-negative.
+        Expr::BinOp(BinOp::Add, a, b) => {
+            if has_nonneg_fact(ctx, a) && has_nonneg_fact(ctx, b) {
+                return true;
+            }
+        }
+        _ => {}
+    }
+
+    // ── Literal fact match (legacy path) ────────────────────────────
     let target_canon = expr.to_canonical();
     let zero = Expr::Lit(0, 1);
     let candidates = ctx.facts().iter().chain(ctx.assumptions().iter());

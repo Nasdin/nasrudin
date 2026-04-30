@@ -126,6 +126,16 @@ impl Chain {
             RuleStep::IntroduceAxiom {
                 axiom_name: "rest_frame_psq_zero".into(),
             },
+            // Sign axioms — discharge the non-negativity hypothesis
+            // `TakePositiveRoot` requires for `E ≥ 0`. The right-hand
+            // base `m·c²` is recognised structurally (m_nonneg axiom
+            // below + Pow(c, 2) is even-power → ≥ 0 unconditionally).
+            RuleStep::IntroduceAxiom {
+                axiom_name: "energy_nonneg".into(),
+            },
+            RuleStep::IntroduceAxiom {
+                axiom_name: "mass_nonneg".into(),
+            },
             RuleStep::RearrangeEquation {
                 description: "E² = (m·c²)² from upstream axioms".into(),
                 target,
