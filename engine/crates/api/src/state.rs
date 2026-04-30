@@ -121,6 +121,24 @@ pub struct AppState {
             >,
         >,
     >,
+    /// Latest LLM-driven cluster steering snapshot. Initialised at
+    /// boot to a `default_config()` snapshot; mutated atomically by
+    /// the steerer task at every cycle. Read by `/api/steering` and
+    /// folded into `/api/seed` so workers hot-reload the config.
+    pub steering: Arc<arc_swap::ArcSwap<SteeringSnapshot>>,
+    /// Aggregate cluster-capacity tracker (sum of last-seen lake
+    /// slots per worker, plus a counter of slots currently committed
+    /// to paid `conjecture_jobs`). Drives the explorer-floor check in
+    /// `POST /api/jobs/claim`.
+    pub capacity: Arc<crate::jobs::capacity::CapacityTracker>,
+    /// Per-job SSE broadcast channels for paid Researcher progress.
+    /// Lazily inserted on first subscribe / first emit.
+    pub job_events: Arc<
+        dashmap::DashMap<
+            uuid::Uuid,
+            tokio::sync::broadcast::Sender<crate::jobs::JobEvent>,
+        >,
+    >,
 }
 
 /// Cache key for the `/api/seed` JSON response cache. Distinct
@@ -130,4 +148,27 @@ pub struct AppState {
 pub struct SeedCacheKey {
     pub domain: Option<String>,
     pub top: u64,
+}
+
+/// Hot-swappable steerer snapshot stored in `AppState.steering`.
+///
+/// `etag` is a `u64` (xxhash64 of the serialised config) that the
+/// `/api/steering` and `/api/seed` handlers expose to clients so they
+/// can do conditional-GET. `started_at` is the cycle's start time and
+/// gets surfaced to the worker for debugging.
+pub struct SteeringSnapshot {
+    pub config: serde_json::Value,
+    pub etag: u64,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl AppState {
+    /// Drop every cached `/api/seed` response. Called by the steerer
+    /// after it rotates a new config so workers don't see a stale
+    /// pairing of axioms+steering for up to the cache TTL.
+    pub fn invalidate_seed_cache(&self) {
+        if let Ok(mut g) = self.seed_cache.lock() {
+            g.clear();
+        }
+    }
 }

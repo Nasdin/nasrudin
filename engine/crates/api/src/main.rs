@@ -362,6 +362,18 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Cluster steerer + paid-job state — initialised at boot to a
+    // sane default and rotated by the steerer task (`steerer::cycle`).
+    let initial_steering = physics_api::steerer::schema::default_config();
+    let initial_body = serde_json::to_vec(&initial_steering).unwrap_or_default();
+    let initial_etag = xxhash_rust::xxh64::xxh64(&initial_body, 0);
+    let initial_snapshot = physics_api::state::SteeringSnapshot {
+        config: serde_json::to_value(&initial_steering)
+            .unwrap_or(serde_json::Value::Null),
+        etag: initial_etag,
+        started_at: chrono::Utc::now(),
+    };
+
     let state = Arc::new(AppState {
         db,
         pg,
@@ -384,6 +396,9 @@ async fn main() -> anyhow::Result<()> {
         seed_cache: Arc::new(std::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        steering: Arc::new(arc_swap::ArcSwap::from_pointee(initial_snapshot)),
+        capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
+        job_events: Arc::new(dashmap::DashMap::new()),
     });
 
     // Phase 9 Task 3.4: spawn the reverify drain loop iff Postgres is wired.
@@ -430,6 +445,103 @@ async fn main() -> anyhow::Result<()> {
         let p = Arc::clone(promotion);
         tokio::spawn(physics_api::lake_promotion::crawler_loop(p));
         tracing::info!("Lake-promotion drain + crawler spawned");
+    }
+
+    // Cluster steerer + paid-job reaper. Both require PostgreSQL.
+    // The steerer is gated on the `GRADIENT_API_KEY` env var being
+    // present; when absent (or `STEERER_DISABLED=1`) we keep the
+    // default `default_config()` snapshot live and skip the LLM
+    // call entirely. Useful for local dev without a Gradient key.
+    if let Some(ref pg) = state.pg {
+        let pg_for_reaper = pg.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                match physics_api::jobs::reaper::reap_dead_leases(&pg_for_reaper).await {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(n, "reaped expired conjecture-job leases")
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::error!(error=%e, "lease reaper failed"),
+                }
+            }
+        });
+        tracing::info!("Conjecture lease reaper (paid jobs) spawned");
+
+        let steerer_disabled = std::env::var("STEERER_DISABLED").is_ok();
+        if !steerer_disabled {
+            match nasrudin_llm::GradientProvider::from_env() {
+                Ok(provider) => {
+                    let model_id = std::env::var("STEERER_MODEL")
+                        .unwrap_or_else(|_| "kimi-k2-instruct".into());
+                    match provider.list_models().await {
+                        Ok(models) => {
+                            if !models.iter().any(|m| m == &model_id) {
+                                tracing::warn!(
+                                    model=%model_id, available=?models,
+                                    "STEERER_MODEL not in Gradient catalog; \
+                                     steerer will still run but may 4xx"
+                                );
+                            } else {
+                                tracing::info!(model=%model_id, "steerer model verified");
+                            }
+                        }
+                        Err(e) => tracing::warn!(
+                            error=%e,
+                            "Gradient /v1/models probe failed; steerer will run anyway"
+                        ),
+                    }
+                    let cadence_s: u64 = std::env::var("STEERER_CADENCE_SECONDS")
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(600);
+                    let pg_for_steerer = pg.clone();
+                    let state_for_steerer = Arc::clone(&state);
+                    let caller = physics_api::steerer::cycle::GradientCaller::new(
+                        provider,
+                        model_id.clone(),
+                    );
+                    tokio::spawn(async move {
+                        let mut tick = tokio::time::interval(
+                            std::time::Duration::from_secs(cadence_s),
+                        );
+                        // Skip the immediate first tick — give the
+                        // rest of the daemon a moment to settle and
+                        // workers a chance to register their slots.
+                        tick.tick().await;
+                        loop {
+                            tick.tick().await;
+                            match physics_api::steerer::cycle::run_one_cycle(
+                                &state_for_steerer,
+                                &pg_for_steerer,
+                                &caller,
+                                &model_id,
+                            )
+                            .await
+                            {
+                                Ok(id) => {
+                                    tracing::info!(cycle_id = %id, "steerer cycle persisted")
+                                }
+                                Err(e) => {
+                                    tracing::error!(error=%e, "steerer cycle failed")
+                                }
+                            }
+                        }
+                    });
+                    tracing::info!(cadence_s, "cluster steerer spawned");
+                }
+                Err(e) => {
+                    tracing::info!(
+                        error = %e,
+                        "GRADIENT_API_KEY unset; cluster steerer disabled \
+                         (default_config snapshot remains live)"
+                    );
+                }
+            }
+        } else {
+            tracing::info!("STEERER_DISABLED set; cluster steerer disabled");
+        }
     }
 
     // CORS configuration

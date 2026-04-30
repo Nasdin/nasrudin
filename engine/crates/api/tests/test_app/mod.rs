@@ -128,6 +128,16 @@ pub async fn build() -> Option<TestApp> {
     ));
     let axiom_store = physics_api::state::SharedAxiomStore::new(AxiomStore::new());
 
+    let initial_steering = physics_api::steerer::schema::default_config();
+    let initial_body = serde_json::to_vec(&initial_steering).unwrap_or_default();
+    let initial_etag = xxhash_rust::xxh64::xxh64(&initial_body, 0);
+    let initial_snapshot = physics_api::state::SteeringSnapshot {
+        config: serde_json::to_value(&initial_steering)
+            .unwrap_or(serde_json::Value::Null),
+        etag: initial_etag,
+        started_at: chrono::Utc::now(),
+    };
+
     let state = Arc::new(AppState {
         db: rocks,
         pg: Some(pg.clone()),
@@ -150,6 +160,9 @@ pub async fn build() -> Option<TestApp> {
         seed_cache: Arc::new(std::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        steering: Arc::new(arc_swap::ArcSwap::from_pointee(initial_snapshot)),
+        capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
+        job_events: Arc::new(dashmap::DashMap::new()),
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the
