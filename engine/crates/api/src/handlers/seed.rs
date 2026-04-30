@@ -27,7 +27,41 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::state::{AppState, SeedCacheKey};
+use crate::state::{AppState, DirectiveArmsSnapshot, SeedCacheKey};
+
+/// Convert the flat per-arm snapshot into a per-slot rollup with the
+/// 5 multiplier_choice arms inlined. Cuts JSON size from
+/// O(rows × ~40 B) to O(slots × ~120 B) — ~120 slots × 120 B ≈ 14 KB
+/// plain, ~5 KB after the existing CompressionLayer.
+fn directive_arms_compact(snap: &DirectiveArmsSnapshot) -> Vec<serde_json::Value> {
+    use std::collections::BTreeMap;
+    type SlotKey = (String, String, i16);
+    let mut by_slot: BTreeMap<SlotKey, Vec<serde_json::Value>> = BTreeMap::new();
+    for r in &snap.arms {
+        let key = (r.island_domain.clone(), r.action.clone(), r.strength_bucket);
+        let mean = if r.pulls > 0 {
+            r.total_reward / r.pulls as f64
+        } else {
+            0.0
+        };
+        by_slot.entry(key).or_default().push(serde_json::json!({
+            "multiplier_choice": r.multiplier_choice,
+            "pulls": r.pulls,
+            "mean_reward": mean,
+        }));
+    }
+    by_slot
+        .into_iter()
+        .map(|((domain, action, bucket), arms)| {
+            serde_json::json!({
+                "island_domain": domain,
+                "action": action,
+                "strength_bucket": bucket,
+                "arms": arms,
+            })
+        })
+        .collect()
+}
 
 /// How long a serialised /api/seed response stays valid in cache. The
 /// AxiomStore only changes via /api/admin/reload_corpus (which busts
@@ -253,6 +287,7 @@ pub async fn seed(
     // each chunk. Both are versioned via independent etags.
     let steering_snap = state.steering.load();
     let cc_snap = state.cluster_config.load();
+    let arms_snap = state.directive_arms.load();
     let body = serde_json::json!({
         "axioms": axioms,
         "seed_theorems": seed_theorems,
@@ -264,6 +299,10 @@ pub async fn seed(
         "cluster_config": {
             "k_per_island": cc_snap.k_per_island,
             "etag": format!("{:016x}", cc_snap.etag),
+        },
+        "directive_arms": {
+            "snapshot": directive_arms_compact(&arms_snap),
+            "etag": format!("{:016x}", arms_snap.etag),
         },
     });
     let body_str = serde_json::to_string(&body)

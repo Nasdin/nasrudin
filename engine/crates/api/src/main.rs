@@ -450,6 +450,9 @@ async fn main() -> anyhow::Result<()> {
         cluster_config: Arc::new(arc_swap::ArcSwap::from_pointee(
             physics_api::state::ClusterConfigSnapshot::default(),
         )),
+        directive_arms: Arc::new(arc_swap::ArcSwap::from_pointee(
+            physics_api::state::DirectiveArmsSnapshot::default(),
+        )),
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),

@@ -130,6 +130,11 @@ pub struct AppState {
     /// every cycle alongside `steering` and folded into `/api/seed`
     /// so workers know how many clusters to k-means each chunk.
     pub cluster_config: Arc<arc_swap::ArcSwap<ClusterConfigSnapshot>>,
+    /// Snapshot of the directive-bandit arm table; refreshed each
+    /// steerer cycle. Workers fetch via `/api/seed` and call
+    /// `select_multiplier` to pick the multiplier_choice for each
+    /// cluster_directive that lands.
+    pub directive_arms: Arc<arc_swap::ArcSwap<DirectiveArmsSnapshot>>,
     /// Aggregate cluster-capacity tracker (sum of last-seen lake
     /// slots per worker, plus a counter of slots currently committed
     /// to paid `conjecture_jobs`). Drives the explorer-floor check in
@@ -220,6 +225,29 @@ pub struct ClusterConfigSnapshot {
     /// island_domain → K
     pub k_per_island: std::collections::HashMap<String, u32>,
     pub etag: u64,
+}
+
+/// Per-(island, action, strength_bucket) bandit-arm snapshot. Workers
+/// read this from `/api/seed` to UCB1-select multiplier_choice when
+/// the LLM emits a `cluster_directive`. Refreshed by the steerer
+/// cycle alongside `steering` / `cluster_config`.
+#[derive(Debug, Clone, Default)]
+pub struct DirectiveArmsSnapshot {
+    /// One entry per arm. Ordered by the composite key
+    /// (island, action, bucket, choice) for deterministic etag
+    /// computation. Bounded at ~600 rows.
+    pub arms: Vec<DirectiveArmRow>,
+    pub etag: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DirectiveArmRow {
+    pub island_domain: String,
+    pub action: String,
+    pub strength_bucket: i16,
+    pub multiplier_choice: i16,
+    pub pulls: i64,
+    pub total_reward: f64,
 }
 
 impl AppState {

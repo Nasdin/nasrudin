@@ -155,6 +155,42 @@ pub async fn run_one_cycle(
         etag: cc_etag,
     }));
 
+    // Snapshot the directive-bandit arm table for the next chunk of
+    // workers. ~600 rows, full read each cycle. Worker-side bandits
+    // would lose cluster-wide learning, so we keep this server-side.
+    let arm_rows = nasrudin_pg::query::cluster_directive_arms::snapshot_all(db)
+        .await
+        .unwrap_or_default();
+    let directive_rows: Vec<crate::state::DirectiveArmRow> = arm_rows
+        .into_iter()
+        .map(|m| crate::state::DirectiveArmRow {
+            island_domain: m.island_domain,
+            action: m.action,
+            strength_bucket: m.strength_bucket,
+            multiplier_choice: m.multiplier_choice,
+            pulls: m.pulls,
+            total_reward: m.total_reward,
+        })
+        .collect();
+    let directive_etag = {
+        let mut hasher_input = Vec::with_capacity(directive_rows.len() * 32);
+        for r in &directive_rows {
+            hasher_input.extend_from_slice(r.island_domain.as_bytes());
+            hasher_input.extend_from_slice(r.action.as_bytes());
+            hasher_input.extend_from_slice(&r.strength_bucket.to_le_bytes());
+            hasher_input.extend_from_slice(&r.multiplier_choice.to_le_bytes());
+            hasher_input.extend_from_slice(&r.pulls.to_le_bytes());
+            hasher_input.extend_from_slice(&r.total_reward.to_le_bytes());
+        }
+        xxhash_rust::xxh64::xxh64(&hasher_input, 0)
+    };
+    state
+        .directive_arms
+        .store(Arc::new(crate::state::DirectiveArmsSnapshot {
+            arms: directive_rows,
+            etag: directive_etag,
+        }));
+
     // 4. Build prompt.
     let history = load_history(db, HISTORY_N).await?;
     let demand = aggregate_demand(db, DEMAND_WINDOW).await.unwrap_or_default();
