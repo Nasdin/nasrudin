@@ -24,11 +24,19 @@ import { Route as ConjectureRouteImport } from './routes/conjecture'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as ApiDocsRouteImport } from './routes/api-docs'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as TheoremIdRouteImport } from './routes/theorem.$id'
 import { Route as SearchConceptRouteImport } from './routes/search.concept'
 import { Route as ResearchIdRouteImport } from './routes/research.$id'
 import { Route as ConjectureIdRouteImport } from './routes/conjecture.$id'
+import { Route as AdminUsersRouteImport } from './routes/admin.users'
+import { Route as AdminSteeringRouteImport } from './routes/admin.steering'
+import { Route as AdminCorpusRouteImport } from './routes/admin.corpus'
+import { Route as AdminBulkRouteImport } from './routes/admin.bulk'
+import { Route as AdminAuditRouteImport } from './routes/admin.audit'
+import { Route as AdminUsersIdRouteImport } from './routes/admin.users.$id'
 
 const WorkersRoute = WorkersRouteImport.update({
   id: '/workers',
@@ -105,10 +113,20 @@ const ApiDocsRoute = ApiDocsRouteImport.update({
   path: '/api-docs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
 } as any)
 const TheoremIdRoute = TheoremIdRouteImport.update({
   id: '/theorem/$id',
@@ -130,9 +148,40 @@ const ConjectureIdRoute = ConjectureIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => ConjectureRoute,
 } as any)
+const AdminUsersRoute = AdminUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminSteeringRoute = AdminSteeringRouteImport.update({
+  id: '/steering',
+  path: '/steering',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminCorpusRoute = AdminCorpusRouteImport.update({
+  id: '/corpus',
+  path: '/corpus',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminBulkRoute = AdminBulkRouteImport.update({
+  id: '/bulk',
+  path: '/bulk',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminAuditRoute = AdminAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminUsersIdRoute = AdminUsersIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => AdminUsersRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteWithChildren
   '/api-docs': typeof ApiDocsRoute
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
@@ -148,10 +197,17 @@ export interface FileRoutesByFullPath {
   '/signin': typeof SigninRoute
   '/sponsor': typeof SponsorRoute
   '/workers': typeof WorkersRoute
+  '/admin/audit': typeof AdminAuditRoute
+  '/admin/bulk': typeof AdminBulkRoute
+  '/admin/corpus': typeof AdminCorpusRoute
+  '/admin/steering': typeof AdminSteeringRoute
+  '/admin/users': typeof AdminUsersRouteWithChildren
   '/conjecture/$id': typeof ConjectureIdRoute
   '/research/$id': typeof ResearchIdRoute
   '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
+  '/admin/': typeof AdminIndexRoute
+  '/admin/users/$id': typeof AdminUsersIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -170,14 +226,22 @@ export interface FileRoutesByTo {
   '/signin': typeof SigninRoute
   '/sponsor': typeof SponsorRoute
   '/workers': typeof WorkersRoute
+  '/admin/audit': typeof AdminAuditRoute
+  '/admin/bulk': typeof AdminBulkRoute
+  '/admin/corpus': typeof AdminCorpusRoute
+  '/admin/steering': typeof AdminSteeringRoute
+  '/admin/users': typeof AdminUsersRouteWithChildren
   '/conjecture/$id': typeof ConjectureIdRoute
   '/research/$id': typeof ResearchIdRoute
   '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
+  '/admin': typeof AdminIndexRoute
+  '/admin/users/$id': typeof AdminUsersIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteWithChildren
   '/api-docs': typeof ApiDocsRoute
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
@@ -193,15 +257,23 @@ export interface FileRoutesById {
   '/signin': typeof SigninRoute
   '/sponsor': typeof SponsorRoute
   '/workers': typeof WorkersRoute
+  '/admin/audit': typeof AdminAuditRoute
+  '/admin/bulk': typeof AdminBulkRoute
+  '/admin/corpus': typeof AdminCorpusRoute
+  '/admin/steering': typeof AdminSteeringRoute
+  '/admin/users': typeof AdminUsersRouteWithChildren
   '/conjecture/$id': typeof ConjectureIdRoute
   '/research/$id': typeof ResearchIdRoute
   '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
+  '/admin/': typeof AdminIndexRoute
+  '/admin/users/$id': typeof AdminUsersIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
     | '/api-docs'
     | '/api-keys'
     | '/browse'
@@ -217,10 +289,17 @@ export interface FileRouteTypes {
     | '/signin'
     | '/sponsor'
     | '/workers'
+    | '/admin/audit'
+    | '/admin/bulk'
+    | '/admin/corpus'
+    | '/admin/steering'
+    | '/admin/users'
     | '/conjecture/$id'
     | '/research/$id'
     | '/search/concept'
     | '/theorem/$id'
+    | '/admin/'
+    | '/admin/users/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -239,13 +318,21 @@ export interface FileRouteTypes {
     | '/signin'
     | '/sponsor'
     | '/workers'
+    | '/admin/audit'
+    | '/admin/bulk'
+    | '/admin/corpus'
+    | '/admin/steering'
+    | '/admin/users'
     | '/conjecture/$id'
     | '/research/$id'
     | '/search/concept'
     | '/theorem/$id'
+    | '/admin'
+    | '/admin/users/$id'
   id:
     | '__root__'
     | '/'
+    | '/admin'
     | '/api-docs'
     | '/api-keys'
     | '/browse'
@@ -261,14 +348,22 @@ export interface FileRouteTypes {
     | '/signin'
     | '/sponsor'
     | '/workers'
+    | '/admin/audit'
+    | '/admin/bulk'
+    | '/admin/corpus'
+    | '/admin/steering'
+    | '/admin/users'
     | '/conjecture/$id'
     | '/research/$id'
     | '/search/concept'
     | '/theorem/$id'
+    | '/admin/'
+    | '/admin/users/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRouteWithChildren
   ApiDocsRoute: typeof ApiDocsRoute
   ApiKeysRoute: typeof ApiKeysRoute
   BrowseRoute: typeof BrowseRoute
@@ -394,12 +489,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDocsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
     }
     '/theorem/$id': {
       id: '/theorem/$id'
@@ -429,8 +538,82 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConjectureIdRouteImport
       parentRoute: typeof ConjectureRoute
     }
+    '/admin/users': {
+      id: '/admin/users'
+      path: '/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AdminUsersRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/steering': {
+      id: '/admin/steering'
+      path: '/steering'
+      fullPath: '/admin/steering'
+      preLoaderRoute: typeof AdminSteeringRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/corpus': {
+      id: '/admin/corpus'
+      path: '/corpus'
+      fullPath: '/admin/corpus'
+      preLoaderRoute: typeof AdminCorpusRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/bulk': {
+      id: '/admin/bulk'
+      path: '/bulk'
+      fullPath: '/admin/bulk'
+      preLoaderRoute: typeof AdminBulkRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/audit': {
+      id: '/admin/audit'
+      path: '/audit'
+      fullPath: '/admin/audit'
+      preLoaderRoute: typeof AdminAuditRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/users/$id': {
+      id: '/admin/users/$id'
+      path: '/$id'
+      fullPath: '/admin/users/$id'
+      preLoaderRoute: typeof AdminUsersIdRouteImport
+      parentRoute: typeof AdminUsersRoute
+    }
   }
 }
+
+interface AdminUsersRouteChildren {
+  AdminUsersIdRoute: typeof AdminUsersIdRoute
+}
+
+const AdminUsersRouteChildren: AdminUsersRouteChildren = {
+  AdminUsersIdRoute: AdminUsersIdRoute,
+}
+
+const AdminUsersRouteWithChildren = AdminUsersRoute._addFileChildren(
+  AdminUsersRouteChildren,
+)
+
+interface AdminRouteChildren {
+  AdminAuditRoute: typeof AdminAuditRoute
+  AdminBulkRoute: typeof AdminBulkRoute
+  AdminCorpusRoute: typeof AdminCorpusRoute
+  AdminSteeringRoute: typeof AdminSteeringRoute
+  AdminUsersRoute: typeof AdminUsersRouteWithChildren
+  AdminIndexRoute: typeof AdminIndexRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminAuditRoute: AdminAuditRoute,
+  AdminBulkRoute: AdminBulkRoute,
+  AdminCorpusRoute: AdminCorpusRoute,
+  AdminSteeringRoute: AdminSteeringRoute,
+  AdminUsersRoute: AdminUsersRouteWithChildren,
+  AdminIndexRoute: AdminIndexRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface ConjectureRouteChildren {
   ConjectureIdRoute: typeof ConjectureIdRoute
@@ -469,6 +652,7 @@ const SearchRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRouteWithChildren,
   ApiDocsRoute: ApiDocsRoute,
   ApiKeysRoute: ApiKeysRoute,
   BrowseRoute: BrowseRoute,
@@ -489,3 +673,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}
