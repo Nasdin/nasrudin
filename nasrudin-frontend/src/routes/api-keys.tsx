@@ -213,7 +213,8 @@ function ApiKeysPage() {
             </button>
           </div>
         ) : (
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div className="card" style={{ padding: 0 }}>
+            <div className="lead-table-scroll">
             <table className="lead-table">
               <thead>
                 {table.getHeaderGroups().map((headerGroup) => (
@@ -261,6 +262,7 @@ function ApiKeysPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
 
@@ -410,7 +412,8 @@ function WorkersTable({ workers }: { workers: Worker[] }) {
         worker-kind API key and is publicly visible on{' '}
         <Link to="/workers">the workers page →</Link>
       </p>
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div className="card" style={{ padding: 0 }}>
+        <div className="lead-table-scroll">
         <table className="lead-table">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -448,6 +451,7 @@ function WorkersTable({ workers }: { workers: Worker[] }) {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </section>
   );
