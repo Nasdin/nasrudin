@@ -1126,6 +1126,14 @@ async fn main() -> anyhow::Result<()> {
                 "/api/cluster-report",
                 axum::routing::post(handlers::cluster_report::handler),
             )
+            // Per-cluster directive bandit reward feedback. Workers
+            // POST a batch of (arm_key, reward) tuples after they've
+            // observed the cluster's mean-fitness delta one chunk
+            // after the directive landed.
+            .route(
+                "/api/directive-feedback",
+                axum::routing::post(handlers::directive_feedback::handler),
+            )
             // Phase E: conjecture worker endpoints (claim/heartbeat/submit/complete).
             // Each consumes from the same per-worker rate-limit bucket as /api/ingest.
             .route(
