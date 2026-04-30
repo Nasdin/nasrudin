@@ -185,7 +185,15 @@ function JobRow({ job }: { job: ResearchJob }) {
         borderRadius: 'var(--radius-md)',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
+      >
         <a href={`/research/${job.id}`} style={{ fontFamily: 'var(--font-mono)', fontSize: 14 }}>
           {job.hunch.slice(0, 80)}
           {job.hunch.length > 80 && '…'}
@@ -193,7 +201,14 @@ function JobRow({ job }: { job: ResearchJob }) {
         <StateBadge state={job.state} />
       </div>
       <div
-        style={{ marginTop: 8, display: 'flex', gap: 16, fontSize: 12, color: 'var(--ink-600)' }}
+        style={{
+          marginTop: 8,
+          display: 'flex',
+          gap: 16,
+          flexWrap: 'wrap',
+          fontSize: 12,
+          color: 'var(--ink-600)',
+        }}
       >
         <span>
           {job.candidates_verified.toLocaleString()} verified ·{' '}

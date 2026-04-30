@@ -42,30 +42,14 @@ function JobsPage() {
           {list.data && list.data.conjectures.length > 0 && (
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
               {list.data.conjectures.map((c) => (
-                <li
-                  key={c.id}
-                  style={{
-                    borderTop: '1px solid var(--paper-200)',
-                    padding: '12px 0',
-                    display: 'flex',
-                    gap: 16,
-                    alignItems: 'baseline',
-                  }}
-                >
-                  <span
-                    style={{
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 12,
-                      color: 'var(--ink-500)',
-                      minWidth: 130,
-                    }}
-                  >
+                <li key={c.id} className="jobs-row">
+                  <span className="jobs-row-date">
                     {new Date(c.created_at).toLocaleString()}
                   </span>
                   <Link
                     to="/conjecture/$id"
                     params={{ id: c.id }}
-                    style={{ flex: 1, fontFamily: 'var(--font-sans)' }}
+                    className="jobs-row-link"
                   >
                     {c.hunch.slice(0, 100)}
                     {c.hunch.length > 100 ? '…' : ''}
