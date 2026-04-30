@@ -46,6 +46,11 @@ pub struct SteeringConfig {
     /// neutral. Empty/missing → uniform fallback.
     #[serde(default)]
     pub mutation_priors: HashMap<String, f32>,
+    /// Per-cluster steering. Empty in scope=B (locked, like
+    /// hard_targets/mutation_knobs). Each directive addresses a
+    /// cluster by `centroid_skeleton_hash` from the previous chunk.
+    #[serde(default)]
+    pub cluster_directives: Vec<ClusterDirective>,
     /// Free-form rationale (≤500 chars). Stored for the next cycle
     /// to read; never affects worker behaviour.
     pub rationale: String,
@@ -102,6 +107,36 @@ impl Default for MutationKnobs {
     }
 }
 
+/// Per-cluster directive emitted by the LLM. Addresses a cluster by
+/// the `centroid_skeleton_hash` it observed in the previous chunk's
+/// ClusterSummary, NOT by `cluster_id` — k-means renumbers clusters
+/// every chunk so id-based addressing is unstable. Workers match by
+/// minimum Hamming distance on the hash with a fixed threshold; if no
+/// new cluster is close enough, the directive is silently dropped.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClusterDirective {
+    pub island_domain: String,
+    pub centroid_skeleton_hash: u64,
+    pub action: ClusterAction,
+    /// [0.0, 1.0]; mapped to bounded multipliers worker-side. Strength
+    /// 0 is a no-op; strength 1 is the maximum-magnitude effect.
+    pub strength: f32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterAction {
+    /// Multiply per-individual mutation rate inside this cluster.
+    Boost,
+    /// Multiply elitism fraction inside this cluster (preserve more).
+    Exploit,
+    /// Re-seed the worst N% with random + axiom samples to escape a
+    /// local optimum.
+    Diversify,
+    /// Drop a fraction of the cluster, refill from migrants.
+    Kill,
+}
+
 #[derive(Debug, Error)]
 pub enum SteeringValidationError {
     #[error("scope must be B or C, got {0}")]
@@ -114,6 +149,10 @@ pub enum SteeringValidationError {
     BadEmphasis,
     #[error("mutation_priors values must be in [0.0, 2.0]")]
     BadMutationPrior,
+    #[error("scope=B must have empty cluster_directives")]
+    BHasClusterDirectives,
+    #[error("cluster directive strength must be in [0.0, 1.0]")]
+    BadDirectiveStrength,
     #[error("scope=B must have empty hard_targets")]
     BHasHardTargets,
     #[error("scope=B must have null mutation_knobs")]
@@ -160,6 +199,14 @@ impl SteeringConfig {
             }
             if self.mutation_knobs.is_some() {
                 return Err(SteeringValidationError::BHasMutationKnobs);
+            }
+            if !self.cluster_directives.is_empty() {
+                return Err(SteeringValidationError::BHasClusterDirectives);
+            }
+        }
+        for d in &self.cluster_directives {
+            if !(0.0..=1.0).contains(&d.strength) {
+                return Err(SteeringValidationError::BadDirectiveStrength);
             }
         }
         if let Some(k) = &self.mutation_knobs {
@@ -213,6 +260,7 @@ pub fn default_config() -> SteeringConfig {
         hard_targets: vec![],
         mutation_knobs: Some(MutationKnobs::default()),
         mutation_priors: HashMap::new(),
+        cluster_directives: vec![],
         rationale: "default cold-start config".into(),
     }
 }
@@ -315,6 +363,51 @@ mod tests {
     fn mutation_priors_negative_rejected() {
         let mut c = default_config();
         c.mutation_priors.insert("insert_random".into(), -0.1);
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn cluster_directive_round_trip() {
+        let mut c = default_config();
+        c.cluster_directives.push(ClusterDirective {
+            island_domain: "special_relativity".into(),
+            centroid_skeleton_hash: 0xdead_beef_cafe_babe,
+            action: ClusterAction::Boost,
+            strength: 0.5,
+        });
+        let json = serde_json::to_string(&c).unwrap();
+        let parsed: SteeringConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.cluster_directives.len(), 1);
+        assert_eq!(parsed.cluster_directives[0].action, ClusterAction::Boost);
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn mode_b_rejects_cluster_directives() {
+        let mut c = default_config();
+        c.scope = "B".into();
+        c.mutation_knobs = None;
+        c.cluster_directives.push(ClusterDirective {
+            island_domain: "x".into(),
+            centroid_skeleton_hash: 0,
+            action: ClusterAction::Kill,
+            strength: 1.0,
+        });
+        assert!(matches!(
+            c.validate(),
+            Err(SteeringValidationError::BHasClusterDirectives)
+        ));
+    }
+
+    #[test]
+    fn directive_strength_above_one_rejected() {
+        let mut c = default_config();
+        c.cluster_directives.push(ClusterDirective {
+            island_domain: "x".into(),
+            centroid_skeleton_hash: 0,
+            action: ClusterAction::Diversify,
+            strength: 1.5,
+        });
         assert!(c.validate().is_err());
     }
 }

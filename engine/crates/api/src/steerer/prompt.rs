@@ -63,25 +63,44 @@ const SCHEMA_HINT: &str = r#"{
                                    "swap_adjacent", "mutate_axiom_name",
                                    "mutate_param", "append_productive_suffix"];
                         unknown keys ignored; missing → uniform 1.0,
+  "cluster_directives": [
+    { "island_domain": "...",
+      "centroid_skeleton_hash": <u64>,    -- copy from cluster_summaries above,
+      "action": "boost"|"exploit"|"diversify"|"kill",
+      "strength": <0..1> }
+  ] -- empty in B,
   "rationale": "<= 500 chars"
 }"#;
 
 /// Build the *user* prompt string. Caller separately supplies the
 /// system prompt to the LLM SDK. We bundle everything as one JSON
 /// object so the model parses it into a single coherent context.
+///
+/// `cluster_summaries` are the most-recent ClusterSummary JSONs the
+/// API received from workers; the LLM uses them to reason about per-
+/// cluster directives (addressed by `centroid_skeleton_hash`).
+/// `bandit_state` is `domain → [{k, pulls, mean_reward}]` so the LLM
+/// can cross-reference its directive history with which K worked.
+/// `k_per_island_next` is the bandit's just-chosen K per island —
+/// the LLM does NOT pick K, but seeing it helps it interpret the
+/// next chunk's cluster_summaries.
 pub fn build_prompt(
     scope: &str,
     history: &[HistoryEntry],
     demand: &DemandSnapshot,
     active_jobs: &[ActiveJobSummary],
+    cluster_summaries: &[serde_json::Value],
+    bandit_state: &serde_json::Value,
+    k_per_island_next: &std::collections::HashMap<String, u32>,
 ) -> String {
     let mode_note = if scope == "B" {
         "Mutation knobs are LOCKED for this cycle (≥1 paid Researcher \
-        job is running). Set mutation_knobs=null and hard_targets=[]. \
-        Use soft_targets to bias the explorer fleet toward prerequisite \
-        lemmas in the active-job domains."
+        job is running). Set mutation_knobs=null, hard_targets=[], \
+        cluster_directives=[]. Use soft_targets to bias the explorer \
+        fleet toward prerequisite lemmas in the active-job domains."
     } else {
-        "Full authority. You may emit hard_targets and mutation_knobs."
+        "Full authority. You may emit hard_targets, mutation_knobs, \
+        mutation_priors, and cluster_directives."
     };
     let payload = serde_json::json!({
         "schema": SCHEMA_HINT,
@@ -89,7 +108,14 @@ pub fn build_prompt(
         "history_newest_first": history,
         "current_demand": demand,
         "active_paid_jobs": active_jobs,
-        "instructions": format!("scope={scope}. {mode_note} Emit SteeringConfig JSON only — no prose, no markdown fences."),
+        "cluster_summaries": cluster_summaries,
+        "bandit_state": bandit_state,
+        "k_per_island_next": k_per_island_next,
+        "instructions": format!("scope={scope}. {mode_note} \
+            Cluster directives address clusters by `centroid_skeleton_hash` \
+            from the cluster_summaries above. The bandit (not you) chose \
+            k_per_island_next; cross-reference bandit_state to understand \
+            why. Emit SteeringConfig JSON only — no prose, no markdown fences."),
     });
     serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into())
 }
@@ -98,8 +124,17 @@ pub fn build_prompt(
 mod tests {
     use super::*;
 
+    fn empty_extras() -> (
+        Vec<serde_json::Value>,
+        serde_json::Value,
+        std::collections::HashMap<String, u32>,
+    ) {
+        (vec![], serde_json::json!({}), std::collections::HashMap::new())
+    }
+
     #[test]
     fn prompt_includes_scope_and_demand() {
+        let (cs, bs, kp) = empty_extras();
         let p = build_prompt(
             "C",
             &[],
@@ -110,6 +145,9 @@ mod tests {
                 active_hunches: vec![],
             },
             &[],
+            &cs,
+            &bs,
+            &kp,
         );
         assert!(p.contains("scope=C"));
         assert!(p.contains("entropy"));
@@ -117,6 +155,7 @@ mod tests {
 
     #[test]
     fn mode_b_signals_pinned_targets() {
+        let (cs, bs, kp) = empty_extras();
         let p = build_prompt(
             "B",
             &[],
@@ -125,6 +164,9 @@ mod tests {
                 domain: "thermodynamics".into(),
                 conjecture_summary: "delta Q = T dS".into(),
             }],
+            &cs,
+            &bs,
+            &kp,
         );
         assert!(p.contains("scope=B"));
         assert!(p.contains("LOCKED"));
@@ -133,7 +175,8 @@ mod tests {
 
     #[test]
     fn schema_mentions_required_fields() {
-        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[]);
+        let (cs, bs, kp) = empty_extras();
+        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp);
         for f in &[
             "version",
             "scope",
@@ -147,7 +190,8 @@ mod tests {
 
     #[test]
     fn schema_hint_lists_mutation_priors_and_op_names() {
-        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[]);
+        let (cs, bs, kp) = empty_extras();
+        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp);
         assert!(
             p.contains("mutation_priors"),
             "schema must mention mutation_priors"

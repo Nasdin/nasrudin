@@ -126,6 +126,10 @@ pub struct AppState {
     /// the steerer task at every cycle. Read by `/api/steering` and
     /// folded into `/api/seed` so workers hot-reload the config.
     pub steering: Arc<arc_swap::ArcSwap<SteeringSnapshot>>,
+    /// Per-island K assignment chosen by the UCB1 bandit. Updated
+    /// every cycle alongside `steering` and folded into `/api/seed`
+    /// so workers know how many clusters to k-means each chunk.
+    pub cluster_config: Arc<arc_swap::ArcSwap<ClusterConfigSnapshot>>,
     /// Aggregate cluster-capacity tracker (sum of last-seen lake
     /// slots per worker, plus a counter of slots currently committed
     /// to paid `conjecture_jobs`). Drives the explorer-floor check in
@@ -183,6 +187,18 @@ pub struct SteeringSnapshot {
     pub config: serde_json::Value,
     pub etag: u64,
     pub started_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// UCB1 bandit's chosen K per island. Workers read this from
+/// `/api/seed` and run k-means with the assigned K each chunk.
+/// Decoupled from `SteeringSnapshot` because the bandit picks K
+/// independently of the LLM emission (different update cadences,
+/// different invariants).
+#[derive(Debug, Clone, Default)]
+pub struct ClusterConfigSnapshot {
+    /// island_domain → K
+    pub k_per_island: std::collections::HashMap<String, u32>,
+    pub etag: u64,
 }
 
 impl AppState {

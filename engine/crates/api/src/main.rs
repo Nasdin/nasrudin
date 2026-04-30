@@ -447,6 +447,9 @@ async fn main() -> anyhow::Result<()> {
             std::collections::HashMap::new(),
         )),
         steering: Arc::new(arc_swap::ArcSwap::from_pointee(initial_snapshot)),
+        cluster_config: Arc::new(arc_swap::ArcSwap::from_pointee(
+            physics_api::state::ClusterConfigSnapshot::default(),
+        )),
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
@@ -571,6 +574,43 @@ async fn main() -> anyhow::Result<()> {
             }
         });
         tracing::info!("Worker status reaper spawned");
+
+        // Materialise UCB1 bandit arms for every (island_domain, K).
+        // Idempotent — pre-existing rows are left alone, so this is
+        // safe to call every boot. Without this the cycle's first
+        // round of UCB1 selection would see an empty arm list and
+        // fall through to DEFAULT_K for every island.
+        if let Err(e) = physics_api::steerer::bandit::ensure_all_arms(pg).await {
+            tracing::warn!(error=%e, "bandit ensure_all_arms failed; \
+                cluster K will fall back to default until next boot");
+        } else {
+            tracing::info!("Cluster bandit arms ensured");
+        }
+
+        // Hourly purge of cluster_reports older than 7 days. Bandit
+        // arms hold the long-running statistics; the per-chunk rows
+        // are only needed for the most-recent prompt + reward window.
+        let pg_for_cluster_purge = pg.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            tick.tick().await; // skip the immediate first tick
+            loop {
+                tick.tick().await;
+                let cutoff = chrono::Utc::now() - chrono::Duration::days(7);
+                match nasrudin_pg::query::cluster_reports::purge_older_than(
+                    &pg_for_cluster_purge,
+                    cutoff,
+                )
+                .await
+                {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(n, "purged old cluster_reports rows")
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error=%e, "cluster_reports purge failed"),
+                }
+            }
+        });
 
         let steerer_disabled = std::env::var("STEERER_DISABLED").is_ok();
         if !steerer_disabled {

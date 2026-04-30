@@ -247,8 +247,12 @@ pub async fn seed(
     }
 
     // Fold in the live cluster steering snapshot so workers hot-reload
-    // the LLM's mutation knobs + domain weights without a separate poll.
+    // the LLM's mutation knobs + domain weights without a separate
+    // poll. cluster_config is a sibling field — it ships the bandit's
+    // chosen K per island so workers know how many clusters to k-means
+    // each chunk. Both are versioned via independent etags.
     let steering_snap = state.steering.load();
+    let cc_snap = state.cluster_config.load();
     let body = serde_json::json!({
         "axioms": axioms,
         "seed_theorems": seed_theorems,
@@ -256,6 +260,10 @@ pub async fn seed(
             "config": steering_snap.config,
             "etag": format!("{:016x}", steering_snap.etag),
             "started_at": steering_snap.started_at.to_rfc3339(),
+        },
+        "cluster_config": {
+            "k_per_island": cc_snap.k_per_island,
+            "etag": format!("{:016x}", cc_snap.etag),
         },
     });
     let body_str = serde_json::to_string(&body)
