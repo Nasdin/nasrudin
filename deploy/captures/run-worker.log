@@ -1,0 +1,49 @@
+[worker] first run: warming Mathlib cache (this takes a few minutes)...
+[worker] api=https://api.nasrudin.org  id=capture-2026-04-30
+═══════════════════════════════════════════════════════
+  Nasrudin Spontaneous Physics Discovery — domain=sr
+  No headline-result strategies. No headline axioms.
+  Pure combinatorics + GA over upstream postulates.
+═══════════════════════════════════════════════════════
+
+▶ API submission target: https://api.nasrudin.org
+    worker_id: capture-2026-04-30
+
+▶ Upstream axiom set (16 axioms):
+    • rest_frame_psq_zero
+    • velocity_def
+    • kinetic_energy_def
+    • gravitational_force
+    • acceleration_def
+    • four_momentum_time_component
+    • energy_nonneg
+    • mass_nonneg
+    • newton_second_dpdt
+    • momentum_def
+    • invariant_mass_postulate
+    • power_def
+    • newton_second
+    • work_def
+    • c_positive
+    • minkowski_invariant_def
+
+  ✓ mass_shell_condition is NOT in the store. No cheating.
+  ✓ no-cheat canonical-form audit passed
+
+  ! seed-sync skipped: seed http 503 Service Unavailable: {"error":"pg_unavailable"}
+    (worker will run with local axioms only)
+
+▶ Target: sr_rest_energy (ladder of 3 rungs)
+▶ Negative-result memo: 0 pre-rejected canonicals will be skipped
+
+▶ Dimension hard-reject ON (6 known vars; pass --soft-dimension to disable)
+▶ Spawning persistent Lean elaborator (cwd=./prover, script=scripts/nasrudin_server.lean)
+    ! elaborator failed to boot: server closed stdout before boot ack
+    falling back to lake build (slow path)
+▶ Running discovery: pop=16, gens=3 (4 chunks × 1 gens), max_chain_len=12, lake_budget=2
+
+▶ ResourceBudget: 14 cores, 24576 MiB RAM → lake_slots=6, pop=32, gens=5000, chunks=12, max_lake/chunk=18
+▶ chunk 1/4: 1 verified, 1 lake attempts
+  ! chunk-submit failed: ingest failed: 404 Not Found body=
+▶ chunk 2/4: 1 verified, 1 lake attempts
+  ! chunk-submit failed: ingest failed: 404 Not Found body=
