@@ -30,7 +30,8 @@ log "apt update + base packages"
 apt-get update -qq
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg git ufw openssl rsync \
-  build-essential pkg-config libssl-dev jq
+  build-essential pkg-config libssl-dev jq \
+  python3 python3-argon2 python3-psycopg2
 
 if ! [ -f /etc/apt/sources.list.d/pgdg.list ]; then
   log "adding PostgreSQL PGDG repo (postgres-18)"
@@ -164,6 +165,10 @@ systemctl enable caddy
 log "installing systemd units"
 install -m 0644 "$STAGING/deploy/systemd/nasrudin-api.service" /etc/systemd/system/
 install -m 0644 "$STAGING/deploy/systemd/nasrudin-frontend.service" /etc/systemd/system/
+install -m 0644 "$STAGING/deploy/systemd/nasrudin-worker.service" /etc/systemd/system/
+install -m 0755 "$STAGING/deploy/scripts/issue_worker_key.py" /opt/nasrudin/bin/issue_worker_key.py
+mkdir -p /var/lib/nasrudin/lake-cache /var/lib/nasrudin/rocks-worker
+chown -R nasrudin:nasrudin /var/lib/nasrudin
 systemctl daemon-reload
 
 # ── 9. Run migrations ─────────────────────────────────────────────────────
@@ -185,9 +190,23 @@ systemctl restart caddy
 systemctl enable --now nasrudin-api
 systemctl enable --now nasrudin-frontend
 systemctl restart nasrudin-api nasrudin-frontend
+# nasrudin-worker is co-located with the api. We enable it but only start it
+# automatically when NASRUDIN_WORKER_KEY is already set in /opt/nasrudin/.env;
+# otherwise the operator runs deploy/scripts/issue_worker_key.py first to mint
+# a key, then `systemctl start nasrudin-worker` once it's been added.
+systemctl enable nasrudin-worker
+if grep -q '^NASRUDIN_WORKER_KEY=' /opt/nasrudin/.env; then
+  systemctl restart nasrudin-worker
+  log "nasrudin-worker restarted (NASRUDIN_WORKER_KEY found in .env)"
+else
+  log "nasrudin-worker enabled but NOT started — set NASRUDIN_WORKER_KEY in /opt/nasrudin/.env first:"
+  log "    KEY=\$(sudo -u nasrudin /opt/nasrudin/bin/issue_worker_key.py nasrudin-prod-droplet)"
+  log "    echo \"NASRUDIN_WORKER_KEY=\$KEY\" | sudo -u nasrudin tee -a /opt/nasrudin/.env"
+  log "    sudo systemctl start nasrudin-worker"
+fi
 
 log "done. service status:"
-systemctl --no-pager --lines=0 status nasrudin-api nasrudin-frontend caddy postgresql 2>&1 | head -40 || true
+systemctl --no-pager --lines=0 status nasrudin-api nasrudin-frontend nasrudin-worker caddy postgresql 2>&1 | head -50 || true
 
 cat <<EOF
 
