@@ -20,6 +20,13 @@ pub struct Model {
     pub expires_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
     pub revoked_at: Option<DateTimeWithTimeZone>,
+    /// NULL → inherit owning user's `is_trusted`. TRUE/FALSE → override
+    /// at this key only. Lets ops elevate a single co-located worker
+    /// without flipping the user-wide trust flag.
+    pub trust_override: Option<bool>,
+    /// NULL → inherit owning user's `spot_check_rate` (which itself
+    /// falls back to env default). Otherwise: 1-in-N sampling rate.
+    pub spot_check_rate: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

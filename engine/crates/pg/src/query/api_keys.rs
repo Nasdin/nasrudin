@@ -25,6 +25,8 @@ pub async fn create(
         expires_at: Set(expires_at.map(|d| d.into())),
         created_at: Set(chrono::Utc::now().into()),
         revoked_at: Set(None),
+        trust_override: Set(None),
+        spot_check_rate: Set(None),
     };
     model.insert(db).await
 }

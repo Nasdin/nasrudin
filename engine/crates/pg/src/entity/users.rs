@@ -23,6 +23,18 @@ pub struct Model {
     /// account → same UID).
     #[sea_orm(unique)]
     pub firebase_uid: String,
+    /// Admin panel access. Gates `/api/admin/*` (alongside `ADMIN_TOKEN`
+    /// bearer for system-actor calls). Demotion of the only admin row
+    /// is blocked by the `users_last_admin_guard` Postgres trigger.
+    pub is_admin: bool,
+    /// Trust-bypass flag. Trusted submissions skip the redundant
+    /// server-side `lake build` confirmation, with sampled spot-check
+    /// for safety (see `crates/api/src/trust.rs`).
+    pub is_trusted: bool,
+    /// 1-in-N sampling rate for spot-checking trusted submissions.
+    /// NULL = use `TRUSTED_SPOT_CHECK_RATE` env default; 0 = never
+    /// spot-check; 1 = always spot-check (effectively untrusted).
+    pub spot_check_rate: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

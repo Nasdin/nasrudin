@@ -24,6 +24,9 @@ pub async fn create_firebase_user(
         plan_cycle_start: Set(None),
         research_credits: Set(0),
         firebase_uid: Set(firebase_uid.to_owned()),
+        is_admin: Set(false),
+        is_trusted: Set(false),
+        spot_check_rate: Set(None),
     };
     model.insert(db).await
 }

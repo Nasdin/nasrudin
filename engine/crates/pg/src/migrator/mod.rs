@@ -23,6 +23,14 @@ mod m20260501_000004_paid_job_allocated_slots;
 mod m20260430_000014_user_oauth_identity;
 mod m20260430_000015_library;
 mod m20260430_000016_firebase_auth;
+mod m20260430_000020_admin_users_columns;
+mod m20260430_000021_admin_api_keys_columns;
+mod m20260430_000022_admin_audit_log;
+mod m20260430_000023_impersonation_sessions;
+mod m20260430_000024_email_outbox;
+mod m20260430_000025_refund_records;
+mod m20260430_000026_bulk_runs;
+mod m20260430_000027_last_admin_trigger;
 
 pub struct Migrator;
 
@@ -53,6 +61,14 @@ impl MigratorTrait for Migrator {
             Box::new(m20260430_000014_user_oauth_identity::Migration),
             Box::new(m20260430_000015_library::Migration),
             Box::new(m20260430_000016_firebase_auth::Migration),
+            Box::new(m20260430_000020_admin_users_columns::Migration),
+            Box::new(m20260430_000021_admin_api_keys_columns::Migration),
+            Box::new(m20260430_000022_admin_audit_log::Migration),
+            Box::new(m20260430_000023_impersonation_sessions::Migration),
+            Box::new(m20260430_000024_email_outbox::Migration),
+            Box::new(m20260430_000025_refund_records::Migration),
+            Box::new(m20260430_000026_bulk_runs::Migration),
+            Box::new(m20260430_000027_last_admin_trigger::Migration),
         ]
     }
 }
