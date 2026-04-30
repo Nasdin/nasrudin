@@ -1,6 +1,7 @@
 //! Physics Generator HTTP API library — shared between the daemon binary
 //! and integration tests.
 
+pub mod admin;
 pub mod auth;
 pub mod firebase_auth;
 pub mod billing;
