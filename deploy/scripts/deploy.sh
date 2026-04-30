@@ -2,7 +2,17 @@
 # Orchestrate a fresh / re-deploy: build artifact → scp → ssh provision.
 #
 # Usage:
-#   deploy/scripts/deploy.sh <DROPLET_IP> [STRIPE_ENV_FILE]
+#   deploy/scripts/deploy.sh <DROPLET_NAME_OR_IP> [STRIPE_ENV_FILE]
+#
+# When a droplet *name* is passed (e.g. `nasrudin-prod`), this script resolves
+# the **reserved (static) IP** via doctl. Reserved IPs survive droplet
+# rebuilds; the droplet's mutable Public IPv4 (what `doctl compute droplet
+# list` returns by default) does not. DNS should always point to the
+# reserved IP, so deploying to it is the only way to be sure we're talking
+# to the same address Caddy obtained LE certs for.
+#
+# When an IP literal is passed, it's used verbatim — useful for fresh
+# provisioning before a reserved IP is assigned.
 #
 # STRIPE_ENV_FILE is an optional local file with `KEY=value` lines for the
 # Stripe* env vars (see .env.example). It is scp'd to /root/.nasrudin-stripe.env
@@ -11,13 +21,37 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-IP="${1:-}"
+TARGET="${1:-}"
 STRIPE_FILE="${2:-}"
 SSH_OPTS=( -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 )
 
-if [ -z "$IP" ]; then
-  echo "usage: $0 <DROPLET_IP> [STRIPE_ENV_FILE]" >&2
+if [ -z "$TARGET" ]; then
+  echo "usage: $0 <DROPLET_NAME_OR_IP> [STRIPE_ENV_FILE]" >&2
   exit 1
+fi
+
+# Resolve droplet name → reserved IP. An IPv4 literal passes through
+# unchanged. Any other string is treated as a droplet name and looked up.
+if [[ "$TARGET" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+  IP="$TARGET"
+  echo "[deploy] using literal IP $IP"
+else
+  if ! command -v doctl >/dev/null 2>&1; then
+    echo "[deploy] error: doctl not on PATH; can't resolve droplet name '$TARGET'" >&2
+    exit 1
+  fi
+  echo "[deploy] resolving reserved IP for droplet '$TARGET' via doctl…"
+  IP="$(doctl compute reserved-ip list --format IP,DropletName --no-header \
+        | awk -v name="$TARGET" '$2 == name { print $1; exit }')"
+  if [ -z "$IP" ]; then
+    echo "[deploy] error: no reserved IP found for droplet '$TARGET'." >&2
+    echo "         Reserved IPs survive rebuilds; the droplet's mutable Public IPv4 doesn't." >&2
+    echo "         Either assign a reserved IP at" \
+         "https://cloud.digitalocean.com/networking/reserved_ips," >&2
+    echo "         or pass an IP literal directly." >&2
+    exit 1
+  fi
+  echo "[deploy] resolved $TARGET -> $IP (reserved)"
 fi
 
 echo "[deploy] step 1/4: build release artifact"
