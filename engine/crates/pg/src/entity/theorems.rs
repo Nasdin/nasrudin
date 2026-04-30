@@ -61,6 +61,13 @@ pub struct Model {
     /// lake-promotion step.
     #[sea_orm(default_value = false)]
     pub worker_verified: bool,
+    /// Trust decision snapshotted at ingest time. Drives the spot-check
+    /// sampling in `reverify::process_one`. False on legacy rows.
+    #[sea_orm(default_value = false)]
+    pub worker_trusted: bool,
+    /// 1-in-N spot-check rate captured at ingest. NULL means "use the
+    /// env default at process_one time".
+    pub worker_spot_check_rate: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

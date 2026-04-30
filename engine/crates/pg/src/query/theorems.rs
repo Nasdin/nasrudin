@@ -63,6 +63,10 @@ pub struct NewTheorem {
     pub contributor_id: String,
     /// P-Task 12: worker locally lake-built before submitting.
     pub worker_verified: bool,
+    /// Trust decision at ingest time (admin-panel trust-bypass).
+    pub worker_trusted: bool,
+    /// 1-in-N sampling rate at ingest; None means env default.
+    pub worker_spot_check_rate: Option<i32>,
 }
 
 impl Default for NewTheorem {
@@ -95,6 +99,8 @@ impl Default for NewTheorem {
             lean_version: String::new(),
             contributor_id: String::new(),
             worker_verified: false,
+            worker_trusted: false,
+            worker_spot_check_rate: None,
         }
     }
 }
@@ -161,6 +167,8 @@ pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<
         created_at: NotSet,
         verified_at: Set(None),
         worker_verified: Set(n.worker_verified),
+        worker_trusted: Set(n.worker_trusted),
+        worker_spot_check_rate: Set(n.worker_spot_check_rate),
     };
 
     active

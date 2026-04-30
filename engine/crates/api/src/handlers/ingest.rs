@@ -39,11 +39,21 @@
 //! either advisory-lock per hash or use `INSERT … ON CONFLICT DO NOTHING
 //! RETURNING …`.
 
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Extension, Json,
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{auth::WorkerAuth, lake_builder::preflight_axiom_or_sorry, state::AppState};
+use crate::{
+    auth::WorkerAuth,
+    lake_builder::preflight_axiom_or_sorry,
+    state::AppState,
+    trust::{LocalSocket, TrustDecision},
+};
 use nasrudin_pg::query::theorems;
 use nasrudin_rocks::ReverifyJob;
 
@@ -136,6 +146,7 @@ pub struct IngestResponse {
 pub async fn ingest(
     State(state): State<Arc<AppState>>,
     auth: WorkerAuth,
+    local_socket: Option<Extension<LocalSocket>>,
     Json(batch): Json<IngestBatch>,
 ) -> axum::response::Response {
     // === Bearer auth (WorkerAuth extractor — Task 4.3) ===
@@ -185,6 +196,37 @@ pub async fn ingest(
         }
     };
 
+    // === Trust resolution ===
+    // Cache hit: skip the DB lookup. Cache miss: load the api_key row,
+    // call trust::resolve, store the decision. The cache invalidation
+    // listener (main.rs) drops entries when admins change trust state.
+    let via_unix_socket = local_socket.is_some();
+    let key_id = auth.0.api_key_id;
+    let decision = if let Some(d) = state.trust_cache.get(&key_id) {
+        d
+    } else {
+        use sea_orm::EntityTrait;
+        let key_row = nasrudin_pg::entity::api_keys::Entity::find_by_id(key_id)
+            .one(pg)
+            .await
+            .ok()
+            .flatten();
+        let d = crate::trust::resolve(
+            pg,
+            key_row.as_ref(),
+            via_unix_socket,
+            state.trusted_spot_check_rate,
+        )
+        .await
+        .unwrap_or_else(|_| crate::trust::TrustDecision {
+            trusted: false,
+            spot_check_rate: state.trusted_spot_check_rate,
+            source: crate::trust::TrustSource::Default,
+        });
+        state.trust_cache.put(key_id, d.clone());
+        d
+    };
+
     let mut results = Vec::with_capacity(batch.theorems.len());
     for t in &batch.theorems {
         let item = ingest_one_theorem(
@@ -193,6 +235,7 @@ pub async fn ingest(
             &batch.engine_git_sha,
             &batch.lean_version,
             t,
+            &decision,
         )
         .await;
         results.push(item);
@@ -215,6 +258,7 @@ pub async fn ingest_one_theorem(
     engine_git_sha: &str,
     lean_version: &str,
     t: &IngestTheorem,
+    decision: &TrustDecision,
 ) -> IngestResultItem {
     if t.lean_source.len() > MAX_LEAN_SOURCE_BYTES {
         return reject_item("", "", "too_large");
@@ -314,6 +358,8 @@ pub async fn ingest_one_theorem(
         lean_version: lean_version.to_string(),
         contributor_id: worker_id.to_string(),
         worker_verified: t.worker_verified,
+        worker_trusted: decision.trusted,
+        worker_spot_check_rate: Some(decision.spot_check_rate as i32),
     };
 
     let id_arr = id_bytes_arr;

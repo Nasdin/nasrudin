@@ -614,12 +614,22 @@ pub async fn submit(
         return err(StatusCode::FORBIDDEN, "not_lease_owner");
     }
 
+    // Conjecture-loop submission path: trust-bypass not applicable here
+    // (the conjecture flow runs its own paid lifecycle), so we pass an
+    // explicit "untrusted, env default rate" decision so the row gets a
+    // sane default in the worker_trusted/worker_spot_check_rate columns.
+    let decision = crate::trust::TrustDecision {
+        trusted: false,
+        spot_check_rate: state.trusted_spot_check_rate,
+        source: crate::trust::TrustSource::Default,
+    };
     let result = crate::handlers::ingest::ingest_one_theorem(
         &state,
         &worker_id,
         &body.engine_git_sha,
         &body.lean_version,
         &body.theorem,
+        &decision,
     )
     .await;
 

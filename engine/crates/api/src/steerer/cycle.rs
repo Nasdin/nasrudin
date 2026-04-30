@@ -24,7 +24,8 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::state::AppState;
+use crate::state::{AppState, ClusterConfigSnapshot};
+use crate::steerer::bandit;
 use crate::steerer::demand::aggregate_demand;
 use crate::steerer::outcome::compute_outcome;
 use crate::steerer::prompt::{build_prompt, ActiveJobSummary, HistoryEntry, SYSTEM_PROMPT};
@@ -32,6 +33,7 @@ use crate::steerer::schema::{default_config, SteeringConfig, SteeringValidationE
 
 const HISTORY_N: u64 = 10;
 const DEMAND_WINDOW: std::time::Duration = std::time::Duration::from_secs(3600);
+const BANDIT_REWARD_WINDOW_SECS: i64 = 600;
 
 #[derive(Debug, Error)]
 pub enum CycleError {
@@ -81,16 +83,109 @@ pub async fn run_one_cycle(
         }
     }
 
-    // 3. Build prompt.
+    // 3. Bandit step: for each island, attribute the previous chunk's
+    //    cluster_reports to the K we asked for last cycle, compute
+    //    reward, persist the pull, then UCB1-select K_next. The bandit
+    //    runs independently of the LLM — no LLM call needed for this
+    //    structural decision.
+    let prev_cc = state.cluster_config.load();
+    let now = Utc::now();
+    let reward_window_start =
+        now - chrono::Duration::seconds(BANDIT_REWARD_WINDOW_SECS);
+    let mut next_k_per_island: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
+    let mut bandit_state = serde_json::Map::new();
+    for &domain in bandit::ISLAND_DOMAINS {
+        // Reward the previous K (if any).
+        if let Some(&prev_k) = prev_cc.k_per_island.get(domain) {
+            match bandit::extract_reward_inputs(
+                db,
+                domain,
+                prev_k as i16,
+                reward_window_start,
+            )
+            .await
+            {
+                Ok(inputs) => {
+                    let r = bandit::compute_reward(inputs);
+                    if let Err(e) = nasrudin_pg::query::cluster_bandit_arms::record_pull(
+                        db,
+                        domain,
+                        prev_k as i16,
+                        r,
+                    )
+                    .await
+                    {
+                        tracing::warn!(domain, prev_k, error=%e,
+                            "bandit record_pull failed");
+                    }
+                }
+                Err(e) => tracing::warn!(domain, prev_k, error=%e,
+                    "bandit reward extraction failed"),
+            }
+        }
+        // Select K_next via UCB1 over the (now-updated) arm state.
+        let arms = bandit::load_arms(db, domain).await.unwrap_or_default();
+        let chosen = if arms.is_empty() {
+            bandit::DEFAULT_K
+        } else {
+            bandit::select_k_ucb1(&arms) as u32
+        };
+        next_k_per_island.insert(domain.into(), chosen);
+        let arms_json: Vec<serde_json::Value> = arms
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "k": a.k,
+                    "pulls": a.pulls,
+                    "mean_reward": if a.pulls > 0 { a.total_reward / a.pulls as f64 } else { 0.0 },
+                })
+            })
+            .collect();
+        bandit_state.insert(domain.into(), serde_json::Value::Array(arms_json));
+    }
+
+    // Push the new cluster_config snapshot before the prompt is built
+    // so workers polling /api/seed see the new K immediately. Seed
+    // cache is invalidated below alongside the steering update.
+    let cc_body = serde_json::to_vec(&next_k_per_island).unwrap_or_default();
+    let cc_etag = xxhash_rust::xxh64::xxh64(&cc_body, 0);
+    state.cluster_config.store(Arc::new(ClusterConfigSnapshot {
+        k_per_island: next_k_per_island.clone(),
+        etag: cc_etag,
+    }));
+
+    // 4. Build prompt.
     let history = load_history(db, HISTORY_N).await?;
     let demand = aggregate_demand(db, DEMAND_WINDOW).await.unwrap_or_default();
     let active_jobs = active_job_summaries(db).await?;
-    let user_prompt = build_prompt(scope, &history, &demand, &active_jobs);
 
-    // 4. Call LLM.
+    // Most-recent ClusterSummaries per island for the LLM prompt.
+    let mut cluster_summaries: Vec<serde_json::Value> = Vec::new();
+    for &domain in bandit::ISLAND_DOMAINS {
+        if let Ok(rows) =
+            nasrudin_pg::query::cluster_reports::recent_for_island(db, domain, 12).await
+        {
+            for r in rows {
+                cluster_summaries.push(r.summary);
+            }
+        }
+    }
+
+    let user_prompt = build_prompt(
+        scope,
+        &history,
+        &demand,
+        &active_jobs,
+        &cluster_summaries,
+        &serde_json::Value::Object(bandit_state),
+        &next_k_per_island,
+    );
+
+    // 5. Call LLM.
     let (text, ptok, ctok) = caller.call(SYSTEM_PROMPT, &user_prompt).await?;
 
-    // 5. Parse + validate. On any failure fall back to LKG.
+    // 6. Parse + validate. On any failure fall back to LKG.
     let (config, validation_failed) = match parse_and_validate(&text, scope) {
         Ok(c) => (c, false),
         Err(e) => {
@@ -105,7 +200,7 @@ pub async fn run_one_cycle(
         }
     };
 
-    // 6. Persist + push to ArcSwap.
+    // 7. Persist + push to ArcSwap.
     let row = nasrudin_pg::query::cluster_steering::insert_new_cycle(
         db,
         scope,
@@ -147,6 +242,7 @@ fn parse_and_validate(text: &str, expected_scope: &str) -> Result<SteeringConfig
     if c.scope == "B" {
         c.hard_targets.clear();
         c.mutation_knobs = None;
+        c.cluster_directives.clear();
     }
     c.validate()?;
     Ok(c)

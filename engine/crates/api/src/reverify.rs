@@ -178,11 +178,28 @@ impl ReverifyQueue {
                 //   * "lake_build" — server has independently
                 //     kernel-confirmed. Required for download.
                 //
-                // Both worker_claim and chain_replay get enqueued for
-                // lake-promotion. worker_claim goes at priority 1
-                // (high prior of passing → drain it fast); plain
-                // chain_replay at priority 2 (low prior → drain
-                // opportunistically when server is idle).
+                // Admin-panel trust-bypass: trusted+sampled-out rows
+                // skip lake promotion entirely (verification_path =
+                // "trusted_bypass", tactic = "lake_build"). Trusted
+                // +sampled-in and untrusted rows go through the normal
+                // worker_claim / chain_replay split.
+                let trust_decision = crate::trust::TrustDecision {
+                    trusted: row.worker_trusted,
+                    spot_check_rate: row
+                        .worker_spot_check_rate
+                        .map(|r| r as u32)
+                        .unwrap_or(50),
+                    source: crate::trust::TrustSource::Default,
+                };
+                let bypass = !crate::trust::should_promote(&trust_decision, &row.id);
+
+                if bypass {
+                    self.flip_verified(&row, "trusted_bypass", "lake_build", 0)
+                        .await?;
+                    self.rocks.dequeue_reverify(&job.theorem_id).ok();
+                    return Ok(());
+                }
+
                 let (path, tactic, promotion_priority) = if row.worker_verified {
                     ("A_worker_claim", "worker_claim", 1u8)
                 } else {
