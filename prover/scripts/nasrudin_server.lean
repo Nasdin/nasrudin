@@ -229,6 +229,8 @@ def main : IO Unit := do
     -- input each line is at least "\n", so empty string ⇒ stdin closed.
     let line ← stdin.getLine
     if line.isEmpty then break
-    let trimmed := line.trim
+    -- `trimAscii` returns `String.Slice` in Lean 4.27+. Slice has an
+    -- `isEmpty` and is auto-coerced to String at the dispatch boundary.
+    let trimmed := line.trimAscii
     if trimmed.isEmpty then continue
-    keepGoing ← dispatch env trimmed
+    keepGoing ← dispatch env trimmed.toString

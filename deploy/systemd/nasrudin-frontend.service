@@ -12,7 +12,7 @@ EnvironmentFile=/opt/nasrudin/.env
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOST=127.0.0.1
-ExecStart=/usr/bin/node dist/server/ssr.js
+ExecStart=/usr/bin/node server/server.mjs
 Restart=on-failure
 RestartSec=10
 LimitNOFILE=65536

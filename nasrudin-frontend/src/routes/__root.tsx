@@ -17,6 +17,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: 'Nasrudin — derive physics from pure logic' },
     ],
+    links: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
   }),
   component: RootDocument,
 });

@@ -16,7 +16,7 @@
 
 use crate::chain_ga::{
     ChainIndividual, ChainVerifyOutcome, splice_chains,
-    verify_chain_cached,
+    verify_chain_cached_full,
 };
 use nasrudin_core::Expr;
 use nasrudin_derive::{AxiomStore, Chain, RuleStep};
@@ -102,6 +102,15 @@ pub struct DiscoveryConfig {
     pub dimension_var_dims: std::sync::Arc<
         std::collections::HashMap<String, nasrudin_core::Dimension>,
     >,
+    /// Layer 1: persistent Lean elaborator. When `Some`, the verify path
+    /// routes through the long-lived `lean --run nasrudin_server.lean`
+    /// subprocess (~100–500ms per candidate against pre-loaded Mathlib)
+    /// and only falls back to `lake build` (~30–120s) on RPC error.
+    /// When `None`, we use the legacy lake-build path exclusively.
+    ///
+    /// Spawn this once at worker boot via
+    /// `nasrudin_lean_bridge::PersistentElaborator::new`.
+    pub elaborator: Option<std::sync::Arc<nasrudin_lean_bridge::PersistentElaborator>>,
 }
 
 impl Default for DiscoveryConfig {
@@ -123,6 +132,7 @@ impl Default for DiscoveryConfig {
             submit_unverified_top_k: 0,
             dimension_hard_reject: true,
             dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
+            elaborator: None,
         }
     }
 }
@@ -144,7 +154,23 @@ pub struct DiscoveryReport {
     pub generations_run: usize,
     pub total_candidates: usize,
     pub unique_executable: usize,
+    /// Total lake / persistent-elaborator verification attempts. Counts
+    /// each candidate that reached the kernel (either via persistent RPC
+    /// or via `lake build`); does not include candidates dropped by
+    /// pre-filters.
     pub lake_attempts: usize,
+    /// Of `lake_attempts`, how many were accepted by the kernel.
+    /// `lake_passed / lake_attempts` is the pass-rate metric the user
+    /// cares about — Layer-1+2 push this toward 99.9%.
+    pub lake_passed: usize,
+    /// Of `lake_attempts`, how many took the fast persistent-elaborator
+    /// path (vs. fell back to `lake build`). High `persistent_attempts /
+    /// lake_attempts` means the warm Lean process is doing the work.
+    pub persistent_attempts: usize,
+    /// Layer-2 dimension hard-reject count: candidates dropped before
+    /// reaching the kernel because their final equation has known,
+    /// definitively-mismatched dimensions on each side.
+    pub dim_rejected: usize,
     pub verified: Vec<VerifiedDiscovery>,
     pub top_fitness_canonical: Option<String>,
 }
@@ -298,6 +324,7 @@ pub fn run_discovery(
                         &config.dimension_var_dims,
                     )
                 {
+                    report.dim_rejected += 1;
                     continue;
                 }
                 let canonical = final_expr.to_canonical();
@@ -350,18 +377,23 @@ pub fn run_discovery(
                     report.lake_attempts += 1;
                     let basename = format!("DiscoverGen{gen_idx}");
                     let theorem_name = format!("discover_gen{gen_idx}");
-                    match verify_chain_cached(
+                    if config.elaborator.is_some() {
+                        report.persistent_attempts += 1;
+                    }
+                    match verify_chain_cached_full(
                         &top.chain,
                         store,
                         prover_root.as_path(),
                         &basename,
                         &theorem_name,
                         config.cache_ctx.as_ref(),
+                        config.elaborator.as_ref(),
                     ) {
                         ChainVerifyOutcome::Verified {
                             lean_source,
                             module_path,
                         } => {
+                            report.lake_passed += 1;
                             // Compute the final Expr again for the report.
                             let final_expr = run_chain_for_final(&top.chain, store)
                                 .unwrap_or(Expr::Lit(0, 1));
@@ -565,6 +597,7 @@ mod tests {
             submit_unverified_top_k: 0,
             dimension_hard_reject: false,
             dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
+            elaborator: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -595,6 +628,7 @@ mod tests {
             submit_unverified_top_k: 0,
             dimension_hard_reject: false,
             dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
+            elaborator: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);

@@ -33,7 +33,7 @@ function Landing() {
             <Link to="/signin" className="nav-secondary">
               Sign in
             </Link>
-            <a href="#run" className="nav-cta">
+            <a href="#run" className="nav-cta text-white">
               Run a worker →
             </a>
           </nav>

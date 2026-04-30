@@ -764,6 +764,51 @@ pub enum ChainVerifyOutcome {
     ToolchainError { message: String },
 }
 
+/// Outcome of one round-trip to the persistent Lean elaborator.
+enum PersistentOutcome {
+    /// Elaborator accepted the candidate (kernel verdict).
+    Verified,
+    /// Elaborator rejected with a diagnostic.
+    Rejected { stderr: String },
+    /// RPC error / timeout / `Fatal` reply — caller should fall back
+    /// to the legacy `lake build` path.
+    FellBack { reason: String },
+}
+
+/// Synchronously call the persistent elaborator from inside a tokio
+/// runtime. The verify path is sync today (mirrors `lake build`); we
+/// reuse the worker's tokio handle to drive the async RPC.
+fn call_persistent_elaborate(
+    elab: &nasrudin_lean_bridge::PersistentElaborator,
+    source: &str,
+) -> PersistentOutcome {
+    use nasrudin_lean_bridge::persistent_protocol::Response;
+    let handle = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(e) => {
+            return PersistentOutcome::FellBack {
+                reason: format!("no tokio runtime: {e}"),
+            };
+        }
+    };
+    let result = handle.block_on(elab.elaborate(source));
+    match result {
+        Ok(Response::ElaborateOk { .. }) => PersistentOutcome::Verified,
+        Ok(Response::ElaborateError { message, .. }) => {
+            PersistentOutcome::Rejected { stderr: message }
+        }
+        Ok(Response::Fatal { message }) => PersistentOutcome::FellBack {
+            reason: format!("fatal: {message}"),
+        },
+        Ok(other) => PersistentOutcome::FellBack {
+            reason: format!("unexpected response: {other:?}"),
+        },
+        Err(e) => PersistentOutcome::FellBack {
+            reason: format!("rpc error: {e}"),
+        },
+    }
+}
+
 /// Run a chain end-to-end: pre-filter via `Chain::execute`, emit Lean
 /// via the generic emitter, lake-build via `LeanVerifier`. Returns the
 /// outcome (pre-filter rejection, Lean rejection, or success with the
@@ -798,6 +843,33 @@ pub fn verify_chain_cached(
     theorem_name: &str,
     bundle: Option<&CacheBundle>,
 ) -> ChainVerifyOutcome {
+    verify_chain_cached_full(
+        chain,
+        store,
+        prover_root,
+        module_basename,
+        theorem_name,
+        bundle,
+        None,
+    )
+}
+
+/// Full variant accepting an optional persistent Lean elaborator.
+///
+/// When `elaborator` is `Some`, the verify path tries the warm Lean
+/// elaborator first (~100–500ms per candidate); on RPC error or
+/// elaborator timeout, falls back to the legacy `lake build` path.
+/// When `None`, behaves identically to [`verify_chain_cached`].
+#[allow(clippy::too_many_arguments)]
+pub fn verify_chain_cached_full(
+    chain: &Chain,
+    store: &AxiomStore,
+    prover_root: impl AsRef<Path>,
+    module_basename: &str,
+    theorem_name: &str,
+    bundle: Option<&CacheBundle>,
+    elaborator: Option<&std::sync::Arc<nasrudin_lean_bridge::PersistentElaborator>>,
+) -> ChainVerifyOutcome {
     // Pre-filter: run the chain.
     let mut ctx = DerivationContext::new();
     if let Err(e) = chain.execute(store, &mut ctx) {
@@ -824,6 +896,31 @@ pub fn verify_chain_cached(
     let module_path = format!("PhysicsGenerator.Derived.{module_basename}");
 
     let verifier = LeanVerifier::new(prover_root.as_ref());
+
+    // Layer 1: try the persistent elaborator first when available.
+    // RPC errors / timeouts fall through to the legacy lake-build path
+    // below, so an elaborator hiccup never silently drops a candidate.
+    if let Some(elab) = elaborator {
+        match call_persistent_elaborate(elab.as_ref(), &lean_source) {
+            PersistentOutcome::Verified => {
+                return ChainVerifyOutcome::Verified {
+                    lean_source,
+                    module_path,
+                };
+            }
+            PersistentOutcome::Rejected { stderr } => {
+                // Elaborator says no — clean up the (not-written) file
+                // path is no-op and we trust the kernel verdict.
+                return ChainVerifyOutcome::LeanRejected { lean_source, stderr };
+            }
+            PersistentOutcome::FellBack { reason } => {
+                tracing::debug!(
+                    "persistent elaborator failed ({reason}); falling back to lake build"
+                );
+                // Continue to the lake-build path below.
+            }
+        }
+    }
 
     let outcome = if let Some(b) = bundle {
         // Build the 16-byte cache key: canonical_hash || axiom_set_hash.

@@ -544,9 +544,13 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // CORS configuration
+    // CORS configuration — origin is env-driven so dev keeps localhost:3000
+    // and prod (https://nasrudin.org) doesn't have to be hot-patched at the
+    // reverse proxy. Set CORS_ALLOWED_ORIGIN in the environment.
+    let cors_origin = std::env::var("CORS_ALLOWED_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:3000".to_string());
     let cors = CorsLayer::new()
-        .allow_origin("http://localhost:3000".parse::<HeaderValue>()?)
+        .allow_origin(cors_origin.parse::<HeaderValue>()?)
         .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
         .allow_headers([
             axum::http::header::CONTENT_TYPE,

@@ -53,6 +53,13 @@ docker run --rm --platform linux/amd64 \
   bash -c "set -e
     apt-get update -qq
     apt-get install -y --no-install-recommends pkg-config libssl-dev clang cmake >/dev/null
+    # Drop fingerprints for our local crates so any stale incremental state
+    # from a prior killed build (e.g. mid-pg compile) can't poison the run.
+    # Workspace deps from /usr/local/cargo/registry are kept — that's the slow part.
+    cargo clean --release -p nasrudin-pg -p nasrudin-api -p nasrudin-ga \
+                          -p nasrudin-derive -p nasrudin-core \
+                          -p nasrudin-rocks -p nasrudin-lean-bridge \
+                          -p nasrudin-embed -p nasrudin-llm 2>/dev/null || true
     cargo build --release --locked \
       --bin physics-api \
       --bin migrate \
@@ -81,12 +88,24 @@ pnpm install --frozen-lockfile --silent
   VITE_API_URL="${VITE_API_URL:-https://api.nasrudin.org}" \
   VITE_STRIPE_SPONSOR_PAYMENT_LINK="${VITE_STRIPE_SPONSOR_PAYMENT_LINK:-https://donate.stripe.com/aFaaEXg2KgjZeCibEHbsc00}" \
   pnpm build)
+
+# `pnpm deploy --prod` produces an isolated directory (package.json +
+# prod-only node_modules), no symlinks. We then drop the built dist/ on
+# top so node can resolve `react` etc. from ./node_modules at runtime.
+echo "[build] producing prod-only node_modules via pnpm deploy..."
+rm -rf "$OUT_DIR/frontend"
+# --node-linker=hoisted: flat node_modules tree (no symlinks) so node's ESM
+# resolver can walk react -> exports['./jsx-runtime'] correctly. The default
+# isolated/symlink layout breaks ESM resolution under realpath-following.
+pnpm --filter nasrudin-frontend deploy --prod --node-linker=hoisted "$OUT_DIR/frontend"
+cp -R nasrudin-frontend/dist/. "$OUT_DIR/frontend/"
+# TanStack Start v1's node-server preset emits a Web-Fetch handler module,
+# not a standalone server. This wrapper boots a Node http listener.
+cp deploy/frontend-server.mjs "$OUT_DIR/frontend/server/server.mjs"
 if [ ! -f nasrudin-frontend/dist/server/ssr.js ] && [ ! -f nasrudin-frontend/dist/server/index.mjs ]; then
   echo "[build] warning: expected server entry not found in nasrudin-frontend/dist/server/" >&2
 fi
-cp -R nasrudin-frontend/dist/. "$OUT_DIR/frontend/"
-cp nasrudin-frontend/package.json "$OUT_DIR/frontend/package.json"
-echo "[build] frontend bundle: $(du -sh "$OUT_DIR/frontend/" | cut -f1)"
+echo "[build] frontend bundle (incl. prod node_modules): $(du -sh "$OUT_DIR/frontend/" | cut -f1)"
 
 # ── 3. Prover source (no .lake; droplet runs `lake exe cache get`) ────────
 echo "[build] copying prover source..."
@@ -103,6 +122,8 @@ chmod +x "$OUT_DIR/deploy/scripts/provision-native.sh"
 cp .env.example "$OUT_DIR/.env.example"
 
 # ── 5. Tarball ────────────────────────────────────────────────────────────
+# COPYFILE_DISABLE=1 keeps BSD tar (default on macOS) from emitting
+# AppleDouble (._*) sidecar files for files with extended attributes.
 echo "[build] tarballing..."
-(cd dist && tar czf release.tar.gz release/)
+(cd dist && COPYFILE_DISABLE=1 tar czf release.tar.gz release/)
 echo "[build] done: $TARBALL ($(du -h "$TARBALL" | cut -f1))"

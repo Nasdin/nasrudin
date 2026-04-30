@@ -38,7 +38,14 @@ impl Default for PersistentElaboratorConfig {
         Self {
             script_path: PathBuf::from("scripts/nasrudin_server.lean"),
             cwd: PathBuf::from("../prover"),
-            boot_timeout: Duration::from_secs(30),
+            // Cold Mathlib load can take ~30s; warm restart ~5–10s. 90s
+            // is a safe upper bound that doesn't tank the worker on
+            // first launch of the day.
+            boot_timeout: Duration::from_secs(90),
+            // Per-candidate elaborate is typically <1s but can spike
+            // during heavy Mathlib lookups. 30s leaves headroom; the
+            // Rust supervisor will surface the timeout cleanly so the
+            // call site can fall back to lake build.
             request_timeout: Duration::from_secs(30),
         }
     }
@@ -73,10 +80,40 @@ pub struct PersistentElaborator {
     _supervisor: tokio::task::JoinHandle<()>,
 }
 
+impl std::fmt::Debug for PersistentElaborator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersistentElaborator")
+            .field("next_id", &self.next_id.load(Ordering::Relaxed))
+            .field("request_timeout", &self.request_timeout)
+            .finish_non_exhaustive()
+    }
+}
+
 impl PersistentElaborator {
-    /// Spawn `lean --run <script>` and wait for the boot ack.
+    /// Spawn `lake env lean --run <script>` and wait for the boot ack.
+    ///
+    /// `lake env` is required so the Lean process inherits Lake's
+    /// `LEAN_PATH` / `LEAN_SRC_PATH`, letting `import Mathlib` resolve
+    /// against the lakefile's dependency tree. `lean --run` alone has
+    /// no knowledge of Lake.
     pub async fn new(cfg: PersistentElaboratorConfig) -> Result<Self> {
-        let mut child = Command::new("lean")
+        // Augment PATH with elan's bin directory so `lake` and `lean`
+        // resolve when spawned from a process that doesn't inherit the
+        // user's shell profile (matches the legacy `process.rs` path).
+        let mut cmd = Command::new("lake");
+        if let Some(home) = std::env::var_os("HOME") {
+            let elan_bin = std::path::PathBuf::from(home).join(".elan/bin");
+            if elan_bin.exists() {
+                let current_path = std::env::var_os("PATH").unwrap_or_default();
+                let mut new_path = std::ffi::OsString::from(&elan_bin);
+                new_path.push(":");
+                new_path.push(&current_path);
+                cmd.env("PATH", new_path);
+            }
+        }
+        let mut child = cmd
+            .arg("env")
+            .arg("lean")
             .arg("--run")
             .arg(&cfg.script_path)
             .current_dir(&cfg.cwd)
@@ -84,7 +121,7 @@ impl PersistentElaborator {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .context("spawn lean --run")?;
+            .context("spawn lake env lean --run")?;
 
         let stdin = child.stdin.take().context("take stdin")?;
         let stdout = child.stdout.take().context("take stdout")?;

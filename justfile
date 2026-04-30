@@ -245,6 +245,31 @@ discover-pool n="4" gens="200" pop="64" max-lake="4":
     echo "[pool] Ctrl+C to stop all workers."
     wait
 
+# ── Production Deploy (sgp1 droplet, native services) ──────
+
+# Build linux/amd64 release artifact (Rust binaries + frontend + prover) → dist/release.tar.gz
+build-release:
+    @deploy/scripts/build-release.sh
+
+# Deploy: build artifact + scp + run provision-native.sh on the droplet.
+# Usage: just deploy ip=167.172.6.171
+#        just deploy ip=167.172.6.171 stripe=~/.nasrudin-stripe.env
+deploy ip stripe="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{justfile_directory()}}
+    if [ -n "{{stripe}}" ]; then
+      deploy/scripts/deploy.sh "{{ip}}" "{{stripe}}"
+    else
+      deploy/scripts/deploy.sh "{{ip}}"
+    fi
+
+# Run the post-deploy smoke test against production URLs.
+smoke-prod:
+    NASRUDIN_API_PUBLIC_URL=https://api.nasrudin.org \
+    NASRUDIN_FRONTEND_PUBLIC_URL=https://nasrudin.org \
+    deploy/scripts/smoke.sh
+
 # ── Worker Binary Release ──────────────────────────────────
 
 # Build the public discovery worker tarball for the current host (dist/nasrudin-worker-<os>-<arch>.tar.gz)

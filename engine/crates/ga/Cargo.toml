@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 nasrudin-core = { path = "../core" }
 nasrudin-derive = { path = "../derive" }
+nasrudin-lean-bridge = { path = "../lean-bridge" }
 nasrudin-rocks = { path = "../rocks" }
 nasrudin-embed = { path = "../embed" }
 rand = { workspace = true }

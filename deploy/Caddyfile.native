@@ -7,12 +7,25 @@
 # DNS-only emergency bypass.
 
 nasrudin.org {
-	reverse_proxy 127.0.0.1:3000
 	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	# Serve hashed Vite client assets directly from disk — no SSR roundtrip
+	# for /assets/* / favicon / pattern svgs. Falls through to the SSR
+	# Node listener for everything else (HTML routes, API proxying via
+	# the @api matcher would be, etc.).
+	root * /opt/nasrudin/frontend/client
+	@static_file file
+	handle @static_file {
+		file_server
+		header Cache-Control "public, max-age=31536000, immutable"
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3000
 	}
 }
 
@@ -23,9 +36,21 @@ api.nasrudin.org {
 	handle @sse {
 		reverse_proxy 127.0.0.1:3001 {
 			flush_interval -1
+			# Strip upstream CORS — Caddy is the source of truth for prod origin.
+			# (axum CorsLayer in the API still ships dev's localhost:3000 origin
+			# until the next Rust rebuild swaps it for an env-driven value.)
+			header_down -Access-Control-Allow-Origin
+			header_down -Access-Control-Allow-Credentials
+			header_down -Access-Control-Allow-Methods
+			header_down -Access-Control-Allow-Headers
 		}
 	}
-	reverse_proxy 127.0.0.1:3001
+	reverse_proxy 127.0.0.1:3001 {
+		header_down -Access-Control-Allow-Origin
+		header_down -Access-Control-Allow-Credentials
+		header_down -Access-Control-Allow-Methods
+		header_down -Access-Control-Allow-Headers
+	}
 	header Access-Control-Allow-Origin "https://nasrudin.org"
 	header Access-Control-Allow-Credentials "true"
 	header Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS"

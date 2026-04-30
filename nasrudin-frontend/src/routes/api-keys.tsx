@@ -1,5 +1,5 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
-import { useState } from 'react';
+import { type CSSProperties, useState } from 'react';
 import { CreateKeyDialog, RevealKeyModal } from '~/components/apikeys/CreateKeyDialog';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
@@ -173,6 +173,8 @@ function ApiKeysPage() {
           </section>
         )}
 
+        <UsageGuide />
+
         <p style={{ color: 'var(--ink-500)', fontSize: 13, margin: '40px 0' }}>
           Want to delete a worker entirely? Revoke its key here, then the worker disappears from
           your account. Past contributions stay attributed.
@@ -230,6 +232,120 @@ function WorkerStatusCell({ worker, kind }: { worker: Worker | undefined; kind: 
     >
       {status}
     </td>
+  );
+}
+
+function UsageGuide() {
+  const codeStyle: CSSProperties = {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 12,
+    lineHeight: 1.55,
+    background: 'var(--paper-50)',
+    border: '1px solid var(--paper-300)',
+    borderRadius: 'var(--radius-md)',
+    padding: '12px 14px',
+    overflow: 'auto',
+    color: 'var(--ink-800)',
+    whiteSpace: 'pre',
+    margin: 0,
+  };
+  const cardStyle: CSSProperties = {
+    padding: 24,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 14,
+  };
+  return (
+    <section style={{ marginTop: 56 }}>
+      <h3 className="section-h" style={{ fontSize: 24, marginBottom: 8 }}>
+        How to use a key
+      </h3>
+      <p style={{ color: 'var(--ink-500)', fontSize: 14, marginBottom: 24 }}>
+        Each key is shown once when you create it. Save it in your password manager —{' '}
+        <strong>we never store the cleartext</strong>.
+      </p>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gap: 20,
+        }}
+      >
+        <div className="card" style={cardStyle}>
+          <header>
+            <span className="overline" style={{ color: 'var(--olive-700)' }}>
+              live key
+            </span>
+            <h4 style={{ margin: '4px 0 0', fontSize: 18 }}>
+              Read the API as you{' '}
+              <code style={{ color: 'var(--olive-700)', fontWeight: 400 }}>nsk_live_…</code>
+            </h4>
+          </header>
+          <p style={{ fontSize: 14, color: 'var(--ink-700)', margin: 0 }}>
+            For scripts, notebooks, and CLI tools. Counts against your plan's API-per-day quota and
+            sees your private library / draft conjectures.
+          </p>
+          <pre style={codeStyle}>
+            {`curl https://api.nasrudin.org/api/auth/me \\
+  -H "Authorization: Bearer nsk_live_…"`}
+          </pre>
+          <p style={{ fontSize: 13, color: 'var(--ink-500)', margin: 0 }}>
+            Pass the same <code>Authorization: Bearer …</code> header on every request. Browse the
+            full surface at <Link to="/api-docs">/api-docs</Link>.
+          </p>
+        </div>
+
+        <div className="card" style={cardStyle}>
+          <header>
+            <span className="overline" style={{ color: 'var(--terracotta-700)' }}>
+              worker key
+            </span>
+            <h4 style={{ margin: '4px 0 0', fontSize: 18 }}>
+              Donate compute{' '}
+              <code style={{ color: 'var(--terracotta-700)', fontWeight: 400 }}>nsk_worker_…</code>
+            </h4>
+          </header>
+          <p style={{ fontSize: 14, color: 'var(--ink-700)', margin: 0 }}>
+            For the discovery binary running on a machine you control. Verified theorems are
+            attributed to your account and the device label.
+          </p>
+          <ol style={{ fontSize: 13, color: 'var(--ink-700)', margin: 0, paddingLeft: 20 }}>
+            <li style={{ marginBottom: 6 }}>
+              Grab the bundle for your OS from{' '}
+              <a
+                href="https://github.com/Nasdin/nasrudin/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+              >
+                the latest worker release ↗
+              </a>{' '}
+              (Linux x86_64, macOS x86_64 / arm64, Windows x86_64).
+            </li>
+            <li style={{ marginBottom: 6 }}>
+              Install the Lean toolchain once:{' '}
+              <code>
+                curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh
+              </code>
+            </li>
+            <li>Extract and run with the key in the env:</li>
+          </ol>
+          <pre style={codeStyle}>
+            {`tar xzf nasrudin-worker-*.tar.gz
+cd nasrudin-worker-*
+
+NASRUDIN_API_URL=https://api.nasrudin.org \\
+NASRUDIN_WORKER_KEY=nsk_worker_… \\
+NASRUDIN_WORKER_ID=my-laptop \\
+./run.sh                # PowerShell: .\\run.ps1`}
+          </pre>
+          <p style={{ fontSize: 13, color: 'var(--ink-500)', margin: 0 }}>
+            First run warms the Mathlib cache (~5 min). After that, the worker heartbeats every
+            minute and verified theorems land on{' '}
+            <Link to="/leaderboard">your leaderboard row →</Link>
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 

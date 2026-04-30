@@ -14,6 +14,7 @@ Environment=LAKE_WORKSPACE_ROOT=/var/lib/nasrudin/lake-cache
 Environment=ROCKS_DB_PATH=/var/lib/nasrudin/rocks
 Environment=ELAN_HOME=/opt/nasrudin/elan
 Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CORS_ALLOWED_ORIGIN=https://nasrudin.org
 ExecStart=/opt/nasrudin/bin/physics-api
 Restart=on-failure
 RestartSec=10
