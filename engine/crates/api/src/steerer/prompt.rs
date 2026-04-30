@@ -75,6 +75,10 @@ const SCHEMA_HINT: &str = r#"{
                                   (proof plans, axiom hints, etc.).
                                   Persisted in history; ignored by the
                                   GA until a future version reads it,
+  "lessons_learned": "<= 4000 chars; rolling notes. REPLACE each cycle
+                      (don't append). Indefinite-horizon memory of what
+                      worked / what didn't / current focus. Survives
+                      past the 10-cycle history window.",
   "rationale": "<= 500 chars"
 }"#;
 
@@ -99,6 +103,7 @@ pub fn build_prompt(
     bandit_state: &serde_json::Value,
     k_per_island_next: &std::collections::HashMap<String, u32>,
     in_flight_targets: &[serde_json::Value],
+    previous_lessons_learned: &str,
 ) -> String {
     let mode_note = if scope == "B" {
         "Mutation knobs are LOCKED for this cycle (≥1 paid Researcher \
@@ -113,6 +118,7 @@ pub fn build_prompt(
         "schema": SCHEMA_HINT,
         "scope": scope,
         "history_newest_first": history,
+        "previous_lessons_learned": previous_lessons_learned,
         "current_demand": demand,
         "active_paid_jobs": active_jobs,
         "cluster_summaries": cluster_summaries,
@@ -131,6 +137,16 @@ pub fn build_prompt(
             it proved (or abandoned, if the GA has demonstrably given up). \
             Propose new soft_targets with stable target_id strings (suggest \
             UUIDs or descriptive slugs) so future cycles can track them. \
+            \n\nIndefinite-horizon memory: previous_lessons_learned is the \
+            rolling notes you maintained across past cycles. It survives \
+            past the 10-cycle history_newest_first window — anything you \
+            want to remember beyond that buffer must live here. Each cycle, \
+            REPLACE the previous version with an updated one (rolling, not \
+            appending): keep insights still relevant, drop stale ones, fold \
+            in new observations from this cycle's outcome. Cap ≤4000 chars. \
+            Cover what experiments worked, what didn't (so you don't repeat \
+            mistakes), and your current focus. Emit it as the \
+            `lessons_learned` field. \
             \nEmit SteeringConfig JSON only — no prose, no markdown fences."),
     });
     serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into())
@@ -171,6 +187,7 @@ mod tests {
             &bs,
             &kp,
             &ift,
+            "",
         );
         assert!(p.contains("scope=C"));
         assert!(p.contains("entropy"));
@@ -191,6 +208,7 @@ mod tests {
             &bs,
             &kp,
             &ift,
+            "",
         );
         assert!(p.contains("scope=B"));
         assert!(p.contains("LOCKED"));
@@ -200,7 +218,8 @@ mod tests {
     #[test]
     fn schema_mentions_required_fields() {
         let (cs, bs, kp, ift) = empty_extras();
-        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift);
+        let p =
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
         for f in &[
             "version",
             "scope",
@@ -215,7 +234,8 @@ mod tests {
     #[test]
     fn schema_hint_lists_mutation_priors_and_op_names() {
         let (cs, bs, kp, ift) = empty_extras();
-        let p = build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift);
+        let p =
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
         assert!(
             p.contains("mutation_priors"),
             "schema must mention mutation_priors"
@@ -230,5 +250,52 @@ mod tests {
         ] {
             assert!(p.contains(op), "schema must list operator name {op}");
         }
+    }
+
+    #[test]
+    fn prompt_surfaces_previous_lessons_learned() {
+        let (cs, bs, kp, ift) = empty_extras();
+        let lessons = "Boost@SR strength=0.5 → 1.5× has worked across 4 of last 6 cycles.";
+        let p = build_prompt(
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cs,
+            &bs,
+            &kp,
+            &ift,
+            lessons,
+        );
+        assert!(p.contains("previous_lessons_learned"));
+        assert!(p.contains("Boost@SR strength=0.5"));
+    }
+
+    #[test]
+    fn schema_hint_documents_lessons_learned() {
+        let (cs, bs, kp, ift) = empty_extras();
+        let p =
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
+        assert!(
+            p.contains("lessons_learned"),
+            "schema must mention lessons_learned"
+        );
+    }
+
+    #[test]
+    fn instructions_explain_rolling_memory() {
+        let (cs, bs, kp, ift) = empty_extras();
+        let p =
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
+        assert!(
+            p.contains("REPLACE the previous version"),
+            "instructions must tell the LLM to replace not append"
+        );
+        assert!(
+            p.contains("Indefinite-horizon memory")
+                || p.contains("indefinite-horizon")
+                || p.contains("survives"),
+            "instructions must explain why lessons_learned matters"
+        );
     }
 }

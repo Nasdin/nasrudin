@@ -348,6 +348,19 @@ pub async fn run_one_cycle(
     })
     .collect();
 
+    // Load the most-recent successfully-validated cycle's
+    // lessons_learned. This is the rolling indefinite-horizon LLM
+    // memory: the LLM rewrites it each cycle, replacing the prior
+    // version. Survives past the 10-cycle history window so insights
+    // from cycle N are still visible at cycle N+50. Empty string on
+    // cold boot.
+    let previous_lessons = last_known_good(db)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c.lessons_learned)
+        .unwrap_or_default();
+
     let user_prompt = build_prompt(
         scope,
         &history,
@@ -357,6 +370,7 @@ pub async fn run_one_cycle(
         &serde_json::Value::Object(bandit_state),
         &next_k_per_island,
         &in_flight_targets,
+        &previous_lessons,
     );
 
     // 5. Call LLM.

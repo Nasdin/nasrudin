@@ -77,6 +77,15 @@ pub struct SteeringConfig {
     /// validates it.
     #[serde(default)]
     pub extension: serde_json::Value,
+    /// Indefinite-horizon LLM memory. The LLM rewrites this each
+    /// cycle as a rolling summary of what worked, what didn't, and
+    /// its current focus — replacing the previous version, not
+    /// appending. Surfaced back into every future prompt as
+    /// `previous_lessons_learned`, so insights survive past the
+    /// 10-cycle `history_newest_first` window. Capped at 4000
+    /// chars to keep the prompt budget bounded.
+    #[serde(default)]
+    pub lessons_learned: String,
     /// Free-form rationale (≤500 chars). Stored for the next cycle
     /// to read; never affects worker behaviour.
     pub rationale: String,
@@ -223,6 +232,8 @@ pub enum SteeringValidationError {
     KnobRange { field: &'static str },
     #[error("rationale exceeds 500 chars")]
     RationaleTooLong,
+    #[error("lessons_learned exceeds 4000 chars")]
+    LessonsTooLong,
 }
 
 impl SteeringConfig {
@@ -302,6 +313,9 @@ impl SteeringConfig {
         if self.rationale.chars().count() > 500 {
             return Err(SteeringValidationError::RationaleTooLong);
         }
+        if self.lessons_learned.chars().count() > 4000 {
+            return Err(SteeringValidationError::LessonsTooLong);
+        }
         Ok(())
     }
 }
@@ -334,6 +348,7 @@ pub fn default_config() -> SteeringConfig {
         compute_directives: vec![],
         target_status_updates: vec![],
         extension: serde_json::Value::Null,
+        lessons_learned: String::new(),
         rationale: "default cold-start config".into(),
     }
 }
@@ -482,5 +497,55 @@ mod tests {
             strength: 1.5,
         });
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn default_has_empty_lessons_learned() {
+        let c = default_config();
+        assert!(c.lessons_learned.is_empty());
+        c.validate().unwrap();
+    }
+
+    #[test]
+    fn lessons_learned_under_cap_validates() {
+        let mut c = default_config();
+        c.lessons_learned = "a".repeat(4000);
+        c.validate().unwrap();
+    }
+
+    #[test]
+    fn lessons_learned_over_cap_rejected() {
+        let mut c = default_config();
+        c.lessons_learned = "a".repeat(4001);
+        assert!(matches!(
+            c.validate(),
+            Err(SteeringValidationError::LessonsTooLong)
+        ));
+    }
+
+    #[test]
+    fn lessons_learned_serde_round_trip() {
+        let mut c = default_config();
+        c.lessons_learned =
+            "Boost@SR strength=0.5 → 1.5× has worked. Diversify in QM has not.".into();
+        let json = serde_json::to_string(&c).unwrap();
+        let parsed: SteeringConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.lessons_learned, c.lessons_learned);
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn lessons_learned_missing_field_deserialises_to_empty() {
+        // Backwards compat: an old serialised config without
+        // lessons_learned should still parse + validate.
+        let cfg = default_config();
+        let mut value = serde_json::to_value(&cfg).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("lessons_learned");
+        let parsed: SteeringConfig = serde_json::from_value(value).unwrap();
+        assert!(parsed.lessons_learned.is_empty());
+        parsed.validate().unwrap();
     }
 }
