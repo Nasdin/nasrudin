@@ -311,6 +311,15 @@ where
     type Rejection = (StatusCode, axum::Json<serde_json::Value>);
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // 0. Impersonation: if the request carries an active impersonation
+        //    token, the `impersonation_layer` middleware has already injected
+        //    the target's `AuthUser` into request extensions. Use it.
+        if let Some(target) = parts.extensions.get::<AuthUser>() {
+            return Ok(Self {
+                user: target.clone(),
+            });
+        }
+
         // 1. Try cookie session.
         if let Ok(session) = AuthSession::<Backend>::from_request_parts(parts, state).await
             && let Some(user) = session.user

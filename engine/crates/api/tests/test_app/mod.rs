@@ -57,6 +57,14 @@ const RESET_SQL: &str = "DROP TABLE IF EXISTS user_saved_theorems CASCADE; \
      DROP TABLE IF EXISTS api_usage_daily CASCADE; \
      DROP TABLE IF EXISTS billing_events CASCADE; \
      DROP TABLE IF EXISTS user_llm_keys CASCADE; \
+     DROP TABLE IF EXISTS cluster_reports CASCADE; \
+     DROP TABLE IF EXISTS cluster_bandit_arms CASCADE; \
+     DROP TABLE IF EXISTS cluster_directive_arms CASCADE; \
+     DROP TABLE IF EXISTS admin_audit_log CASCADE; \
+     DROP TABLE IF EXISTS impersonation_sessions CASCADE; \
+     DROP TABLE IF EXISTS refund_records CASCADE; \
+     DROP TABLE IF EXISTS bulk_runs CASCADE; \
+     DROP FUNCTION IF EXISTS prevent_last_admin_demotion() CASCADE; \
      DROP TABLE IF EXISTS theorems CASCADE; \
      DROP TABLE IF EXISTS workers CASCADE; \
      DROP TABLE IF EXISTS api_keys CASCADE; \

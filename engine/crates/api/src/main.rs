@@ -890,6 +890,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/admin/audit", get(handlers::admin::audit_log::list))
         .route("/api/admin/stats", get(handlers::admin::stats::stats))
+        // Reject every admin route while an impersonation session is in
+        // flight. The marker is set by `impersonation_layer`; when present,
+        // this guard returns 403 before RequireAdmin even runs.
+        .layer(axum::middleware::from_fn(
+            physics_api::impersonation::block_during_impersonation,
+        ))
         .layer(GovernorLayer::new(rate_limit::auth_strict()));
 
     // SSE: no rate limit (long-lived connection)
@@ -932,28 +938,62 @@ async fn main() -> anyhow::Result<()> {
         let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
 
         // Auth-strict: brute-force protection (5 req/min, burst 5).
+        // Impersonation block: an impersonating admin must not be able to
+        // start a new auth session masquerading as the target.
         let auth_strict = Router::new()
             .route(
                 "/api/auth/firebase-session",
                 axum::routing::post(auth::firebase_session),
             )
+            .layer(axum::middleware::from_fn(
+                physics_api::impersonation::block_during_impersonation,
+            ))
             .layer(GovernorLayer::new(rate_limit::auth_strict()));
 
-        // Auth-session: lightweight session ops (30 req/min, burst 10)
+        // Auth-session: lightweight session ops (30 req/min, burst 10).
+        // Logout blocked during impersonation (would log out the *admin*,
+        // not the impersonated user — confusing semantics). /api/auth/me
+        // intentionally NOT blocked: the frontend uses it to render the
+        // banner.
         let auth_session = Router::new()
-            .route("/api/auth/logout", axum::routing::post(auth::logout))
+            .route(
+                "/api/auth/logout",
+                axum::routing::post(auth::logout).layer(axum::middleware::from_fn(
+                    physics_api::impersonation::block_during_impersonation,
+                )),
+            )
             .route("/api/auth/me", get(auth::me))
             .layer(GovernorLayer::new(rate_limit::auth_session()));
 
         // Platform-user: authenticated user CRUD on api keys, saved searches,
         // preferences, and per-user stats. Cookie or Bearer nsk_live_ tokens.
-        let platform_user = Router::new()
+        //
+        // A sub-router covers the *sensitive* surface that must be blocked
+        // during impersonation (mint/revoke API keys, billing, preferences
+        // write). Anything that's a read or a non-credential write
+        // (saved-searches, library, conjecture progress) stays in the main
+        // platform_user router and is allowed during impersonation — the
+        // AuthUser substitution makes those reads naturally scoped to the
+        // target.
+        let block_imp = || {
+            axum::middleware::from_fn(physics_api::impersonation::block_during_impersonation)
+        };
+        let platform_user_sensitive = Router::new()
             .route(
                 "/api/api-keys",
                 axum::routing::post(handlers::api_keys::create),
             )
-            .route("/api/api-keys", get(handlers::api_keys::list))
             .route("/api/api-keys/{id}", delete(handlers::api_keys::revoke))
+            .route(
+                "/api/preferences",
+                axum::routing::patch(handlers::preferences::patch),
+            )
+            .route("/api/billing/checkout", post(handlers::billing::checkout))
+            .route("/api/billing/portal", post(handlers::billing::portal))
+            .layer(block_imp());
+
+        let platform_user = Router::new()
+            .route("/api/api-keys", get(handlers::api_keys::list))
             .route(
                 "/api/saved-searches",
                 axum::routing::post(handlers::saved_searches::create),
@@ -968,10 +1008,6 @@ async fn main() -> anyhow::Result<()> {
                 axum::routing::patch(handlers::saved_searches::patch_label),
             )
             .route("/api/preferences", get(handlers::preferences::get))
-            .route(
-                "/api/preferences",
-                axum::routing::patch(handlers::preferences::patch),
-            )
             .route("/api/me/stats", get(handlers::me::stats))
             .route("/api/me/profile", get(handlers::me::get_profile))
             .route(
@@ -1044,8 +1080,6 @@ async fn main() -> anyhow::Result<()> {
                 "/api/research/jobs/{id}/cancel",
                 post(handlers::research_jobs::cancel),
             )
-            .route("/api/billing/checkout", post(handlers::billing::checkout))
-            .route("/api/billing/portal", post(handlers::billing::portal))
             .route("/api/billing/me", get(handlers::billing::me))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -1124,11 +1158,23 @@ async fn main() -> anyhow::Result<()> {
         let billing_webhook = Router::new()
             .route("/api/billing/webhook", post(handlers::billing::webhook));
 
+        // Impersonation layer: looks for X-Impersonate-Token, validates
+        // it, and on a hit injects the target user's `AuthUser` into
+        // request extensions. Downstream extractors (AuthOrApiKey, the
+        // admin guard) read from extensions first. The middleware is a
+        // no-op when no token is present, so it's safe to apply broadly.
+        let with_imp = axum::middleware::from_fn_with_state(
+            state.clone(),
+            physics_api::impersonation::impersonation_layer,
+        );
+
         app = app
             .merge(auth_strict)
             .merge(auth_session)
+            .merge(platform_user_sensitive)
             .merge(platform_user)
             .merge(platform_worker)
+            .layer(with_imp)
             .layer(auth_layer)
             .merge(billing_webhook);
 
