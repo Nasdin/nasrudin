@@ -246,9 +246,17 @@ pub async fn seed(
         }
     }
 
+    // Fold in the live cluster steering snapshot so workers hot-reload
+    // the LLM's mutation knobs + domain weights without a separate poll.
+    let steering_snap = state.steering.load();
     let body = serde_json::json!({
         "axioms": axioms,
         "seed_theorems": seed_theorems,
+        "steering": {
+            "config": steering_snap.config,
+            "etag": format!("{:016x}", steering_snap.etag),
+            "started_at": steering_snap.started_at.to_rfc3339(),
+        },
     });
     let body_str = serde_json::to_string(&body)
         .unwrap_or_else(|_| r#"{"error":"serialise_failed"}"#.to_string());

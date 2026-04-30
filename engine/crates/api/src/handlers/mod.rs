@@ -13,5 +13,6 @@ pub mod preferences;
 pub mod saved_searches;
 pub mod search;
 pub mod seed;
+pub mod steering;
 pub mod theorems;
 pub mod workers;

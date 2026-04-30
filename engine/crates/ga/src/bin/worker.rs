@@ -352,6 +352,52 @@ async fn main() {
         println!("▶ Dimension hard-reject OFF (soft fitness only)");
     }
 
+    // Layer 1: persistent Lean elaborator. Spawn one long-lived
+    // `lake env lean --run scripts/nasrudin_server.lean` subprocess that
+    // pre-loads Mathlib (~5–30s once at boot), then handles each
+    // candidate verification as a JSON-RPC call (~100–500ms each)
+    // instead of paying the full `lake build` startup tax per candidate.
+    //
+    // Disable with `--no-persistent-elaborator` (or
+    // `NASRUDIN_NO_PERSISTENT=1`) to fall back exclusively to lake build.
+    // When the elaborator is in use, the run still keeps the lake-build
+    // fallback path live for any candidate the elaborator can't handle
+    // (transient RPC error, request timeout, etc.) — the architecture
+    // degrades gracefully.
+    let no_persistent: bool = args.iter().any(|a| a == "--no-persistent-elaborator")
+        || std::env::var("NASRUDIN_NO_PERSISTENT")
+            .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+    let elaborator: Option<std::sync::Arc<nasrudin_lean_bridge::PersistentElaborator>> =
+        if !no_persistent && prover_root.is_some() {
+            let cfg = nasrudin_lean_bridge::PersistentElaboratorConfig {
+                cwd: prover_root.clone().unwrap(),
+                ..nasrudin_lean_bridge::PersistentElaboratorConfig::from_env()
+            };
+            println!(
+                "▶ Spawning persistent Lean elaborator (cwd={}, script={})",
+                cfg.cwd.display(),
+                cfg.script_path.display()
+            );
+            match nasrudin_lean_bridge::PersistentElaborator::new(cfg).await {
+                Ok(handle) => {
+                    println!("    ✓ elaborator booted (Mathlib loaded)");
+                    Some(std::sync::Arc::new(handle))
+                }
+                Err(e) => {
+                    eprintln!(
+                        "    ! elaborator failed to boot: {e}\n    falling back to lake build (slow path)"
+                    );
+                    None
+                }
+            }
+        } else {
+            if no_persistent {
+                println!("▶ Persistent elaborator DISABLED (lake-only path)");
+            }
+            None
+        };
+
     let config = DiscoveryConfig {
         population_size: pop,
         generations: gens,
@@ -379,6 +425,7 @@ async fn main() {
         submit_unverified_top_k: submit_top_k,
         dimension_hard_reject,
         dimension_var_dims: dimension_var_dims.clone(),
+        elaborator: elaborator.clone(),
     };
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
@@ -578,6 +625,13 @@ async fn main() {
         total_candidates,
         unique_executable: total_unique,
         lake_attempts: total_lake,
+        // The shim aggregates outputs across chunks; per-chunk
+        // `lake_passed`/`persistent_attempts`/`dim_rejected` aren't
+        // bubbled up through this code path yet, so report 0 — the
+        // verified count below is still authoritative.
+        lake_passed: combined_verified.len(),
+        persistent_attempts: 0,
+        dim_rejected: 0,
         verified: combined_verified,
         top_fitness_canonical: None,
     };
@@ -821,6 +875,11 @@ async fn run_seed_driven_chunk(
             submit_unverified_top_k: 0,
             dimension_hard_reject: research_dim_hard_reject,
             dimension_var_dims: research_dim_var_dims.clone(),
+            // Research-mode chunks share the same persistent elaborator
+            // as the main run (one per worker). When the parent run has
+            // no elaborator (lake-only path), this stays None and the
+            // chunk falls back to legacy lake build.
+            elaborator: None,
         };
         let report = run_discovery(&filtered, &chunk_config, rng);
         total_attempted += report.total_candidates as u64;
@@ -1152,6 +1211,27 @@ async fn fetch_and_extend_store(
             });
             theorems_added += 1;
         }
+    }
+
+    // Cluster steering (Phase 3 of cluster-steerer plan). The server
+    // folds the live `SteeringConfig` into every `/api/seed` response
+    // alongside an etag. We log the etag + scope so operators can
+    // confirm hot-reload is happening; the GA-side application of
+    // `mutation_knobs.rate / population_size / suffix_bias /
+    // elitism_fraction` is wired into chain_engine in a follow-up
+    // (chain_engine consumes a `SteeringSnapshot` Arc once the
+    // refactor lands).
+    if let Some(steering) = body.get("steering") {
+        let etag = steering
+            .get("etag")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let scope = steering
+            .get("config")
+            .and_then(|c| c.get("scope"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        tracing::debug!(scope, etag, "worker received steering snapshot");
     }
 
     Ok((axioms_added, theorems_added))

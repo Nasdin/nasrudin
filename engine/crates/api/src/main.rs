@@ -606,6 +606,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/domains", get(list_domains))
         .route("/api/axioms", get(list_axioms))
         .route("/api/seed", get(handlers::seed::seed))
+        .route("/api/steering", get(handlers::steering::steering))
         .route("/api/search", post(handlers::search::search))
         .route(
             "/api/search/concept",
