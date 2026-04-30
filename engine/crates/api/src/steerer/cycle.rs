@@ -191,6 +191,29 @@ pub async fn run_one_cycle(
             etag: directive_etag,
         }));
 
+    // Online action expansion: for each (island, action, bucket)
+    // slot whose outer multiplier_choice has dominated long enough,
+    // materialise the next-finer-grained arm so the bandit can
+    // explore beyond the initial 5-choice range. Cheap: a few PG
+    // round-trips at most, only fires when a slot actually merits
+    // expansion. AlphaProof-style adaptive action-space growth.
+    let expanded = crate::steerer::directive_bandit::expand_dominant_arms(db)
+        .await
+        .unwrap_or(0);
+    if expanded > 0 {
+        tracing::info!(expanded, "directive bandit: arms materialised by expansion");
+    }
+    let expanded_compute =
+        crate::steerer::directive_bandit::expand_dominant_compute_arms(db)
+            .await
+            .unwrap_or(0);
+    if expanded_compute > 0 {
+        tracing::info!(
+            expanded_compute,
+            "compute bandit: arms materialised by expansion"
+        );
+    }
+
     // Compute-scaling bandit snapshot. Same pattern as the directive
     // arms; ~150 rows so the full read each cycle is cheap.
     let compute_rows_raw = nasrudin_pg::query::cluster_compute_arms::snapshot_all(db)

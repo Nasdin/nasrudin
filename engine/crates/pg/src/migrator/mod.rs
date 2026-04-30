@@ -36,6 +36,7 @@ mod m20260430_000018_cluster_bandit_arms;
 mod m20260430_000019_cluster_directive_arms;
 mod m20260430_000020_directive_pull_events;
 mod m20260430_000021_cluster_compute_arms;
+mod m20260430_000022_expand_directive_arm_choices;
 mod m20260430_000028_theorems_trust_state;
 mod m20260430_000029_drop_email_outbox;
 
@@ -81,6 +82,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260430_000019_cluster_directive_arms::Migration),
             Box::new(m20260430_000020_directive_pull_events::Migration),
             Box::new(m20260430_000021_cluster_compute_arms::Migration),
+            Box::new(m20260430_000022_expand_directive_arm_choices::Migration),
             Box::new(m20260430_000028_theorems_trust_state::Migration),
             Box::new(m20260430_000029_drop_email_outbox::Migration),
         ]

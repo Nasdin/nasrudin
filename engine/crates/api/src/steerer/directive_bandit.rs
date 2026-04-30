@@ -15,21 +15,47 @@ use crate::steerer::schema::ClusterAction;
 use sea_orm::DatabaseConnection;
 
 pub const STRENGTH_BUCKETS: u8 = 5;
-pub const MULTIPLIER_CHOICES: u8 = 5;
+/// Number of multiplier choices materialised at boot. The bandit
+/// can grow up to `MAX_MULTIPLIER_CHOICES` lazily via
+/// `expand_dominant_arms`; production starts with 5 and only adds
+/// extra arms when a slot's outer choice (=4) dominates with high
+/// confidence. Lets the bandit explore beyond the initial range
+/// without paying the materialisation cost up front.
+pub const INITIAL_MULTIPLIER_CHOICES: u8 = 5;
+pub const MAX_MULTIPLIER_CHOICES: u8 = 9;
+/// Backwards-compat alias kept for callers that haven't migrated to
+/// the explicit INITIAL/MAX names.
+pub const MULTIPLIER_CHOICES: u8 = INITIAL_MULTIPLIER_CHOICES;
 pub const COLD_START_PULL_THRESHOLD: i64 = 15; // 3 pulls × 5 arms
 pub const REWARD_BIAS: f32 = 0.5;
 pub const HASH_MATCH_THRESHOLD: f32 = 0.10;
 
-pub const BOOST_MULTIPLIERS: [f32; 5] = [1.00, 1.25, 1.50, 1.75, 2.00];
-pub const EXPLOIT_MULTIPLIERS: [f32; 5] = [1.00, 1.25, 1.50, 1.75, 2.00];
-pub const DIVERSIFY_FRACTIONS: [f32; 5] = [0.00, 0.10, 0.20, 0.30, 0.50];
-pub const KILL_FRACTIONS: [f32; 5] = [0.00, 0.10, 0.20, 0.30, 0.50];
+/// Minimum pulls + mean-reward threshold that trigger online
+/// expansion. A slot's outer choice (=4) needs ≥ EXPAND_MIN_PULLS
+/// pulls AND mean reward ≥ EXPAND_MIN_REWARD before we materialise
+/// choice=5. Conservative thresholds so we don't expand on noise.
+pub const EXPAND_MIN_PULLS: i64 = 30;
+pub const EXPAND_MIN_REWARD: f64 = 0.65;
+
+/// Full 9-choice multiplier tables. The first 5 entries are the
+/// boot-materialised range; entries 5..=8 are the expansion zone
+/// the bandit grows into when an outer choice dominates.
+pub const BOOST_MULTIPLIERS: [f32; 9] =
+    [1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00];
+pub const EXPLOIT_MULTIPLIERS: [f32; 9] =
+    [1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00];
+pub const DIVERSIFY_FRACTIONS: [f32; 9] =
+    [0.00, 0.10, 0.20, 0.30, 0.50, 0.65, 0.75, 0.85, 0.95];
+pub const KILL_FRACTIONS: [f32; 9] =
+    [0.00, 0.10, 0.20, 0.30, 0.50, 0.65, 0.75, 0.85, 0.95];
 /// Compute-scaling multipliers for the test-time-compute bandit.
 /// Applied to chunk_config.population_size AND chunk_config.generations
 /// (the two compute knobs the GA respects). Range covers
-/// 0.5×→3× total compute. The 1.0× choice exists so the bandit can
-/// learn that scaling DOWN from baseline is sometimes optimal.
-pub const COMPUTE_MULTIPLIERS: [f32; 5] = [0.50, 0.75, 1.00, 1.50, 3.00];
+/// 0.5×→5× total compute via the 9-choice expansion zone. The 1.0×
+/// choice exists so the bandit can learn that scaling DOWN from
+/// baseline is sometimes optimal.
+pub const COMPUTE_MULTIPLIERS: [f32; 9] =
+    [0.50, 0.75, 1.00, 1.50, 3.00, 3.50, 4.00, 4.50, 5.00];
 
 pub const ACTIONS: &[ClusterAction] = &[
     ClusterAction::Boost,
@@ -66,15 +92,16 @@ pub fn bucketize_strength(strength: f32) -> u8 {
 }
 
 /// Resolve a multiplier_choice index to its concrete multiplier value
-/// for the given action. Out-of-range choice saturates at index 4.
+/// for the given action. Out-of-range choice saturates at index 8
+/// (the upper extreme of the expanded 9-choice table).
 pub fn lookup_multiplier_value(action: ClusterAction, choice: u8) -> f32 {
-    let table: &[f32; 5] = match action {
+    let table: &[f32; 9] = match action {
         ClusterAction::Boost => &BOOST_MULTIPLIERS,
         ClusterAction::Exploit => &EXPLOIT_MULTIPLIERS,
         ClusterAction::Diversify => &DIVERSIFY_FRACTIONS,
         ClusterAction::Kill => &KILL_FRACTIONS,
     };
-    table[(choice as usize).min(4)]
+    table[(choice as usize).min(8)]
 }
 
 #[derive(Debug, Clone)]
@@ -124,9 +151,10 @@ pub fn strength_to_static_choice(strength: f32) -> u8 {
 }
 
 /// Resolve a compute multiplier_choice index to its concrete value.
-/// Out-of-range choice saturates at index 4 (the 3.0× cap).
+/// Out-of-range choice saturates at index 8 (the 5.0× cap of the
+/// expanded 9-choice table).
 pub fn lookup_compute_multiplier(choice: u8) -> f32 {
-    COMPUTE_MULTIPLIERS[(choice as usize).min(4)]
+    COMPUTE_MULTIPLIERS[(choice as usize).min(8)]
 }
 
 /// Materialise every (island_domain, strength_bucket,
@@ -146,6 +174,130 @@ pub async fn ensure_all_compute_arms(
         }
     }
     Ok(())
+}
+
+/// Online action expansion: detect slots where the outer
+/// multiplier_choice (=4 by default, the boot-materialised maximum)
+/// has dominated long enough that we should explore beyond the
+/// initial range. For each (island, action, strength_bucket) where
+/// the highest-numbered materialised arm has both
+/// `pulls >= EXPAND_MIN_PULLS` AND `mean_reward >= EXPAND_MIN_REWARD`,
+/// materialise the next arm (one index higher) at zero stats. UCB1's
+/// cold-start preference for unpulled arms guarantees the new arm
+/// gets explored on the next cycle.
+///
+/// Caps at `MAX_MULTIPLIER_CHOICES - 1` so the table can't grow past
+/// the multiplier-table size. Idempotent — already-materialised rows
+/// are left alone.
+///
+/// Called from the steerer cycle after the directive-arm snapshot
+/// step, so workers see new arms on their next /api/seed poll.
+pub async fn expand_dominant_arms(
+    db: &DatabaseConnection,
+) -> Result<u32, sea_orm::DbErr> {
+    use nasrudin_pg::query::cluster_directive_arms;
+    let mut materialised = 0u32;
+    for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
+        for &action in ACTIONS {
+            for bucket in 0..STRENGTH_BUCKETS as i16 {
+                let arms = cluster_directive_arms::list_for_slot(
+                    db,
+                    domain,
+                    action_str(action),
+                    bucket,
+                )
+                .await?;
+                let max_existing = arms
+                    .iter()
+                    .map(|a| a.multiplier_choice)
+                    .max()
+                    .unwrap_or(-1);
+                if max_existing >= MAX_MULTIPLIER_CHOICES as i16 - 1 {
+                    continue;
+                }
+                let outer = arms
+                    .iter()
+                    .find(|a| a.multiplier_choice == max_existing);
+                if let Some(arm) = outer {
+                    if arm.pulls < EXPAND_MIN_PULLS {
+                        continue;
+                    }
+                    let mean = arm.total_reward / arm.pulls as f64;
+                    if mean < EXPAND_MIN_REWARD {
+                        continue;
+                    }
+                    cluster_directive_arms::ensure_arm(
+                        db,
+                        domain,
+                        action_str(action),
+                        bucket,
+                        max_existing + 1,
+                    )
+                    .await?;
+                    materialised += 1;
+                    tracing::info!(
+                        domain,
+                        action = %action_str(action),
+                        bucket,
+                        new_choice = max_existing + 1,
+                        pulls = arm.pulls,
+                        mean,
+                        "directive bandit: expanded slot (outer choice dominant)"
+                    );
+                }
+            }
+        }
+    }
+    Ok(materialised)
+}
+
+/// Same as `expand_dominant_arms` for the compute-scaling bandit.
+/// One less dimension (no per-action) so the iteration is smaller.
+pub async fn expand_dominant_compute_arms(
+    db: &DatabaseConnection,
+) -> Result<u32, sea_orm::DbErr> {
+    use nasrudin_pg::query::cluster_compute_arms;
+    let mut materialised = 0u32;
+    for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
+        for bucket in 0..STRENGTH_BUCKETS as i16 {
+            let arms = cluster_compute_arms::list_for_slot(db, domain, bucket).await?;
+            let max_existing = arms
+                .iter()
+                .map(|a| a.multiplier_choice)
+                .max()
+                .unwrap_or(-1);
+            if max_existing >= MAX_MULTIPLIER_CHOICES as i16 - 1 {
+                continue;
+            }
+            let outer = arms.iter().find(|a| a.multiplier_choice == max_existing);
+            if let Some(arm) = outer {
+                if arm.pulls < EXPAND_MIN_PULLS {
+                    continue;
+                }
+                let mean = arm.total_reward / arm.pulls as f64;
+                if mean < EXPAND_MIN_REWARD {
+                    continue;
+                }
+                cluster_compute_arms::ensure_arm(
+                    db,
+                    domain,
+                    bucket,
+                    max_existing + 1,
+                )
+                .await?;
+                materialised += 1;
+                tracing::info!(
+                    domain,
+                    bucket,
+                    new_choice = max_existing + 1,
+                    pulls = arm.pulls,
+                    mean,
+                    "compute bandit: expanded slot (outer choice dominant)"
+                );
+            }
+        }
+    }
+    Ok(materialised)
 }
 
 /// Materialise every (island_domain, action, strength_bucket,
