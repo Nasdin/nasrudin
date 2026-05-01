@@ -38,21 +38,25 @@ impl Default for PersistentElaboratorConfig {
         Self {
             script_path: PathBuf::from("scripts/nasrudin_server.lean"),
             cwd: PathBuf::from("../prover"),
-            // Cold Mathlib load can take ~30s; warm restart ~5–10s. 90s
-            // is a safe upper bound that doesn't tank the worker on
-            // first launch of the day.
-            boot_timeout: Duration::from_secs(90),
+            // Cold Mathlib load is ~30 s on a beefy box but climbs to
+            // 3–5 min on a 1 vCPU droplet sharing CPU with the API,
+            // Caddy, and Postgres. 600 s gives safe headroom for the
+            // worst real-world boot we've measured; warm reboots still
+            // ack in seconds. Override via NASRUDIN_LEAN_BOOT_TIMEOUT_SECS.
+            boot_timeout: Duration::from_secs(600),
             // Per-candidate elaborate is typically <1s but can spike
             // during heavy Mathlib lookups. 30s leaves headroom; the
             // Rust supervisor will surface the timeout cleanly so the
-            // call site can fall back to lake build.
+            // call site can fall back to lake build. Override via
+            // NASRUDIN_LEAN_REQUEST_TIMEOUT_SECS.
             request_timeout: Duration::from_secs(30),
         }
     }
 }
 
 impl PersistentElaboratorConfig {
-    /// Read overrides from env (`NASRUDIN_LEAN_SCRIPT`, `NASRUDIN_PROVER_ROOT`).
+    /// Read overrides from env (`NASRUDIN_LEAN_SCRIPT`, `NASRUDIN_PROVER_ROOT`,
+    /// `NASRUDIN_LEAN_BOOT_TIMEOUT_SECS`, `NASRUDIN_LEAN_REQUEST_TIMEOUT_SECS`).
     pub fn from_env() -> Self {
         let mut cfg = Self::default();
         if let Ok(s) = std::env::var("NASRUDIN_LEAN_SCRIPT") {
@@ -60,6 +64,16 @@ impl PersistentElaboratorConfig {
         }
         if let Ok(s) = std::env::var("NASRUDIN_PROVER_ROOT") {
             cfg.cwd = PathBuf::from(s);
+        }
+        if let Ok(secs) = std::env::var("NASRUDIN_LEAN_BOOT_TIMEOUT_SECS")
+            && let Ok(n) = secs.parse::<u64>()
+        {
+            cfg.boot_timeout = Duration::from_secs(n);
+        }
+        if let Ok(secs) = std::env::var("NASRUDIN_LEAN_REQUEST_TIMEOUT_SECS")
+            && let Ok(n) = secs.parse::<u64>()
+        {
+            cfg.request_timeout = Duration::from_secs(n);
         }
         cfg
     }

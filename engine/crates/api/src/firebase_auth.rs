@@ -2,8 +2,8 @@
 //!
 //! Verifies short-lived (≤1h) Google-signed RS256 JWTs against Google's
 //! published JWKs. Used exactly once per session by
-//! `POST /api/auth/firebase-session` to exchange an ID token for an
-//! axum-login session cookie. After exchange, the cookie is the source of
+//! `POST /api/auth/firebase-session` to exchange an ID token for a
+//! tower-sessions cookie. After exchange, the cookie is the source of
 //! truth and Firebase is not consulted again.
 
 use std::collections::HashMap;

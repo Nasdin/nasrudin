@@ -171,6 +171,30 @@ sudo -u nasrudin env ELAN_HOME="$ELAN_HOME" PATH="$ELAN_HOME/bin:/usr/bin:/bin" 
   lake exe cache get || echo '[provision] WARN: lake cache get failed; first lake build will rebuild Mathlib'
 "
 
+# Pre-warm the persistent elaborator so the worker's first-boot cold
+# Mathlib import doesn't pay the full disk-read tax. We launch the
+# elaborator script with `< /dev/null` so it sees EOF and exits cleanly
+# right after its boot ack. The wall cost is one cold elaborator boot
+# (~1–5 min on a 1 vCPU box), and the OS page cache that ends up
+# populated holds every .olean the elaborator touches — every
+# subsequent worker (re)start finds those files hot and runs
+# Lean.importModules at memory speed instead of disk speed.
+#
+# We don't fail provision on warm-up failure: if the elaborator can't
+# boot here, it'll fail at worker start with the same error and the
+# operator sees the journal there. Best-effort pre-warm.
+log "pre-warming Lean elaborator (~1–5 min on 1 vCPU; fills OS page cache for faster worker (re)start)..."
+sudo -u nasrudin env \
+  ELAN_HOME="$ELAN_HOME" \
+  PATH="$ELAN_HOME/bin:/usr/bin:/bin" \
+  NASRUDIN_LEAN_BOOT_TIMEOUT_SECS=600 \
+  bash -c "
+    cd $INSTALL/prover
+    timeout 600 lake env lean --run scripts/nasrudin_server.lean < /dev/null > /tmp/elab-warm.log 2>&1 || true
+    echo \"[provision] elaborator warm-up exit code: \$? (tail of /tmp/elab-warm.log:)\"
+    tail -n 10 /tmp/elab-warm.log 2>/dev/null || true
+  "
+
 # ── 7. Caddyfile ──────────────────────────────────────────────────────────
 log "installing /etc/caddy/Caddyfile"
 install -m 0644 "$STAGING/deploy/Caddyfile" /etc/caddy/Caddyfile

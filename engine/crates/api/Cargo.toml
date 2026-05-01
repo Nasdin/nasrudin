@@ -39,7 +39,6 @@ nasrudin-llm = { path = "../llm" }
 sea-orm = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true }
-axum-login = { workspace = true }
 tower-sessions = { workspace = true }
 password-auth = { workspace = true }
 tokio = { workspace = true }
@@ -70,7 +69,7 @@ rand = { workspace = true }
 regex = "1"
 walkdir = "2"
 tempfile = "3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls"] }
 clap = { version = "4", features = ["derive"] }
 async-stripe = { version = "0.41", default-features = false, features = ["runtime-tokio-hyper-rustls", "checkout", "billing", "connect", "webhook-events"] }
 rocksdb = { workspace = true }
@@ -79,7 +78,7 @@ bytes = { workspace = true }
 arc-swap = { workspace = true }
 dashmap = { workspace = true }
 async-trait = { workspace = true }
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 lru = { workspace = true }
 
 [dev-dependencies]

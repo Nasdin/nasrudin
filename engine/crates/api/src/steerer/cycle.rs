@@ -568,8 +568,10 @@ impl GradientCaller {
     /// is absent from this schema — strict mode requires concrete
     /// types and the extension is "any JSON" by design.
     fn steering_config_schema() -> serde_json::Value {
+        // schemars 1.x: `Schema` wraps `serde_json::Value` directly; previous
+        // 0.8 API exposed an inner `.schema` field that no longer exists.
         let schema = schemars::schema_for!(crate::steerer::schema::SteeringConfig);
-        serde_json::to_value(&schema.schema).unwrap_or_else(|_| serde_json::json!({}))
+        schema.to_value()
     }
 }
 

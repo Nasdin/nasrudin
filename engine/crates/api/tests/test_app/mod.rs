@@ -22,7 +22,6 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use axum_login::AuthManagerLayerBuilder;
 use sea_orm::{ConnectionTrait, DatabaseConnection};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -262,8 +261,6 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
     // happily ignore it.
     let session_store = MemoryStore::default();
     let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
-    let auth_backend = api_auth::Backend::new(pg.clone());
-    let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
 
     let router = Router::new()
         .route(
@@ -375,7 +372,7 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
             "/api/conjecture/{id}/complete",
             axum::routing::post(handlers::conjecture::complete_handler),
         )
-        .layer(auth_layer)
+        .layer(session_layer)
         .with_state(Arc::clone(&state));
 
     Some(TestApp {

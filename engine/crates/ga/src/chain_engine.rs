@@ -18,12 +18,128 @@ use crate::chain_ga::{
     ChainIndividual, ChainVerifyOutcome, splice_chains,
     verify_chain_cached_full,
 };
+use crate::target::TargetSpec;
 use nasrudin_core::Expr;
 use nasrudin_derive::{AxiomStore, Chain, RuleStep};
 use rand::Rng;
 use rand::seq::IteratorRandom;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+/// Cheap pre-lake-build filter knobs. Read from env once at first use,
+/// then reused across every `pick_top_for_verify` call. The point is
+/// to drop chains that have ~zero chance of lake-verifying *before*
+/// we spend ~30–60 s of compute on a `lake build` for them.
+///
+/// All filters are sub-millisecond. Filters 1, 2, 4 require a target;
+/// without one they are no-ops.
+#[derive(Debug, Clone, Copy)]
+struct PreLakeFilters {
+    enabled: bool,
+    /// Filter 1: `target::symbol_overlap(candidate, target.final_target) >= min`.
+    /// Default 0.5 — a chain whose final symbols overlap the target by
+    /// less than half cannot be on the right ladder.
+    symbol_overlap_min: f64,
+    /// Filter 2: `target::ladder_score(candidate, spec) >= min`.
+    /// Default 0.3 — sub-0.3 hasn't reached even rung 1 meaningfully.
+    ladder_min: f64,
+    /// Filter 3: `chain.0.len() >= min`. Default 3 — sub-3-step chains
+    /// are typically mutation artifacts (one IntroduceAxiom +
+    /// RearrangeEquation), no real composition happened.
+    chain_min_steps: usize,
+    /// Filter 4: every Var/Const symbol in `target.final_target` must
+    /// appear somewhere in the candidate's final expression. Reject
+    /// rate ~5–15 %, cost ~1 µs.
+    require_target_symbols: bool,
+}
+
+impl PreLakeFilters {
+    fn from_env_once() -> &'static Self {
+        static CACHED: OnceLock<PreLakeFilters> = OnceLock::new();
+        CACHED.get_or_init(|| {
+            let enabled = std::env::var("NASRUDIN_PRE_LAKE_FILTERS")
+                .map(|v| !matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                ))
+                .unwrap_or(true);
+            let symbol_overlap_min = std::env::var("NASRUDIN_PRE_LAKE_SYMBOL_OVERLAP_MIN")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.5);
+            let ladder_min = std::env::var("NASRUDIN_PRE_LAKE_LADDER_MIN")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.3);
+            let chain_min_steps = std::env::var("NASRUDIN_PRE_LAKE_CHAIN_MIN_STEPS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(3);
+            let require_target_symbols = std::env::var("NASRUDIN_PRE_LAKE_REQUIRE_SYMBOLS")
+                .map(|v| !matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                ))
+                .unwrap_or(true);
+            tracing::info!(
+                enabled, symbol_overlap_min, ladder_min, chain_min_steps,
+                require_target_symbols, "pre-lake filter knobs"
+            );
+            PreLakeFilters {
+                enabled,
+                symbol_overlap_min,
+                ladder_min,
+                chain_min_steps,
+                require_target_symbols,
+            }
+        })
+    }
+
+    /// Apply filters. Returns `Some(reason)` on reject, `None` on pass.
+    fn check(
+        &self,
+        chain: &Chain,
+        final_expr: &Expr,
+        target: Option<&TargetSpec>,
+    ) -> Option<&'static str> {
+        if !self.enabled {
+            return None;
+        }
+        // Filter 3 — applies even without a target (sub-3-step chains
+        // are degenerate mutation artifacts in any domain).
+        if chain.0.len() < self.chain_min_steps {
+            return Some("chain_too_short");
+        }
+        let Some(spec) = target else {
+            return None;
+        };
+        // Filter 1 — symbol-overlap floor.
+        if crate::target::symbol_overlap(final_expr, &spec.final_target)
+            < self.symbol_overlap_min
+        {
+            return Some("symbol_overlap_below_floor");
+        }
+        // Filter 2 — ladder-score floor.
+        if crate::target::ladder_score(final_expr, spec) < self.ladder_min {
+            return Some("ladder_below_floor");
+        }
+        // Filter 4 — required-subexpression presence (set semantics:
+        // every target symbol — Var, Const, Lit — must appear in the
+        // candidate). `collect_symbols` produces typed strings like
+        // "var:E", "const:C", "lit:1/2"; intersection is exact.
+        if self.require_target_symbols {
+            let target_syms = crate::target::collect_symbols(&spec.final_target);
+            if !target_syms.is_empty() {
+                let cand_syms = crate::target::collect_symbols(final_expr);
+                if !target_syms.iter().all(|s| cand_syms.contains(s)) {
+                    return Some("missing_target_symbol");
+                }
+            }
+        }
+        None
+    }
+}
 
 /// Configuration for `run_discovery`.
 #[derive(Debug, Clone)]
@@ -275,6 +391,14 @@ pub struct DiscoveryReport {
     /// reaching the kernel because their final equation has known,
     /// definitively-mismatched dimensions on each side.
     pub dim_rejected: usize,
+    /// Pre-lake-build cheap filter rejection count. These are
+    /// candidates that survived the dimension hard-reject and the
+    /// novelty + bloom checks, but were dropped *before* `lake build`
+    /// (or the persistent elaborator) by `PreLakeFilters` — symbol
+    /// overlap, ladder score, chain length, required target symbols.
+    /// Cost ~µs per rejection, saves ~30–60 s of lake compute on the
+    /// shared 1 vCPU droplet.
+    pub pre_lake_rejected: usize,
     pub verified: Vec<VerifiedDiscovery>,
     pub top_fitness_canonical: Option<String>,
     /// Snapshot of the chunk's final population for clustering /
@@ -574,6 +698,8 @@ pub fn run_discovery_from_population(
                     store,
                     config.dimension_hard_reject,
                     &config.dimension_var_dims,
+                    config.target.as_ref(),
+                    &mut report.pre_lake_rejected,
                 ) {
                     report.lake_attempts += 1;
                     let basename = format!("DiscoverGen{gen_idx}");
@@ -791,7 +917,10 @@ fn pick_top_for_verify<'a>(
     store: &AxiomStore,
     dim_hard_reject: bool,
     dim_var_dims: &std::collections::HashMap<String, nasrudin_core::Dimension>,
+    target: Option<&TargetSpec>,
+    pre_lake_rejected: &mut usize,
 ) -> Option<&'a ChainIndividual> {
+    let pre_lake = PreLakeFilters::from_env_once();
     for ind in offspring {
         if ind.fitness.novelty < 1.0 || ind.fitness.nasrudin_relevance < 1.0 {
             continue;
@@ -800,6 +929,20 @@ fn pick_top_for_verify<'a>(
             if dim_hard_reject
                 && nasrudin_derive::equation_definitely_inconsistent(&expr, dim_var_dims)
             {
+                continue;
+            }
+            // Cheap pre-lake-build gates. Order matches PreLakeFilters
+            // priority: chain length first (sub-µs), then target-aware
+            // checks (µs each). All four together dominated by the
+            // canonicalize step that the lake-build path also pays.
+            if let Some(reason) = pre_lake.check(&ind.chain, &expr, target) {
+                *pre_lake_rejected += 1;
+                tracing::debug!(
+                    filter = "pre_lake",
+                    reason,
+                    chain_len = ind.chain.0.len(),
+                    "candidate rejected before lake build"
+                );
                 continue;
             }
             let canon = expr.to_canonical();

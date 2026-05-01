@@ -14,11 +14,10 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::http::{StatusCode, header, request::Parts};
-use axum_login::AuthSession;
 use serde_json::json;
 
 use crate::admin::audit::SYSTEM_ACTOR_ID;
-use crate::auth::{AuthUser, Backend};
+use crate::auth::{AuthSess, AuthUser};
 use crate::state::AppState;
 
 #[derive(Clone, Debug)]
@@ -42,8 +41,8 @@ impl FromRequestParts<Arc<AppState>> for RequireAdmin {
         parts: &mut Parts,
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
-        // Path 2 (cheaper): bearer token. Check this before pulling the
-        // axum-login session so admin scripts/cron don't pay session-store
+        // Path 2 (cheaper): bearer token. Check this before resolving
+        // the cookie session so admin scripts/cron don't pay session-store
         // overhead.
         if let Some(provided) = parts
             .headers
@@ -82,9 +81,8 @@ impl FromRequestParts<Arc<AppState>> for RequireAdmin {
         }
 
         // Path 1: session.
-        if let Ok(session) =
-            AuthSession::<Backend>::from_request_parts(parts, state.as_ref()).await
-            && let Some(user) = session.user.clone()
+        if let Ok(sess) = AuthSess::from_request_parts(parts, state).await
+            && let Some(user) = sess.user.clone()
         {
             let pg = state.pg.as_ref().ok_or((
                 StatusCode::SERVICE_UNAVAILABLE,

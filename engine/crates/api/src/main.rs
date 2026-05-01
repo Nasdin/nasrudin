@@ -15,7 +15,6 @@ use axum::{
     http::{HeaderValue, Method},
     routing::get,
 };
-use axum_login::AuthManagerLayerBuilder;
 use serde::Deserialize;
 use tower_governor::GovernorLayer;
 use tower_http::cors::CorsLayer;
@@ -1119,12 +1118,9 @@ async fn main() -> anyhow::Result<()> {
         .merge(workers_public);
 
     // Add auth routes only if PostgreSQL is available
-    if let Some(ref pg_conn) = state.pg {
+    if state.pg.is_some() {
         let session_store = MemoryStore::default();
         let session_layer = SessionManagerLayer::new(session_store).with_secure(false); // TODO: set true behind TLS in production
-
-        let auth_backend = auth::Backend::new(pg_conn.clone());
-        let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
 
         // Auth-strict: brute-force protection (5 req/min, burst 5).
         // Impersonation block: an impersonating admin must not be able to
@@ -1380,7 +1376,7 @@ async fn main() -> anyhow::Result<()> {
             .merge(platform_user)
             .merge(platform_worker)
             .layer(with_imp)
-            .layer(auth_layer)
+            .layer(session_layer)
             .merge(billing_webhook);
 
         tracing::info!("Auth endpoints enabled (PostgreSQL available)");

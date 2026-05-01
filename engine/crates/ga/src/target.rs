@@ -487,7 +487,7 @@ pub fn chain_coverage(
 
 // ---- internals -------------------------------------------------------------
 
-fn symbol_overlap(candidate: &Expr, target: &Expr) -> f64 {
+pub(crate) fn symbol_overlap(candidate: &Expr, target: &Expr) -> f64 {
     let target_syms = collect_symbols(target);
     if target_syms.is_empty() {
         return 1.0;
@@ -536,7 +536,7 @@ fn topology_score(candidate: &Expr, target: &Expr) -> f64 {
     ratio
 }
 
-fn collect_symbols(expr: &Expr) -> HashSet<String> {
+pub(crate) fn collect_symbols(expr: &Expr) -> HashSet<String> {
     let mut out = HashSet::new();
     collect_symbols_into(expr, &mut out);
     out

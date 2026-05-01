@@ -1,16 +1,40 @@
-//! Authentication module: axum-login backend, session handlers.
+//! Firebase-based authentication.
+//!
+//! Auth flow:
+//! 1. The frontend obtains a Firebase ID token (Google sign-in or
+//!    email/password via Firebase Auth).
+//! 2. It POSTs the token to `/api/auth/firebase-session`.
+//! 3. The server verifies the token (RS256 against Google's JWKs),
+//!    finds-or-creates the matching `users` row (keyed by `firebase_uid`),
+//!    and writes `user_id` into a `tower-sessions` session cookie.
+//! 4. Subsequent requests carry the session cookie. The `AuthSess`
+//!    extractor reads `user_id` and looks the user up.
+//!
+//! There is no password DB. Firebase is the source of truth for identity;
+//! the PG `users` table is the local mirror that anchors plan/billing/admin
+//! state.
 
-use axum::{Json, http::StatusCode, response::IntoResponse};
-use axum_login::{AuthSession, AuthnBackend};
-use nasrudin_pg::sea_orm::{DatabaseConnection, DbErr};
+use std::sync::Arc;
+
+use axum::extract::FromRequestParts;
+use axum::http::{StatusCode, header, request::Parts};
+use axum::{Json, response::IntoResponse};
+use nasrudin_pg::sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
+use tower_sessions::Session;
 use uuid::Uuid;
+
+use crate::state::AppState;
+
+/// Session-storage key under which we persist the authenticated user id.
+const SESSION_USER_KEY: &str = "user_id";
 
 // ---------------------------------------------------------------------------
 // AuthUser
 // ---------------------------------------------------------------------------
 
-/// Wrapper around the pg `users::Model` that implements `axum_login::AuthUser`.
+/// Wrapper around the pg `users::Model`. Carried through request handlers
+/// once the session cookie has been resolved.
 #[derive(Debug, Clone, Serialize)]
 pub struct AuthUser {
     pub id: Uuid,
@@ -45,81 +69,103 @@ impl AuthUser {
     }
 }
 
-impl axum_login::AuthUser for AuthUser {
-    type Id = Uuid;
-
-    fn id(&self) -> Uuid {
-        self.id
-    }
-
-    fn session_auth_hash(&self) -> &[u8] {
-        // Stable per-user secret. firebase_uid never changes for a given
-        // user; if it ever does (provider unlink + relink edge case), all
-        // existing sessions invalidate, which is the correct behavior.
-        self.firebase_uid.as_bytes()
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Credentials
+// AuthSess: the cookie-session extractor
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Credentials {
-    pub email: String,
-    pub password: String,
-}
-
-// ---------------------------------------------------------------------------
-// Backend
-// ---------------------------------------------------------------------------
-
-/// Auth backend backed by the PostgreSQL `users` table.
-#[derive(Debug, Clone)]
-pub struct Backend {
+/// Thin handle to the PG connection so handlers can keep using
+/// `auth.backend.db` after the axum-login removal. Exists only to
+/// preserve the field-access ergonomics of the prior API; conceptually
+/// it's the same as `state.pg.as_ref().expect("pg")`.
+#[derive(Clone)]
+pub struct AuthBackend {
     pub db: DatabaseConnection,
 }
 
-impl Backend {
-    pub fn new(db: DatabaseConnection) -> Self {
-        Self { db }
+/// Extractor that resolves the cookie session into an optional `AuthUser`.
+///
+/// The handler still runs when nothing is signed in (`user == None`); only
+/// `AuthOrApiKey` / `RequireAdmin` reject unauthenticated requests.
+///
+/// Always succeeds at the extractor level so callers can decide whether
+/// to demand a user or keep the request public.
+pub struct AuthSess {
+    pub user: Option<AuthUser>,
+    pub session: Session,
+    /// Compatibility handle for handlers that read `auth.backend.db` —
+    /// kept verbatim during the axum-login removal so existing call
+    /// sites need no edits.
+    pub backend: AuthBackend,
+}
+
+impl AuthSess {
+    /// Persist `user.id` into the cookie session, returning the populated
+    /// `AuthUser`. Mirrors what `axum_login::AuthSession::login` used to do.
+    pub async fn install(&mut self, user: AuthUser) -> Result<AuthUser, tower_sessions::session::Error> {
+        // Cycle the session ID on login so a pre-auth fixation token can't
+        // be reused post-auth (defence-in-depth; tower-sessions's default
+        // cookie scope already mitigates this).
+        self.session.cycle_id().await?;
+        self.session.insert(SESSION_USER_KEY, user.id).await?;
+        self.user = Some(user.clone());
+        Ok(user)
+    }
+
+    /// Clear the cookie session. Returns `Ok(())` even if no user was
+    /// signed in.
+    pub async fn logout(&mut self) -> Result<(), tower_sessions::session::Error> {
+        self.session.flush().await?;
+        self.user = None;
+        Ok(())
     }
 }
 
-/// Newtype so we can implement `std::error::Error` + `IntoResponse`.
-#[derive(Debug, thiserror::Error)]
-pub enum AuthError {
-    #[error("database error: {0}")]
-    Db(#[from] DbErr),
+impl FromRequestParts<Arc<AppState>> for AuthSess {
+    type Rejection = (StatusCode, Json<serde_json::Value>);
 
-    #[error("task join error: {0}")]
-    TaskJoin(#[from] tokio::task::JoinError),
-}
-
-impl AuthnBackend for Backend {
-    type User = AuthUser;
-    type Credentials = Credentials;
-    type Error = AuthError;
-
-    async fn authenticate(
-        &self,
-        _creds: Self::Credentials,
-    ) -> Result<Option<Self::User>, Self::Error> {
-        // axum-login's AuthnBackend trait requires authenticate, but our
-        // session-issue path is firebase_session, which doesn't go through
-        // axum_login::AuthSession::authenticate(). We never call this
-        // method; return None to make accidental calls fail closed.
-        Ok(None)
-    }
-
-    async fn get_user(&self, user_id: &Uuid) -> Result<Option<Self::User>, Self::Error> {
-        let user = nasrudin_pg::query::users::find_by_id(&self.db, *user_id).await?;
-        Ok(user.map(AuthUser::from_model))
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> Result<Self, Self::Rejection> {
+        let session = Session::from_request_parts(parts, state)
+            .await
+            .map_err(|_| session_unavailable())?;
+        let pg = state.pg.as_ref().ok_or_else(pg_unavailable)?;
+        let user = resolve_user_from_session(&session, Some(pg)).await;
+        Ok(Self {
+            user,
+            session,
+            backend: AuthBackend { db: pg.clone() },
+        })
     }
 }
 
-// Convenience alias.
-pub type AuthSess = AuthSession<Backend>;
+fn pg_unavailable() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({ "error": "pg_unavailable" })),
+    )
+}
+
+async fn resolve_user_from_session(
+    session: &Session,
+    pg: Option<&DatabaseConnection>,
+) -> Option<AuthUser> {
+    let uid: Uuid = session.get(SESSION_USER_KEY).await.ok().flatten()?;
+    let pg = pg?;
+    nasrudin_pg::query::users::find_by_id(pg, uid)
+        .await
+        .ok()
+        .flatten()
+        .map(AuthUser::from_model)
+}
+
+fn session_unavailable() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({ "error": "session_unavailable" })),
+    )
+}
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -163,8 +209,8 @@ pub struct FirebaseSessionInput {
 ///
 /// Verifies a Firebase ID token (RS256 JWT against Google's JWKs),
 /// find-or-creates the matching `users` row keyed by `firebase_uid`, and
-/// issues an axum-login session cookie. The Firebase ID token is consumed
-/// once and not stored.
+/// writes `user_id` into the cookie session. The Firebase ID token is
+/// consumed once and not stored.
 ///
 /// Strict-verification policy: rejects `email_verified == false` for the
 /// `password` provider only. Google-provider sign-ins pass through (Google
@@ -239,12 +285,11 @@ pub async fn firebase_session(
     }
 
     // 3. Find or create user.
-    let db = auth_session.backend.db.clone();
-    let user_model = match nasrudin_pg::query::users::find_by_firebase_uid(&db, &claims.uid).await
-    {
+    let db = &auth_session.backend.db;
+    let user_model = match nasrudin_pg::query::users::find_by_firebase_uid(db, &claims.uid).await {
         Ok(Some(m)) => m,
         Ok(None) => match nasrudin_pg::query::users::create_firebase_user(
-            &db,
+            db,
             &claims.uid,
             &claims.email,
             claims.name.as_deref(),
@@ -274,8 +319,8 @@ pub async fn firebase_session(
     let auth_user = AuthUser::from_model(user_model);
 
     // 4. Issue session cookie.
-    if let Err(e) = auth_session.login(&auth_user).await {
-        tracing::error!(error = %e, "axum-login session create failed");
+    if let Err(e) = auth_session.install(auth_user.clone()).await {
+        tracing::error!(error = %e, "session install failed");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "session_create_failed" })),
@@ -290,11 +335,6 @@ pub async fn firebase_session(
 // AuthOrApiKey: cookie session OR `Authorization: Bearer nsk_live_…`
 // ---------------------------------------------------------------------------
 
-use axum::{
-    extract::FromRequestParts,
-    http::{header, request::Parts},
-};
-
 /// Extractor that succeeds for both authenticated cookie sessions
 /// and valid `Authorization: Bearer nsk_live_<secret>` tokens.
 ///
@@ -304,13 +344,13 @@ pub struct AuthOrApiKey {
     pub user: AuthUser,
 }
 
-impl<S> FromRequestParts<S> for AuthOrApiKey
-where
-    S: Send + Sync,
-{
+impl FromRequestParts<Arc<AppState>> for AuthOrApiKey {
     type Rejection = (StatusCode, axum::Json<serde_json::Value>);
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> Result<Self, Self::Rejection> {
         // 0. Impersonation: if the request carries an active impersonation
         //    token, the `impersonation_layer` middleware has already injected
         //    the target's `AuthUser` into request extensions. Use it.
@@ -321,8 +361,8 @@ where
         }
 
         // 1. Try cookie session.
-        if let Ok(session) = AuthSession::<Backend>::from_request_parts(parts, state).await
-            && let Some(user) = session.user
+        if let Ok(sess) = AuthSess::from_request_parts(parts, state).await
+            && let Some(user) = sess.user
         {
             return Ok(Self { user });
         }
@@ -340,13 +380,7 @@ where
             return Err(unauth_response());
         }
 
-        // The cookie-session attempt above already loaded the AuthSession,
-        // which carries a clone of the DatabaseConnection in `backend.db`.
-        // Re-extract just to grab `db` for the lookup.
-        let session = AuthSession::<Backend>::from_request_parts(parts, state)
-            .await
-            .map_err(|_| unauth_response())?;
-        let db: &DatabaseConnection = &session.backend.db;
+        let db = state.pg.as_ref().ok_or_else(unauth_response)?;
 
         let prefix: String = bearer.chars().take(12).collect();
         let row = nasrudin_pg::query::api_keys::find_by_prefix(db, &prefix)
@@ -421,13 +455,13 @@ pub struct WorkerCredential {
 
 pub struct WorkerAuth(pub WorkerCredential);
 
-impl<S> FromRequestParts<S> for WorkerAuth
-where
-    S: Send + Sync,
-{
+impl FromRequestParts<Arc<AppState>> for WorkerAuth {
     type Rejection = (StatusCode, axum::Json<serde_json::Value>);
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> Result<Self, Self::Rejection> {
         let bearer: String = parts
             .headers
             .get(header::AUTHORIZATION)
@@ -441,10 +475,7 @@ where
             return Err(forbidden_non_worker());
         }
 
-        let session = AuthSession::<Backend>::from_request_parts(parts, state)
-            .await
-            .map_err(|_| unauth_response())?;
-        let db: &DatabaseConnection = &session.backend.db;
+        let db = state.pg.as_ref().ok_or_else(unauth_response)?;
 
         let prefix: String = bearer.chars().take(14).collect();
         let row = nasrudin_pg::query::api_keys::find_by_prefix(db, &prefix)

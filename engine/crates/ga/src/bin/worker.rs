@@ -44,6 +44,9 @@ use nasrudin_derive::axiom_store::AxiomStore;
 use nasrudin_derive::{Chain, RuleStep};
 use nasrudin_ga::chain_engine::{DiscoveryConfig, VerifiedDiscovery, run_discovery};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 const DEFAULT_API_URL: &str = "http://localhost:3001";
 const DEFAULT_WORKER_ID: &str = "in-proc-worker-1";
@@ -585,6 +588,7 @@ async fn main() {
     let mut total_lake_passed = 0usize;
     let mut total_persistent_attempts = 0usize;
     let mut total_dim_rejected = 0usize;
+    let mut total_pre_lake_rejected = 0usize;
     let mut total_candidates = 0usize;
     let mut total_unique = 0usize;
     let mut current_rejected = rejected_canonicals.clone();
@@ -666,6 +670,92 @@ async fn main() {
     };
     let paid_slice_store: std::sync::Arc<AxiomStore> =
         std::sync::Arc::new(store.clone());
+
+    // ── Background heartbeat to /api/workers/heartbeat ───────────────
+    //
+    // Without this, the public `/api/workers` endpoint reports the
+    // worker as `Inactive` regardless of how long the GA has been
+    // running — only the paid-researcher slice path heartbeats today,
+    // and that targets `/api/jobs/heartbeat` (different table).
+    //
+    // Background `tokio::spawn` is the right shape here: a single GA
+    // chunk on a 1 vCPU box can take 10+ minutes when a Lake build is
+    // in flight. Inline heartbeats at chunk boundaries would leave the
+    // worker `Inactive` for the full chunk. The background task ticks
+    // every 30 s, reading lock-free atomic counters that the chunk
+    // loop bumps as it goes — so the API sees fresh `last_heartbeat_at`
+    // independent of chunk pacing.
+    //
+    // Counters are cumulative (matching the API field semantics:
+    // `current_generation` and `theorems_produced_total`); the chunk
+    // loop `fetch_add`s them right after each completed chunk.
+    let hb_gen = Arc::new(AtomicU64::new(0));
+    let hb_thms = Arc::new(AtomicU64::new(0));
+    let started_at = Instant::now();
+    if let Some(cfg) = api_cfg.as_ref() {
+        let api_url_for_hb = cfg.api_url.clone();
+        let worker_id_for_hb = cfg.worker_id.clone();
+        let worker_key_for_hb = cfg.worker_key.clone();
+        let hb_gen_task = Arc::clone(&hb_gen);
+        let hb_thms_task = Arc::clone(&hb_thms);
+        // Build the WorkerHttp once for the heartbeat loop. UDS-backed
+        // clients are cheap to keep around (Arc internally) and
+        // re-using one avoids reconnecting on every tick.
+        match nasrudin_ga::worker_http::WorkerHttp::from_env(&api_url_for_hb) {
+            Ok(http) => {
+                tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(Duration::from_secs(30));
+                    // Skip the first immediate tick — the first
+                    // heartbeat lands ~30 s after boot, which gives
+                    // upstream init (UDS bind, PG handshake) a beat
+                    // to settle before we POST.
+                    tick.tick().await;
+                    let auth = format!("Bearer {worker_key_for_hb}");
+                    let git_sha = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
+                    loop {
+                        tick.tick().await;
+                        let body = serde_json::json!({
+                            "worker_id": worker_id_for_hb,
+                            "current_generation":
+                                hb_gen_task.load(Ordering::Relaxed) as i64,
+                            "theorems_produced_total":
+                                hb_thms_task.load(Ordering::Relaxed) as i64,
+                            "uptime_seconds": started_at.elapsed().as_secs() as i64,
+                            "engine_git_sha": git_sha,
+                        });
+                        match http.post_json::<_, serde_json::Value>(
+                            "/api/workers/heartbeat",
+                            &body,
+                            &[("authorization", auth.as_str())],
+                        ).await {
+                            Ok((status, _)) if (200..300).contains(&status) => {
+                                tracing::debug!(status, "heartbeat ok");
+                            }
+                            Ok((status, body)) => {
+                                tracing::warn!(
+                                    status,
+                                    body = %body,
+                                    "heartbeat non-2xx"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "heartbeat post failed");
+                            }
+                        }
+                    }
+                });
+                println!(
+                    "▶ Heartbeat task running: POST /api/workers/heartbeat every 30 s"
+                );
+                println!();
+            }
+            Err(e) => {
+                eprintln!(
+                    "  ! heartbeat client build failed: {e}; worker will appear Inactive on /api/workers"
+                );
+            }
+        }
+    }
 
     for chunk_i in 0..chunks {
         // ── Paid Researcher claim (highest priority) ─────────────────────
@@ -1343,6 +1433,7 @@ async fn main() {
         total_lake_passed += report.lake_passed;
         total_persistent_attempts += report.persistent_attempts;
         total_dim_rejected += report.dim_rejected;
+        total_pre_lake_rejected += report.pre_lake_rejected;
         if !report.verified.is_empty() {
             println!(
                 "▶ chunk {}/{}: {} verified, {} lake attempts",
@@ -1378,6 +1469,13 @@ async fn main() {
                 }
             }
         }
+        // Heartbeat counters: cumulative gens advanced + theorems produced
+        // this run. The background task reads these every 30 s; bumping
+        // here ensures /api/workers reflects real progress at chunk
+        // boundaries (between chunks, the counters stay flat — that's
+        // fine, the heartbeat itself still ticks via uptime_seconds).
+        hb_gen.fetch_add(gens_per_chunk as u64, Ordering::Relaxed);
+        hb_thms.fetch_add(report.verified.len() as u64, Ordering::Relaxed);
         combined_verified.extend(report.verified);
     }
 
@@ -1390,6 +1488,7 @@ async fn main() {
         lake_passed: total_lake_passed,
         persistent_attempts: total_persistent_attempts,
         dim_rejected: total_dim_rejected,
+        pre_lake_rejected: total_pre_lake_rejected,
         verified: combined_verified,
         top_fitness_canonical: None,
         final_population: vec![],
@@ -1400,6 +1499,7 @@ async fn main() {
     println!("    Total candidates:    {}", report.total_candidates);
     println!("    Unique executable:   {}", report.unique_executable);
     println!("    Dimension rejected:  {}", report.dim_rejected);
+    println!("    Pre-lake rejected:   {}", report.pre_lake_rejected);
     println!("    Lake attempts:       {}", report.lake_attempts);
     println!("    Lake passed:         {}", report.lake_passed);
     if report.lake_attempts > 0 {
