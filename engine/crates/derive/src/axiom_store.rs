@@ -253,6 +253,71 @@ impl AxiomStore {
         }
     }
 
+    /// Batch lookup. Returns one `Option<Axiom>` per input name in the
+    /// same order; `None` means the name was unknown.
+    ///
+    /// Hot HashMap and LRU cache are consulted per-name first; only
+    /// the residual misses go to the cold tier in **one** `multi_get`
+    /// round-trip. For LLM-supplied axiom subsets (10–100 names per
+    /// conjecture, mostly cold-tier first-touch), this collapses N
+    /// disk seeks into one.
+    pub fn get_many(&self, names: &[&str]) -> Vec<Option<Axiom>> {
+        let mut out: Vec<Option<Axiom>> = vec![None; names.len()];
+        let mut cold_idx: Vec<usize> = Vec::new();
+        let mut cold_keys: Vec<&str> = Vec::new();
+
+        // Pass 1: hot HashMap + LRU cache. Anything found here skips
+        // the cold tier entirely.
+        for (i, name) in names.iter().enumerate() {
+            if let Some(a) = self.hot.get(*name) {
+                out[i] = Some(a.clone());
+                continue;
+            }
+            let cached = self
+                .cache
+                .lock()
+                .ok()
+                .and_then(|mut g| g.get(*name).cloned());
+            if let Some(a) = cached {
+                out[i] = Some(a);
+                continue;
+            }
+            cold_idx.push(i);
+            cold_keys.push(name);
+        }
+
+        // Pass 2: one batched cold-tier round-trip for whatever's left.
+        if let (Some(cold), false) = (self.cold.as_ref(), cold_keys.is_empty()) {
+            match cold.get_many(&cold_keys) {
+                Ok(rows) => {
+                    for (idx, axiom_opt) in cold_idx.iter().zip(rows.into_iter()) {
+                        if let Some(axiom) = axiom_opt {
+                            if let Ok(mut g) = self.cache.lock() {
+                                g.put(names[*idx].to_string(), axiom.clone());
+                            }
+                            out[*idx] = Some(axiom);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "cold-tier get_many failed; falling back to per-name");
+                    // Graceful fallback: try each remaining name individually
+                    // so a single corrupt entry doesn't poison the whole batch.
+                    for (idx, name) in cold_idx.iter().zip(cold_keys.iter()) {
+                        if let Ok(Some(axiom)) = cold.get(name) {
+                            if let Ok(mut g) = self.cache.lock() {
+                                g.put((*name).to_string(), axiom.clone());
+                            }
+                            out[*idx] = Some(axiom);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+
     /// Get all axioms in a given domain (hot ∪ cold). Returns owned
     /// `Vec<Axiom>` because the cold tier yields owned values.
     pub fn by_domain(&self, domain: &Domain) -> Vec<Axiom> {

@@ -55,6 +55,20 @@ pub trait CorpusBackend: Send + Sync {
     /// `CF_CORPUS_AXIOM` makes this RAM-speed for misses (~100 ns).
     fn get(&self, name: &str) -> Result<Option<Axiom>>;
 
+    /// Batch lookup. Returns one entry per input name, in the same
+    /// order, with `None` for misses. Implemented via `multi_get_cf`
+    /// so a k-key fetch is one round-trip instead of k. Hot path for
+    /// per-conjecture LLM-supplied axiom-set filtering, where the LLM
+    /// can name 10–100 axioms whose first reference is a cold-tier
+    /// disk seek.
+    ///
+    /// Default impl falls through to `get` per-name so backends that
+    /// don't benefit from batching (e.g. the in-memory test mock) need
+    /// no override.
+    fn get_many(&self, names: &[&str]) -> Result<Vec<Option<Axiom>>> {
+        names.iter().map(|n| self.get(n)).collect()
+    }
+
     /// Iterate every cold-tier axiom in `CF_CORPUS_AXIOM` key order.
     /// The iterator is lazy — it pulls one axiom at a time so callers
     /// (e.g. `no_cheat_audit::audit`) can stream without loading
@@ -242,6 +256,33 @@ impl CorpusBackend for CorpusDb {
             }
             None => Ok(None),
         }
+    }
+
+    fn get_many(&self, names: &[&str]) -> Result<Vec<Option<Axiom>>> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cf = self
+            .db
+            .cf_handle(CF_CORPUS_AXIOM)
+            .context("Missing corpus_axiom CF")?;
+        // multi_get_cf takes (cf, key) pairs and returns one Result<Option<DBVector>>
+        // per input. One PG-bag-style round-trip to RocksDB regardless of k.
+        let pairs: Vec<(_, &[u8])> =
+            names.iter().map(|n| (&cf, n.as_bytes())).collect();
+        let results = self.db.multi_get_cf(pairs);
+        let mut out = Vec::with_capacity(results.len());
+        for r in results {
+            match r.context("multi_get corpus axiom")? {
+                Some(bytes) => {
+                    let axiom: Axiom = bincode::deserialize(&bytes)
+                        .context("deserialize corpus axiom")?;
+                    out.push(Some(axiom));
+                }
+                None => out.push(None),
+            }
+        }
+        Ok(out)
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = Result<(String, Axiom)>> + '_> {

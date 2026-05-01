@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 /// Three-state verification badge mirroring the server's
 /// `(status, verification_tactic)` pair.
 ///
@@ -80,7 +82,7 @@ function styleOf(s: Props): BadgeStyle {
   }
 }
 
-export function VerificationBadge(props: Props) {
+export const VerificationBadge = memo(function VerificationBadge(props: Props) {
   const s = styleOf(props);
   const compact = props.compact ?? false;
   return (
@@ -114,4 +116,4 @@ export function VerificationBadge(props: Props) {
       {s.label}
     </span>
   );
-}
+});

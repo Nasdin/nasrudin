@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router';
+import { memo } from 'react';
 import { Math as MathExpr } from '~/lib/katex';
 import type { SearchMatchItem, SearchTier } from '~/lib/types';
 import { MatchBadge } from './MatchBadge';
@@ -18,10 +19,10 @@ const TIER_HEADLINE: Record<SearchTier, string> = {
 
 export function SearchResults({ tier, matches, tookMs }: Props) {
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>{TIER_HEADLINE[tier]}</h2>
-        <span style={{ fontSize: 12, color: 'var(--ink-500)' }}>
+    <div style={containerStyle}>
+      <div style={headerStyle}>
+        <h2 style={headlineStyle}>{TIER_HEADLINE[tier]}</h2>
+        <span style={metaStyle}>
           {matches.length} result{matches.length === 1 ? '' : 's'} · {tookMs} ms
         </span>
       </div>
@@ -32,48 +33,42 @@ export function SearchResults({ tier, matches, tookMs }: Props) {
   );
 }
 
-function Result({ m }: { m: SearchMatchItem }) {
+const Result = memo(function Result({ m }: { m: SearchMatchItem }) {
   const stmt = m.statement_latex ?? m.canonical_statement;
   return (
     <div className="result-card" style={cardStyle}>
-      <div style={{ display: 'grid', gap: 8 }}>
+      <div style={resultGridStyle}>
         <Link
           to="/theorem/$id"
           params={{ id: m.id }}
-          style={{ textDecoration: 'none', color: 'inherit' }}
+          style={resultLinkStyle}
         >
           <div className="result-stmt">
             <MathExpr source={stmt} />
           </div>
         </Link>
-        <div className="result-meta" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="result-meta" style={resultMetaStyle}>
           <MatchBadge kind={m.match} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-            thm:{m.id.slice(0, 8)}
-          </span>
+          <span style={monoSmallStyle}>thm:{m.id.slice(0, 8)}</span>
           <span className="dot">·</span>
-          <span style={{ letterSpacing: '0.04em', textTransform: 'uppercase', fontWeight: 600, fontSize: 12 }}>
-            {m.domain}
-          </span>
+          <span style={domainSmallStyle}>{m.domain}</span>
           <span className="dot">·</span>
-          <span style={{ fontSize: 12 }}>depth {m.depth ?? 0}</span>
+          <span style={depthStyle}>depth {m.depth ?? 0}</span>
         </div>
         {m.axioms_used.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <div style={chipsRowStyle}>
             {m.axioms_used.slice(0, 6).map((a) => (
               <span key={a} style={chipStyle}>
                 {a}
               </span>
             ))}
             {m.axioms_used.length > 6 && (
-              <span style={{ fontSize: 11, color: 'var(--ink-500)' }}>
-                +{m.axioms_used.length - 6} more
-              </span>
+              <span style={chipMoreStyle}>+{m.axioms_used.length - 6} more</span>
             )}
           </div>
         )}
       </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={actionsStyle}>
         <a
           href={m.lean_url}
           target="_blank"
@@ -89,7 +84,35 @@ function Result({ m }: { m: SearchMatchItem }) {
       </div>
     </div>
   );
-}
+});
+
+const containerStyle: React.CSSProperties = { display: 'grid', gap: 14 };
+const headerStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'baseline',
+};
+const headlineStyle: React.CSSProperties = { margin: 0, fontSize: 18 };
+const metaStyle: React.CSSProperties = { fontSize: 12, color: 'var(--ink-500)' };
+const resultGridStyle: React.CSSProperties = { display: 'grid', gap: 8 };
+const resultLinkStyle: React.CSSProperties = { textDecoration: 'none', color: 'inherit' };
+const resultMetaStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 12,
+  alignItems: 'center',
+  flexWrap: 'wrap',
+};
+const monoSmallStyle: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 12 };
+const domainSmallStyle: React.CSSProperties = {
+  letterSpacing: '0.04em',
+  textTransform: 'uppercase',
+  fontWeight: 600,
+  fontSize: 12,
+};
+const depthStyle: React.CSSProperties = { fontSize: 12 };
+const chipsRowStyle: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap' };
+const chipMoreStyle: React.CSSProperties = { fontSize: 11, color: 'var(--ink-500)' };
+const actionsStyle: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center' };
 
 const cardStyle: React.CSSProperties = {
   display: 'grid',

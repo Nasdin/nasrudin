@@ -18,6 +18,15 @@ interface Props<R> {
   emptyMessage?: string;
 }
 
+const tableStyle: React.CSSProperties = { width: '100%', borderCollapse: 'collapse' };
+const thStyle: React.CSSProperties = {
+  textAlign: 'left',
+  borderBottom: '1px solid var(--paper-300)',
+  padding: '8px',
+};
+const trStyle: React.CSSProperties = { borderBottom: '1px solid var(--paper-200)' };
+const tdStyle: React.CSSProperties = { padding: '8px', verticalAlign: 'top' };
+
 export default function DataTable<R>({
   columns,
   rows,
@@ -27,14 +36,11 @@ export default function DataTable<R>({
     return <p className="admin-empty">{emptyMessage}</p>;
   }
   return (
-    <table className="admin-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <table className="admin-table" style={tableStyle}>
       <thead>
         <tr>
           {columns.map((c) => (
-            <th
-              key={c.key}
-              style={{ textAlign: 'left', borderBottom: '1px solid var(--paper-300)', padding: '8px' }}
-            >
+            <th key={c.key} style={thStyle}>
               {c.header}
             </th>
           ))}
@@ -42,9 +48,9 @@ export default function DataTable<R>({
       </thead>
       <tbody>
         {rows.map((r, i) => (
-          <tr key={i} style={{ borderBottom: '1px solid var(--paper-200)' }}>
+          <tr key={i} style={trStyle}>
             {columns.map((c) => (
-              <td key={c.key} style={{ padding: '8px', verticalAlign: 'top' }}>
+              <td key={c.key} style={tdStyle}>
                 {c.render ? c.render(r) : String((r as Record<string, unknown>)[c.key] ?? '')}
               </td>
             ))}

@@ -1525,14 +1525,20 @@ async fn run_seed_driven_chunk(
     };
 
     // 2. Filter the AxiomStore to the LLM-supplied subset.
+    //
+    // The LLM names 10–100 axioms per conjecture; first-touch on each is a
+    // cold-tier RocksDB seek. `get_many` collapses them into one
+    // `multi_get_cf` round-trip — minus the LRU/hot hits — so a 100-axiom
+    // suggestion costs O(1) disk seek instead of O(100).
     let mut filtered = AxiomStore::new();
     filtered.load_classical_mechanics_postulates();
+    let names: Vec<&str> = suggestion.axiom_set.iter().map(|s| s.as_str()).collect();
+    let resolved = full_store.get_many(&names);
     let mut missing = Vec::<String>::new();
-    for name in &suggestion.axiom_set {
-        if let Some(a) = full_store.get(name) {
-            filtered.register(a.clone());
-        } else {
-            missing.push(name.clone());
+    for (name, axiom_opt) in suggestion.axiom_set.iter().zip(resolved.into_iter()) {
+        match axiom_opt {
+            Some(a) => filtered.register(a),
+            None => missing.push(name.clone()),
         }
     }
     if !missing.is_empty() {

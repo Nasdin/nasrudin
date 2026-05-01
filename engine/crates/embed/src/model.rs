@@ -1,12 +1,21 @@
 //! Text → 384-dim wrapper around `fastembed`.
 
+use std::sync::Mutex;
+
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 
 /// Wraps a fastembed `TextEmbedding`. One instance per process is
 /// usually sufficient — model load is ~150 MB resident, ~1 second cold.
+///
+/// fastembed v5 changed `embed()` to require `&mut self` (the inner ONNX
+/// session caches batch buffers). We hold the model behind a `Mutex` so the
+/// public API stays `&self` and the type can still be wrapped in `Arc` and
+/// shared across handlers. Embed calls are CPU-bound and serialise on the
+/// mutex; callers that care about latency should run them on a
+/// `tokio::task::spawn_blocking` thread.
 pub struct Embedder {
-    inner: TextEmbedding,
+    inner: Mutex<TextEmbedding>,
 }
 
 impl Embedder {
@@ -16,13 +25,18 @@ impl Embedder {
             InitOptions::new(EmbeddingModel::BGESmallENV15).with_show_download_progress(false),
         )
         .context("init fastembed BGE small")?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner: Mutex::new(inner),
+        })
     }
 
     /// Embed a single text. Returns a 384-dim vector.
     pub fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
-        let mut v = self
+        let mut g = self
             .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("embedder mutex poisoned"))?;
+        let mut v = g
             .embed(vec![text.to_string()], None)
             .context("fastembed embed_one")?;
         v.pop().context("fastembed returned empty embed batch")
@@ -30,7 +44,11 @@ impl Embedder {
 
     /// Embed a batch. Faster than calling `embed_one` per element.
     pub fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        self.inner.embed(texts, None).context("fastembed embed_batch")
+        let mut g = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("embedder mutex poisoned"))?;
+        g.embed(texts, None).context("fastembed embed_batch")
     }
 }
 
