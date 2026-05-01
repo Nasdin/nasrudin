@@ -749,7 +749,9 @@ export function useCreateResearchJob() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: researchJobsQueryKey });
-      qc.invalidateQueries({ queryKey: meProfileQueryKey });
+      // research_credits lives on /api/auth/me; meProfileQueryKey
+      // covers /api/me/profile which doesn't carry the credit balance.
+      qc.invalidateQueries({ queryKey: meQueryKey });
     },
   });
 }
@@ -758,13 +760,14 @@ export function useCancelResearchJob() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      apiFetch<{ cancelled: true; refunded: boolean }>(`/api/research/jobs/${id}/cancel`, {
-        method: 'POST',
-      }),
+      apiFetch<{ cancelled: true; refunded_credits: number }>(
+        `/api/research/jobs/${id}/cancel`,
+        { method: 'POST' },
+      ),
     onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: researchJobsQueryKey });
       qc.invalidateQueries({ queryKey: ['research-job', id] });
-      qc.invalidateQueries({ queryKey: meProfileQueryKey });
+      qc.invalidateQueries({ queryKey: meQueryKey });
     },
   });
 }

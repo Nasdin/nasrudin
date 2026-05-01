@@ -115,6 +115,8 @@ export interface AuthUser {
   display_name: string | null;
   created_at: string;
   firebase_uid: string;
+  /** Lose-it-or-use-it Researcher-tier credits remaining this period. */
+  research_credits: number;
 }
 
 export type ApiKeyKind = 'live' | 'worker';
@@ -410,11 +412,17 @@ export interface ResearchJob {
 export interface CreateResearchJobRequest {
   hunch: string;
   domain_hint?: string | null;
+  /** Number of credits to spend on cluster compute (default 1, each = 96 slot-h). */
+  credits_budget?: number;
+  /** When true, costs +1 credit and raises queue priority by 1. */
+  rush?: boolean;
 }
 
 export interface CreateResearchJobResponse {
   job_id: string;
   state: string;
+  credits_spent: number;
+  credits_remaining: number;
 }
 
 /**
@@ -435,4 +443,4 @@ export type ResearchJobEvent =
   | { kind: 'theorem_verified'; theorem_id_hex: string; statement_latex: string }
   | { kind: 'proved'; lean_url: string }
   | { kind: 'budget_exhausted'; best_partial_summary: string; refund_credits: number }
-  | { kind: 'cancelled' };
+  | { kind: 'cancelled'; refunded_credits: number };
