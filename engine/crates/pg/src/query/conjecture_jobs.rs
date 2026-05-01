@@ -642,6 +642,25 @@ pub async fn cancel_paid_with_refund(
     })
 }
 
+/// Sum of `allocated_slots` across every paid job currently in
+/// `claimed` or `running` state. Used by the API on startup to
+/// reseed `CapacityTracker.paid_slots`, which is otherwise purely
+/// in-memory and resets to 0 across restarts.
+///
+/// Returns 0 when no in-flight rows exist (COALESCE).
+pub async fn sum_in_flight_paid_slots(db: &DatabaseConnection) -> Result<i64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"SELECT COALESCE(SUM(allocated_slots), 0)::bigint
+             FROM conjecture_jobs
+            WHERE state IN ('claimed', 'running')"#,
+        [],
+    );
+    let row = db.query_one_raw(stmt).await?;
+    let Some(row) = row else { return Ok(0) };
+    Ok(row.try_get_by_index::<i64>(0)?)
+}
+
 /// Mark a paid job as `proved` on a verified-theorem hit. Appends the
 /// theorem's id (8 bytes, hex-encoded by the caller) to the existing
 /// `verified_theorem_ids` array, stamps `completed_at`, clears claim

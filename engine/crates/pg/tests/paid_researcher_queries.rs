@@ -744,6 +744,48 @@ async fn cancel_with_refund_wrong_owner_returns_none() {
 }
 
 #[tokio::test]
+async fn sum_in_flight_paid_slots_counts_claimed_and_running_only() {
+    // After an API restart, the in-memory CapacityTracker.paid_slots
+    // counter resets to 0 even if claimed/running jobs are still
+    // committed in the DB. The startup reseed reads this sum; this
+    // test pins down what "in-flight" means for that reseed.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "in-flight-sum").await;
+    // 8 slots queued, 4 slots claimed, 12 slots running, 3 slots cancelled,
+    // 5 slots proved. Expected sum = 4 + 12 = 16.
+    db.execute_raw(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        r#"INSERT INTO conjecture_jobs (
+            id, owner_id, state, hunch, provider, model, budget,
+            candidates_attempted, candidates_verified, created_at,
+            lake_slot_hours_quota, lake_slot_hours_consumed,
+            slice_priority, tier, allocated_slots
+           ) VALUES
+            (gen_random_uuid(), $1, 'queued',    'h', 'i', 'g', '{}'::jsonb, 0, 0, NOW(), 96, 0.0, 5, 'researcher', 8),
+            (gen_random_uuid(), $1, 'claimed',   'h', 'i', 'g', '{}'::jsonb, 0, 0, NOW(), 96, 0.0, 5, 'researcher', 4),
+            (gen_random_uuid(), $1, 'running',   'h', 'i', 'g', '{}'::jsonb, 0, 0, NOW(), 96, 0.0, 5, 'researcher', 12),
+            (gen_random_uuid(), $1, 'cancelled', 'h', 'i', 'g', '{}'::jsonb, 0, 0, NOW(), 96, 0.0, 5, 'researcher', 3),
+            (gen_random_uuid(), $1, 'proved',    'h', 'i', 'g', '{}'::jsonb, 0, 0, NOW(), 96, 0.0, 5, 'researcher', 5)
+        "#,
+        [owner.into()],
+    )).await.unwrap();
+
+    let sum = q::sum_in_flight_paid_slots(&db).await.unwrap();
+    assert_eq!(sum, 16, "claimed (4) + running (12) = 16");
+}
+
+#[tokio::test]
+async fn sum_in_flight_paid_slots_empty_table_returns_zero() {
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let sum = q::sum_in_flight_paid_slots(&db).await.unwrap();
+    assert_eq!(sum, 0);
+}
+
+#[tokio::test]
 async fn cancel_with_refund_double_call_refunds_exactly_once() {
     // Idempotency: a second cancel call after the first commits must
     // see the row as terminal and skip the refund. Models a user

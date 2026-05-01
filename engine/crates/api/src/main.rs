@@ -543,6 +543,31 @@ async fn main() -> anyhow::Result<()> {
         trusted_spot_check_rate,
     });
 
+    // Reseed CapacityTracker.paid_slots from the DB. The counter is
+    // purely in-memory and resets to 0 across restarts; without this
+    // reseed, the explorer-floor enforcement under-reports committed
+    // paid capacity until existing leases either heartbeat-renew or
+    // get reaped — which can take minutes and lets paid jobs eat into
+    // the explorer-fleet floor that's supposed to be reserved.
+    if let Some(pg) = state.pg.as_ref() {
+        match nasrudin_pg::query::conjecture_jobs::sum_in_flight_paid_slots(pg).await {
+            Ok(n) if n > 0 => {
+                let n_u32 = u32::try_from(n).unwrap_or(u32::MAX);
+                state.capacity.add_paid_slots(n_u32);
+                tracing::info!(
+                    paid_slots = n_u32,
+                    "Reseeded CapacityTracker.paid_slots from in-flight conjecture_jobs",
+                );
+            }
+            Ok(_) => {
+                tracing::info!("No in-flight paid jobs at startup; CapacityTracker starts at 0");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to reseed paid_slots; starting at 0");
+            }
+        }
+    }
+
     // Trust-cache invalidation listener: subscribed to the same broadcast
     // channel; purges affected entries when admin endpoints commit a
     // trust-altering mutation. Surgical for ApiKey/User; wholesale for All.
