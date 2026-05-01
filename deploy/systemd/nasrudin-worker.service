@@ -26,6 +26,19 @@ Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
 # RUST_LOG=info gives us a sensible default journal stream; tune via .env if
 # the worker gets too chatty.
 Environment=RUST_LOG=info
+# Wait for the API to actually bind /run/nasrudin/api-local.sock before
+# the worker starts. `After=nasrudin-api.service` only guarantees the
+# api UNIT has started, not that the api PROCESS has finished its boot
+# sequence and bound the socket. Without this gate the worker's at-boot
+# `seed-sync` and `corpus_sync::hydrate_from_server` calls hit
+# connection-refused, log a warning, and the worker falls through to
+# "local axioms only" mode for the rest of the run.
+#
+# Poll up to 90 s; if the socket never appears, exit 1 → systemd
+# `Restart=on-failure` retries every 30 s. Total tolerance: ~ unbounded
+# but with backoff. In practice the API binds the socket in <2 s after
+# its own start, so this resolves nearly instantly on every reboot.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 90); do test -S /run/nasrudin/api-local.sock && exit 0; sleep 1; done; echo "[worker] api UDS /run/nasrudin/api-local.sock did not appear within 90 s — aborting" >&2; exit 1'
 ExecStart=/opt/nasrudin/bin/worker --verify /opt/nasrudin/prover --domain sr
 Restart=on-failure
 RestartSec=30
