@@ -567,3 +567,203 @@ async fn heartbeat_paid_no_ops_after_cancel() {
         "counters must not be bumped by stale heartbeat"
     );
 }
+
+/// Seed a `conjecture_jobs` row with explicit state, quota, consumed,
+/// verified, and rush flag. Used by cancel_paid_with_refund tests to
+/// exercise the refund matrix without going through the full lifecycle.
+async fn seed_paid_job_with(
+    db: &DatabaseConnection,
+    owner_id: Uuid,
+    state: &str,
+    quota: i32,
+    consumed: f32,
+    verified: i32,
+    rush: bool,
+) -> Uuid {
+    let id = Uuid::new_v4();
+    let priority: i32 = if rush { 6 } else { 5 };
+    let stmt = Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        r#"INSERT INTO conjecture_jobs (
+            id, owner_id, state, hunch, provider, model, budget,
+            candidates_attempted, candidates_verified, created_at,
+            lake_slot_hours_quota, lake_slot_hours_consumed,
+            slice_priority, tier, allocated_slots
+           ) VALUES (
+            $1, $2, $3, 'hunch', 'internal', 'ga',
+            '{"wall_seconds":86400,"max_candidates":10000000}'::jsonb,
+            0, $4, NOW(), $5, $6, $7, 'researcher', 4
+           )"#,
+        [
+            id.into(),
+            owner_id.into(),
+            state.into(),
+            verified.into(),
+            quota.into(),
+            (consumed as f64).into(),
+            priority.into(),
+        ],
+    );
+    db.execute_raw(stmt).await.unwrap();
+    id
+}
+
+#[tokio::test]
+async fn cancel_with_refund_running_job_marks_was_in_flight_true() {
+    // 5-credit job (480 quota), 192 consumed (40%), no verified.
+    // Refund = floor(5 * (1 - 192/480)) = floor(5 * 0.6) = 3.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "cancel-running").await;
+    let job = seed_paid_job_with(&db, owner, "running", 480, 192.0, 0, false).await;
+
+    let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert!(r.row_was_cancelled);
+    assert!(r.was_in_flight, "running state must report was_in_flight");
+    assert_eq!(r.refunded_credits, 3);
+    assert_eq!(r.allocated_slots, 4);
+
+    let user = nasrudin_pg::entity::users::Entity::find_by_id(owner)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(user.research_credits, 3);
+
+    let row = q::get_by_id(&db, job).await.unwrap().unwrap();
+    assert_eq!(row.state, "cancelled");
+    assert!(row.completed_at.is_some());
+}
+
+#[tokio::test]
+async fn cancel_with_refund_queued_job_marks_was_in_flight_false() {
+    // Critical: a queued job never reserved cluster capacity, so the
+    // caller must NOT release_paid_slots(...). Prove was_in_flight is
+    // false in this case so the handler can branch correctly.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "cancel-queued").await;
+    let job = seed_paid_job_with(&db, owner, "queued", 480, 0.0, 0, false).await;
+
+    let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert!(r.row_was_cancelled);
+    assert!(!r.was_in_flight, "queued state must report was_in_flight=false");
+    assert_eq!(r.refunded_credits, 5);
+}
+
+#[tokio::test]
+async fn cancel_with_refund_claimed_job_marks_was_in_flight_true() {
+    // claimed (post-claim, pre-first-heartbeat) is still a state that
+    // reserved cluster capacity. Treated like running.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "cancel-claimed").await;
+    let job = seed_paid_job_with(&db, owner, "claimed", 96, 0.0, 0, false).await;
+
+    let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert!(r.was_in_flight);
+}
+
+#[tokio::test]
+async fn cancel_with_refund_with_rush_includes_rush_credit() {
+    // 3-credit budget + 1 rush = 4 spent. quota=288, consumed=0.
+    // Refund = 4 * 1.0 = 4.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "cancel-rush").await;
+    let job = seed_paid_job_with(&db, owner, "queued", 288, 0.0, 0, true).await;
+
+    let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert_eq!(r.refunded_credits, 4);
+}
+
+#[tokio::test]
+async fn cancel_with_refund_verified_gives_zero() {
+    // Even with 0 consumed, any verified theorem disables refund.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "cancel-verified").await;
+    let job = seed_paid_job_with(&db, owner, "running", 480, 100.0, 1, false).await;
+
+    let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert_eq!(r.refunded_credits, 0);
+}
+
+#[tokio::test]
+async fn cancel_with_refund_consumed_overshoot_clamps_to_zero() {
+    // Lying worker pushed consumed past quota. (1 - consumed/quota) < 0
+    // must clamp; refund must not be negative.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "cancel-overshoot").await;
+    let job = seed_paid_job_with(&db, owner, "running", 96, 200.0, 0, false).await;
+
+    let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert_eq!(r.refunded_credits, 0);
+}
+
+#[tokio::test]
+async fn cancel_with_refund_already_terminal_returns_none() {
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "cancel-terminal").await;
+    let job = seed_paid_job_with(&db, owner, "proved", 96, 50.0, 1, false).await;
+
+    let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert!(!r.row_was_cancelled);
+    assert!(!r.was_in_flight);
+    let user = nasrudin_pg::entity::users::Entity::find_by_id(owner)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(user.research_credits, 0, "no refund applied to already-terminal job");
+}
+
+#[tokio::test]
+async fn cancel_with_refund_wrong_owner_returns_none() {
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "cancel-owner1").await;
+    let job = seed_paid_job_with(&db, owner, "queued", 96, 0.0, 0, false).await;
+    let other = seed_owner(&db, "cancel-owner2").await;
+
+    let r = q::cancel_paid_with_refund(&db, job, other).await.unwrap();
+    assert!(!r.row_was_cancelled);
+    assert!(!r.was_in_flight);
+}
+
+#[tokio::test]
+async fn cancel_with_refund_double_call_refunds_exactly_once() {
+    // Idempotency: a second cancel call after the first commits must
+    // see the row as terminal and skip the refund. Models a user
+    // double-clicking the cancel button.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "cancel-double").await;
+    let job = seed_paid_job_with(&db, owner, "queued", 480, 0.0, 0, false).await;
+
+    let r1 = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    let r2 = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+
+    assert!(r1.row_was_cancelled);
+    assert_eq!(r1.refunded_credits, 5);
+    assert!(!r2.row_was_cancelled, "second call must be a no-op");
+    assert_eq!(r2.refunded_credits, 0);
+
+    let user = nasrudin_pg::entity::users::Entity::find_by_id(owner)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(user.research_credits, 5, "credits applied exactly once");
+}

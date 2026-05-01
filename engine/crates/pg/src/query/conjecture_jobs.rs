@@ -520,6 +520,128 @@ pub async fn release_paid_claim(
     Ok(r.rows_affected())
 }
 
+/// Result of `cancel_paid_with_refund`.
+#[derive(Debug, Clone)]
+pub struct CancelOutcome {
+    /// True iff the conditional UPDATE actually transitioned the row.
+    /// Idempotent against double-clicks: the second call sees this as
+    /// false and applies no refund.
+    pub row_was_cancelled: bool,
+    /// Credits returned to the user. 0 if `row_was_cancelled` is false
+    /// or if any theorem was verified.
+    pub refunded_credits: i32,
+    /// True iff the row's prior state was `claimed` or `running`. The
+    /// caller uses this to decide whether to release in-memory cluster
+    /// capacity — for a `queued` cancel no slots were ever reserved.
+    pub was_in_flight: bool,
+    /// `allocated_slots` value the row carried at cancel time. Only
+    /// meaningful when `was_in_flight == true`.
+    pub allocated_slots: i32,
+}
+
+/// Atomically cancel a paid Researcher job and refund the user
+/// proportionally to the unused budget. Single transaction:
+///   1. SELECT … FOR UPDATE locks the row and snapshots its prior
+///      state — needed because Postgres's UPDATE … RETURNING shows
+///      post-update values, but we need the pre-cancel state to
+///      decide `was_in_flight` correctly.
+///   2. Bail if the row doesn't exist, the owner mismatches, or the
+///      state is already terminal.
+///   3. UPDATE state→'cancelled', clear claim columns; RETURNING
+///      computes the refund amount inline.
+///   4. If the refund > 0, increment users.research_credits.
+///
+/// `credits_spent` is reconstructed from the row:
+///   credits_spent = (lake_slot_hours_quota / 96)
+///                 + (slice_priority > 5 ? 1 : 0)
+///
+/// Refund formula: `floor(credits_spent × max(0, 1 - consumed/quota))`
+/// when verified == 0, else 0.
+pub async fn cancel_paid_with_refund(
+    db: &DatabaseConnection,
+    job_id: Uuid,
+    owner_id: Uuid,
+) -> Result<CancelOutcome, DbErr> {
+    let txn = db.begin().await?;
+
+    // Step 1: lock + snapshot prior state. FOR UPDATE serialises
+    // concurrent heartbeats and double-cancel attempts behind us.
+    let lock_stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"SELECT state, allocated_slots
+             FROM conjecture_jobs
+            WHERE id = $1 AND owner_id = $2
+            FOR UPDATE"#,
+        [job_id.into(), owner_id.into()],
+    );
+    let lock_row = txn.query_one_raw(lock_stmt).await?;
+    let Some(lock_row) = lock_row else {
+        // Row doesn't exist or owner mismatched.
+        txn.rollback().await?;
+        return Ok(CancelOutcome {
+            row_was_cancelled: false,
+            refunded_credits: 0,
+            was_in_flight: false,
+            allocated_slots: 0,
+        });
+    };
+    let prior_state: String = lock_row.try_get_by_index(0)?;
+    let allocated_slots: i32 = lock_row.try_get_by_index(1)?;
+    if !matches!(prior_state.as_str(), "queued" | "claimed" | "running") {
+        // Already terminal — nothing to do.
+        txn.rollback().await?;
+        return Ok(CancelOutcome {
+            row_was_cancelled: false,
+            refunded_credits: 0,
+            was_in_flight: false,
+            allocated_slots: 0,
+        });
+    }
+    let was_in_flight = matches!(prior_state.as_str(), "claimed" | "running");
+
+    // Step 2: terminal transition + refund-amount calc in one stmt.
+    let cancel_stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"UPDATE conjecture_jobs
+              SET state = 'cancelled',
+                  completed_at = NOW(),
+                  claimed_by = NULL,
+                  claimed_at = NULL,
+                  lease_expires_at = NULL
+            WHERE id = $1
+            RETURNING
+                CASE
+                    WHEN candidates_verified = 0 THEN
+                      FLOOR(
+                        ((lake_slot_hours_quota / 96)
+                         + CASE WHEN slice_priority > 5 THEN 1 ELSE 0 END)::float
+                        * GREATEST(0.0, 1.0 - (lake_slot_hours_consumed / lake_slot_hours_quota::float))
+                      )::int
+                    ELSE 0
+                END AS refund_credits"#,
+        [job_id.into()],
+    );
+    let row = txn.query_one_raw(cancel_stmt).await?
+        .ok_or_else(|| DbErr::Custom(
+            "cancel_paid_with_refund: row vanished between FOR UPDATE and UPDATE".into()
+        ))?;
+    let refund: i32 = row.try_get_by_index(0)?;
+
+    // Step 3: apply refund (no-op when refund == 0).
+    if refund > 0 {
+        crate::query::users::refund_research_credits_n(&txn, owner_id, refund).await?;
+    }
+
+    txn.commit().await?;
+
+    Ok(CancelOutcome {
+        row_was_cancelled: true,
+        refunded_credits: refund,
+        was_in_flight,
+        allocated_slots,
+    })
+}
+
 /// Mark a paid job as `proved` on a verified-theorem hit. Appends the
 /// theorem's id (8 bytes, hex-encoded by the caller) to the existing
 /// `verified_theorem_ids` array, stamps `completed_at`, clears claim
