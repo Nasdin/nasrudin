@@ -46,6 +46,10 @@ pub struct AuthUser {
     pub stripe_subscription_id: Option<String>,
     pub current_period_end: Option<chrono::DateTime<chrono::FixedOffset>>,
     pub plan_cycle_start: Option<chrono::DateTime<chrono::FixedOffset>>,
+    /// Researcher-tier credit balance. Surfaced here so the frontend can
+    /// bound the /research effort-slider's max by `research_credits`
+    /// without a separate round-trip.
+    pub research_credits: i32,
     /// Firebase UID — the source-of-truth identity link. Exposed via
     /// /api/auth/me so the frontend can assert "this is the user I think
     /// it is" before issuing API calls.
@@ -64,6 +68,7 @@ impl AuthUser {
             stripe_subscription_id: m.stripe_subscription_id,
             current_period_end: m.current_period_end,
             plan_cycle_start: m.plan_cycle_start,
+            research_credits: m.research_credits,
             firebase_uid: m.firebase_uid,
         }
     }

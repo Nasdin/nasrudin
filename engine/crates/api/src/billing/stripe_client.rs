@@ -1,19 +1,35 @@
-//! Stripe API client built on async-stripe.
+//! Stripe API client built on async-stripe 1.0.
 //!
 //! Wraps `stripe::Client` with a `BillingConfig` carrying our env-var
 //! values (price ids, redirect URLs, webhook secret) so handlers don't
 //! have to thread them through individually.
+//!
+//! async-stripe 1.0 split the SDK into per-product crates. The shape:
+//!   - `stripe`        (async-stripe)        — `Client`, top-level error
+//!   - `stripe_core`   (async-stripe-core)   — `Customer`
+//!   - `stripe_checkout`                     — `CheckoutSession` + create
+//!   - `stripe_billing`                      — `BillingPortalSession`
+//!   - `stripe_shared`                       — `Subscription`, ID types
+//!   - `stripe_types`                        — `Expandable`
+//!
+//! Every Create*/Update*/etc. is a builder; the request is dispatched
+//! via `.send(&client).await?` rather than the old free-function form.
 
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use stripe::{
-    BillingPortalSession, CheckoutSession, CheckoutSessionMode, CheckoutSessionSubmitType, Client,
-    CreateBillingPortalSession, CreateCheckoutSession, CreateCheckoutSessionAutomaticTax,
-    CreateCheckoutSessionLineItems, CreateCheckoutSessionSubscriptionData, CreateCustomer,
-    Customer, CustomerId, Expandable, Subscription,
+use stripe::Client;
+use stripe_billing::billing_portal_session::CreateBillingPortalSession;
+use stripe_checkout::checkout_session::{
+    CreateCheckoutSession, CreateCheckoutSessionAutomaticTax,
+    CreateCheckoutSessionLineItems, CreateCheckoutSessionSubscriptionData,
 };
+use stripe_core::customer::CreateCustomer;
+use stripe_shared::{
+    CheckoutSessionMode, CheckoutSessionSubmitType, Customer, CustomerId, Subscription,
+};
+use stripe_types::Expandable;
 
 #[derive(Clone)]
 pub struct BillingConfig {
@@ -86,12 +102,13 @@ impl BillingClient {
         email: &str,
         user_id: uuid::Uuid,
     ) -> Result<String, StripeError> {
-        let mut params = CreateCustomer::new();
-        params.email = Some(email);
         let mut metadata = HashMap::new();
         metadata.insert("user_id".to_string(), user_id.to_string());
-        params.metadata = Some(metadata);
-        let customer = Customer::create(&self.stripe, params).await?;
+        let customer = CreateCustomer::new()
+            .email(email)
+            .metadata(metadata)
+            .send(&self.stripe)
+            .await?;
         Ok(customer.id.to_string())
     }
 
@@ -104,29 +121,32 @@ impl BillingClient {
         price_id: &str,
         user_id: uuid::Uuid,
     ) -> Result<String, StripeError> {
-        let cust = CustomerId::from_str(customer_id)
+        // Validate the customer id parses, even though we pass the raw
+        // string into the builder — keeps the error surface unchanged.
+        let _cust = CustomerId::from_str(customer_id)
             .map_err(|_| StripeError::BadCustomerId(customer_id.to_string()))?;
-        let mut params = CreateCheckoutSession::new();
-        params.mode = Some(CheckoutSessionMode::Subscription);
-        params.customer = Some(cust);
-        params.success_url = Some(self.cfg.checkout_success_url.as_str());
-        params.cancel_url = Some(self.cfg.checkout_cancel_url.as_str());
-        params.line_items = Some(vec![CreateCheckoutSessionLineItems {
+        let line_items = vec![CreateCheckoutSessionLineItems {
             price: Some(price_id.to_string()),
             quantity: Some(1),
             ..Default::default()
-        }]);
+        }];
         let mut sub_metadata = HashMap::new();
         sub_metadata.insert("user_id".to_string(), user_id.to_string());
-        params.subscription_data = Some(CreateCheckoutSessionSubscriptionData {
+        let subscription_data = CreateCheckoutSessionSubscriptionData {
             metadata: Some(sub_metadata),
             ..Default::default()
-        });
-        params.automatic_tax = Some(CreateCheckoutSessionAutomaticTax {
-            enabled: true,
-            ..Default::default()
-        });
-        let session = CheckoutSession::create(&self.stripe, params).await?;
+        };
+        let automatic_tax = CreateCheckoutSessionAutomaticTax::new(true);
+        let session = CreateCheckoutSession::new()
+            .mode(CheckoutSessionMode::Subscription)
+            .customer(customer_id)
+            .success_url(self.cfg.checkout_success_url.as_str())
+            .cancel_url(self.cfg.checkout_cancel_url.as_str())
+            .line_items(line_items)
+            .subscription_data(subscription_data)
+            .automatic_tax(automatic_tax)
+            .send(&self.stripe)
+            .await?;
         session
             .url
             .ok_or(StripeError::MissingField("checkout_session.url"))
@@ -147,27 +167,26 @@ impl BillingClient {
         price_id: &str,
         user_id: uuid::Uuid,
     ) -> Result<String, StripeError> {
-        let cust = CustomerId::from_str(customer_id)
+        let _cust = CustomerId::from_str(customer_id)
             .map_err(|_| StripeError::BadCustomerId(customer_id.to_string()))?;
-        let mut params = CreateCheckoutSession::new();
-        params.mode = Some(CheckoutSessionMode::Payment);
-        params.submit_type = Some(CheckoutSessionSubmitType::Donate);
-        params.customer = Some(cust);
-        params.success_url = Some(self.cfg.checkout_success_url.as_str());
-        params.cancel_url = Some(self.cfg.checkout_cancel_url.as_str());
-        params.line_items = Some(vec![CreateCheckoutSessionLineItems {
+        let line_items = vec![CreateCheckoutSessionLineItems {
             price: Some(price_id.to_string()),
             quantity: Some(1),
             ..Default::default()
-        }]);
-        // Tag the session with the user_id so the
-        // `checkout.session.completed` webhook can resolve a row in
-        // `user_sponsorships` without a roundtrip through `customers`.
+        }];
         let mut metadata = HashMap::new();
         metadata.insert("user_id".to_string(), user_id.to_string());
         metadata.insert("kind".to_string(), "sponsor_open".to_string());
-        params.metadata = Some(metadata);
-        let session = CheckoutSession::create(&self.stripe, params).await?;
+        let session = CreateCheckoutSession::new()
+            .mode(CheckoutSessionMode::Payment)
+            .submit_type(CheckoutSessionSubmitType::Donate)
+            .customer(customer_id)
+            .success_url(self.cfg.checkout_success_url.as_str())
+            .cancel_url(self.cfg.checkout_cancel_url.as_str())
+            .line_items(line_items)
+            .metadata(metadata)
+            .send(&self.stripe)
+            .await?;
         session
             .url
             .ok_or(StripeError::MissingField("checkout_session.url"))
@@ -177,11 +196,13 @@ impl BillingClient {
     /// billing" button so users can self-serve cancel, change payment
     /// method, or view invoices.
     pub async fn create_portal_session(&self, customer_id: &str) -> Result<String, StripeError> {
-        let cust = CustomerId::from_str(customer_id)
+        let _cust = CustomerId::from_str(customer_id)
             .map_err(|_| StripeError::BadCustomerId(customer_id.to_string()))?;
-        let mut params = CreateBillingPortalSession::new(cust);
-        params.return_url = Some(self.cfg.portal_return_url.as_str());
-        let session = BillingPortalSession::create(&self.stripe, params).await?;
+        let session = CreateBillingPortalSession::new()
+            .customer(customer_id)
+            .return_url(self.cfg.portal_return_url.as_str())
+            .send(&self.stripe)
+            .await?;
         Ok(session.url)
     }
 }
@@ -198,10 +219,10 @@ pub fn customer_id_from_expandable(c: &Expandable<Customer>) -> Option<String> {
 
 /// Pull the price id out of the first subscription item (Phase 1: every
 /// subscription has exactly one item — the Researcher seat).
+///
+/// async-stripe 1.0: `SubscriptionItem.price` is now a non-optional
+/// `Price` (was `Option<Price>` in 0.x), so the inner `.as_ref()` is
+/// gone.
 pub fn first_price_id(sub: &Subscription) -> Option<String> {
-    sub.items
-        .data
-        .first()
-        .and_then(|item| item.price.as_ref())
-        .map(|p| p.id.to_string())
+    sub.items.data.first().map(|item| item.price.id.to_string())
 }

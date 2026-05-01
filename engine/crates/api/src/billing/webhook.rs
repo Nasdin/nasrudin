@@ -1,12 +1,19 @@
 //! Stripe webhook signature verification + dispatch.
 //!
-//! Built on `stripe::Webhook::construct_event` — async-stripe handles
-//! the HMAC-SHA256 over `<timestamp>.<body>`, the v1 signature parsing,
-//! and the rotation-window multi-signature accept. We just give it the
-//! payload + header + secret and pattern-match on the typed
-//! `EventObject`.
+//! Built on `stripe_webhook::Webhook::construct_event` — async-stripe
+//! handles the HMAC-SHA256 over `<timestamp>.<body>`, the v1 signature
+//! parsing, and the rotation-window multi-signature accept. We just
+//! give it the payload + header + secret and pattern-match on the
+//! typed `EventObject`.
+//!
+//! async-stripe 1.0 split the SDK; the webhook surface lives in
+//! `async-stripe-webhook` (`stripe_webhook::*`). `Subscription` +
+//! `SubscriptionStatus` are in `stripe_shared`; `Expandable` is in
+//! `stripe_types`; `CheckoutSessionMode` is in `stripe_checkout`.
 
-use stripe::{Event, EventObject, EventType, Webhook, WebhookError};
+use stripe_shared::{CheckoutSessionMode, SubscriptionStatus};
+use stripe_types::Expandable;
+use stripe_webhook::{Event, EventObject, Webhook, WebhookError};
 
 use crate::billing::stripe_client::{customer_id_from_expandable, first_price_id, BillingConfig};
 use crate::billing::tier::PlanTier;
@@ -76,20 +83,21 @@ pub async fn dispatch(
     cfg: &BillingConfig,
     pg: &nasrudin_pg::sea_orm::DatabaseConnection,
 ) -> Result<(), DispatchError> {
-    match (&event.type_, &event.data.object) {
-        (
-            EventType::CustomerSubscriptionCreated | EventType::CustomerSubscriptionUpdated,
-            EventObject::Subscription(sub),
-        ) => {
+    // async-stripe 1.0: EventObject variants now encode the EventType
+    // directly (e.g. `CustomerSubscriptionCreated(Box<Subscription>)`),
+    // so the dispatch is a single match on `event.data.object`.
+    match &event.data.object {
+        EventObject::CustomerSubscriptionCreated(sub)
+        | EventObject::CustomerSubscriptionUpdated(sub) => {
             let customer_id = customer_id_from_expandable(&sub.customer)
                 .ok_or(DispatchError::NoCustomer)?;
             // Stripe's status enum: any of these terminal states means
             // "treat as cancelled" even when arriving via .updated.
             let cancelled = matches!(
                 sub.status,
-                stripe::SubscriptionStatus::Canceled
-                    | stripe::SubscriptionStatus::IncompleteExpired
-                    | stripe::SubscriptionStatus::Unpaid
+                SubscriptionStatus::Canceled
+                    | SubscriptionStatus::IncompleteExpired
+                    | SubscriptionStatus::Unpaid
             );
             if cancelled {
                 nasrudin_pg::query::billing::apply_subscription_cancelled(pg, &customer_id)
@@ -106,13 +114,22 @@ pub async fn dispatch(
             }
             let price_id = first_price_id(sub).unwrap_or_default();
             let tier = tier_for_price(&price_id, cfg);
-            let cycle_start = chrono::DateTime::<chrono::Utc>::from_timestamp(
-                sub.current_period_start,
-                0,
-            )
-            .unwrap_or_else(chrono::Utc::now);
+            // async-stripe 1.0: `current_period_start/end` moved off the
+            // top-level Subscription onto each SubscriptionItem (every
+            // item now has its own billing cycle). Our Phase-1 plans
+            // have exactly one item, so reading from the first item is
+            // semantically equivalent.
+            let (cycle_start_ts, period_end_ts) = sub
+                .items
+                .data
+                .first()
+                .map(|i| (i.current_period_start, i.current_period_end))
+                .unwrap_or((sub.start_date, sub.start_date));
+            let cycle_start =
+                chrono::DateTime::<chrono::Utc>::from_timestamp(cycle_start_ts, 0)
+                    .unwrap_or_else(chrono::Utc::now);
             let period_end =
-                chrono::DateTime::<chrono::Utc>::from_timestamp(sub.current_period_end, 0)
+                chrono::DateTime::<chrono::Utc>::from_timestamp(period_end_ts, 0)
                     .unwrap_or_else(chrono::Utc::now);
             // Credits grant runs BEFORE apply_subscription_active so
             // it can read the user's PREVIOUS plan_cycle_start to
@@ -169,8 +186,7 @@ pub async fn dispatch(
                     .items
                     .data
                     .first()
-                    .and_then(|item| item.price.as_ref())
-                    .and_then(|p| p.unit_amount);
+                    .and_then(|item| item.price.unit_amount);
                 let sponsor_tier = sponsorship_tier_for_price(&price_id, cfg);
                 let started_at = chrono::DateTime::<chrono::Utc>::from_timestamp(sub.start_date, 0)
                     .unwrap_or(cycle_start);
@@ -196,7 +212,7 @@ pub async fn dispatch(
 
             Ok(())
         }
-        (EventType::CustomerSubscriptionDeleted, EventObject::Subscription(sub)) => {
+        EventObject::CustomerSubscriptionDeleted(sub) => {
             let customer_id = customer_id_from_expandable(&sub.customer)
                 .ok_or(DispatchError::NoCustomer)?;
             nasrudin_pg::query::billing::apply_subscription_cancelled(pg, &customer_id).await?;
@@ -215,12 +231,12 @@ pub async fn dispatch(
             }
             Ok(())
         }
-        (EventType::CheckoutSessionCompleted, EventObject::CheckoutSession(session)) => {
+        EventObject::CheckoutSessionCompleted(session) => {
             // Pay-what-you-want one-time donation. Subscriptions
             // also fire `checkout.session.completed`, but
             // `subscription.created` already covers them — we filter
             // here on `mode == Payment` to avoid double-recording.
-            if session.mode != stripe::CheckoutSessionMode::Payment {
+            if session.mode != CheckoutSessionMode::Payment {
                 return Ok(());
             }
             // Idempotency belt-and-braces: the partial unique index
@@ -258,8 +274,8 @@ pub async fn dispatch(
                 .payment_intent
                 .as_ref()
                 .map(|pi| match pi {
-                    stripe::Expandable::Id(id) => id.to_string(),
-                    stripe::Expandable::Object(obj) => obj.id.to_string(),
+                    Expandable::Id(id) => id.to_string(),
+                    Expandable::Object(obj) => obj.id.to_string(),
                 })
                 .unwrap_or_else(|| session.id.to_string());
             let amount = session.amount_total.unwrap_or(0);

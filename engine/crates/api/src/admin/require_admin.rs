@@ -65,6 +65,7 @@ impl FromRequestParts<Arc<AppState>> for RequireAdmin {
                     stripe_subscription_id: None,
                     current_period_end: None,
                     plan_cycle_start: None,
+                    research_credits: 0,
                     firebase_uid: "system".into(),
                 };
                 return Ok(RequireAdmin(AdminContext {

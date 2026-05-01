@@ -118,6 +118,19 @@ async fn google_user_creates_row_and_session() {
     let body = to_bytes(me_resp.into_body(), 1 << 16).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["firebase_uid"], "fb-uid-google-1");
+    // The effort-slider UI on /research bounds the slider's max by
+    // research_credits — surface it on /api/auth/me so the frontend
+    // can read the wallet without a separate round-trip.
+    assert!(
+        v.get("research_credits").is_some()
+            && !v["research_credits"].is_null(),
+        "research_credits must be present on /api/auth/me; body: {v}"
+    );
+    assert_eq!(
+        v["research_credits"].as_i64(),
+        Some(0),
+        "new users default to 0 research credits"
+    );
 }
 
 #[tokio::test]

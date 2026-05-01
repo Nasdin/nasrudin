@@ -71,7 +71,20 @@ walkdir = "2"
 tempfile = "3"
 reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls"] }
 clap = { version = "4", features = ["derive"] }
-async-stripe = { version = "0.41", default-features = false, features = ["runtime-tokio-hyper-rustls", "checkout", "billing", "connect", "webhook-events"] }
+# async-stripe 1.0 splits product surfaces into separate crates: the
+# top-level `async-stripe` is just the HTTP client + builders; product
+# types live in `async-stripe-core` (Customer), `async-stripe-checkout`
+# (CheckoutSession), `async-stripe-billing` (BillingPortalSession),
+# `async-stripe-webhook` (signature verification + event dispatch),
+# `async-stripe-shared` (Subscription + status enums + ID types),
+# `async-stripe-types` (Expandable + the basic primitives).
+async-stripe = { version = "1.0.0-rc.5", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-aws-lc-rs"] }
+async-stripe-types = "1.0.0-rc.5"
+async-stripe-shared = "1.0.0-rc.5"
+async-stripe-core = { version = "1.0.0-rc.5", features = ["customer"] }
+async-stripe-checkout = { version = "1.0.0-rc.5", features = ["checkout_session"] }
+async-stripe-billing = { version = "1.0.0-rc.5", features = ["subscription", "billing_portal_session"] }
+async-stripe-webhook = "1.0.0-rc.5"
 rocksdb = { workspace = true }
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = { workspace = true }
