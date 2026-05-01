@@ -2,8 +2,45 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 use crate::{auth::WorkerAuth, keygen, state::AppState};
+
+/// 30-second TTL cache for `GET /api/workers`. The endpoint is public and
+/// unauthenticated; the frontend polls it on a 30 s schedule + invalidates on
+/// SSE heartbeat events anyway, so a 30 s server cache costs nothing visible
+/// to users while collapsing concurrent traffic into a single PG round-trip.
+const WORKERS_LIST_TTL: Duration = Duration::from_secs(30);
+
+/// Pre-serialized JSON body cache. Single slot (no params on this endpoint).
+/// `Arc<String>` so cache hits avoid both PG and re-serialisation.
+#[derive(Default)]
+pub struct WorkersListCache {
+    inner: RwLock<Option<(Instant, Arc<String>)>>,
+}
+
+impl WorkersListCache {
+    pub fn new() -> Self {
+        Self {
+            inner: RwLock::new(None),
+        }
+    }
+
+    async fn get_fresh(&self) -> Option<Arc<String>> {
+        let g = self.inner.read().await;
+        if let Some((ts, body)) = g.as_ref() {
+            if ts.elapsed() < WORKERS_LIST_TTL {
+                return Some(body.clone());
+            }
+        }
+        None
+    }
+
+    async fn store(&self, body: Arc<String>) {
+        *self.inner.write().await = Some((Instant::now(), body));
+    }
+}
 
 #[derive(Deserialize)]
 pub struct RegisterBody {
@@ -138,8 +175,19 @@ pub async fn heartbeat(
 /// registered via `POST /api/workers/register`).
 ///
 /// Returns `[]` (HTTP 200) when Postgres is unavailable so the frontend
-/// leaderboard renders gracefully.
+/// leaderboard renders gracefully. 30 s in-process cache: the frontend
+/// already revalidates every 30 s via React Query, so this is invisible
+/// freshness-wise but collapses concurrent traffic into one PG round-trip.
 pub async fn list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if let Some(body) = state.workers_list_cache.get_fresh().await {
+        return (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            body.as_bytes().to_vec(),
+        )
+            .into_response();
+    }
+
     let Some(db) = state.pg.clone() else {
         return (StatusCode::OK, Json(serde_json::json!([]))).into_response();
     };
@@ -184,5 +232,14 @@ pub async fn list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             })
         })
         .collect();
-    (StatusCode::OK, Json(serde_json::json!(enriched))).into_response()
+
+    let body = serde_json::to_string(&enriched).unwrap_or_else(|_| "[]".to_string());
+    let body_arc = Arc::new(body);
+    state.workers_list_cache.store(body_arc.clone()).await;
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body_arc.as_bytes().to_vec(),
+    )
+        .into_response()
 }

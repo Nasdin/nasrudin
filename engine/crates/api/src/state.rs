@@ -155,6 +155,12 @@ pub struct AppState {
     >,
     /// 60-second cache backing `GET /api/stats/landing`.
     pub landing_stats: Arc<crate::handlers::stats::LandingStatsCache>,
+    /// 30-second cache backing `GET /api/workers` (public list).
+    pub workers_list_cache: Arc<crate::handlers::workers::WorkersListCache>,
+    /// 30-second cache backing `GET /api/theorems/recent`. Keyed by
+    /// `(limit, domain)` since both vary independently across the few
+    /// callers that hit this endpoint.
+    pub theorems_recent_cache: Arc<crate::handlers::theorems::TheoremsRecentCache>,
     /// Firebase project id (e.g. `"nasrudin"`). When `None`,
     /// `/api/auth/firebase-session` returns 503 and email/Google sign-in
     /// is unavailable. Other endpoints work normally.

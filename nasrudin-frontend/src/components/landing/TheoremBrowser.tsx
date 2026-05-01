@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
@@ -28,7 +28,7 @@ const DOMAIN_LABEL: Record<string, string> = {
   FluidDynamics: 'Classical mechanics',
 };
 
-export function TheoremBrowser() {
+export const TheoremBrowser = memo(function TheoremBrowser() {
   const recent = useRecentTheorems(40);
   const [filter, setFilter] = useState<string>('All');
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -126,7 +126,7 @@ export function TheoremBrowser() {
       )}
     </div>
   );
-}
+});
 
 function BrowserRow({
   id,
@@ -241,3 +241,4 @@ function BrowserRow({
     </>
   );
 }
+

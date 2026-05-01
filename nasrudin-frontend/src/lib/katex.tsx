@@ -1,19 +1,19 @@
-import katex from 'katex';
+import { lazy, Suspense } from 'react';
 
 interface MathProps {
   source: string;
   block?: boolean;
 }
 
+// Lazy-loads the KaTeX bundle (~259 KB JS + CSS) only when the first math
+// expression actually renders. Routes that never show LaTeX never pay the cost.
+const MathInner = lazy(() => import('./katex-inner'));
+
 // biome-ignore lint/suspicious/noShadowRestrictedNames: canonical component name for rendered math; the global Math object is unrelated to JSX components.
 export function Math({ source, block = false }: MathProps) {
-  const html = katex.renderToString(source, {
-    throwOnError: false,
-    displayMode: block,
-    output: 'html',
-  });
-  // KaTeX produces deterministic, sanitised HTML from a math AST (no scripts,
-  // no event handlers). Inputs come from curated content + trusted API responses.
-  // biome-ignore lint/security/noDangerouslySetInnerHtml: KaTeX HTML is deterministic and sanitised from a math AST; inputs are curated/trusted.
-  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <Suspense fallback={<code>{source}</code>}>
+      <MathInner source={source} block={block} />
+    </Suspense>
+  );
 }

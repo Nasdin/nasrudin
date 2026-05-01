@@ -234,6 +234,10 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
+        workers_list_cache: Arc::new(physics_api::handlers::workers::WorkersListCache::new()),
+        theorems_recent_cache: Arc::new(
+            physics_api::handlers::theorems::TheoremsRecentCache::new(),
+        ),
         firebase_project_id: opts
             .firebase_project_id
             .or_else(|| Some("test-project".into())),

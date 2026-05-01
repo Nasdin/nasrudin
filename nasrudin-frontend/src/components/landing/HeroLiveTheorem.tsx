@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
@@ -27,7 +27,7 @@ function tickerLineFor(t: {
   return `VERIFIED  thm:${id}…  ${stmt}`;
 }
 
-export function HeroLiveTheorem() {
+export const HeroLiveTheorem = memo(function HeroLiveTheorem() {
   const recent = useRecentTheorems(12);
   const [idx, setIdx] = useState(0);
   const [tickerLines, setTickerLines] = useState<string[]>([]);
@@ -176,4 +176,4 @@ export function HeroLiveTheorem() {
       </div>
     </div>
   );
-}
+});

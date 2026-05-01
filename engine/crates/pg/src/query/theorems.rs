@@ -189,6 +189,27 @@ pub async fn get_by_id(
         .context("get_by_id theorem")
 }
 
+/// Batch lookup of theorems by 8-byte primary key. One PG round-trip
+/// instead of N — used by hot paths like concept-search that resolve a
+/// page of nearest-neighbour hits to full rows. Order of the returned
+/// `Vec` is whatever PG decides; callers should index by `model.id` if
+/// they care about input order.
+///
+/// Empty input is a no-op that returns `Vec::new()` without touching PG.
+pub async fn list_by_ids(
+    db: &impl ConnectionTrait,
+    ids: &[Vec<u8>],
+) -> Result<Vec<theorems::Model>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    theorems::Entity::find()
+        .filter(theorems::Column::Id.is_in(ids.iter().cloned()))
+        .all(db)
+        .await
+        .context("list_by_ids theorems")
+}
+
 /// Look up a single theorem by its canonical hash (also 8 bytes, unique).
 pub async fn get_by_canonical_hash(
     db: &impl ConnectionTrait,

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { useLandingStats } from '~/lib/queries';
 
 /// Discard funnel: submitted → verified vs rejected, plus current pending
@@ -5,7 +6,7 @@ import { useLandingStats } from '~/lib/queries';
 /// no extra worker plumbing. Each stage is rendered as a horizontal bar
 /// normalized to `submitted_24h` so the eye can read the survival rate
 /// at a glance.
-export function FunnelChart() {
+export const FunnelChart = memo(function FunnelChart() {
   const stats = useLandingStats();
   const f = stats.data?.funnel_24h;
 
@@ -97,4 +98,4 @@ export function FunnelChart() {
       </p>
     </div>
   );
-}
+});

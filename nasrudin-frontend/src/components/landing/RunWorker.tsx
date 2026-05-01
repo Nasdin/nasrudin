@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { type ArchKind, detectPlatform, type OsKind } from './RunWorker.platform';
 import { runWorkerFixture } from './run-worker.fixture';
 import { TerminalPreview } from './TerminalPreview';
@@ -132,7 +132,7 @@ function PrimaryCard({ build, detected }: { build: Build; detected: boolean }) {
   );
 }
 
-export function RunWorker() {
+export const RunWorker = memo(function RunWorker() {
   const detected = useMemo(() => detectPlatform(), []);
   const [showManual, setShowManual] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -369,4 +369,4 @@ export function RunWorker() {
       </aside>
     </div>
   );
-}
+});

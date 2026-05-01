@@ -14,10 +14,11 @@
 //! Spot-check rate cascades through key → user → env default at every
 //! step. NULL means "fall through to the next layer".
 
-use std::sync::Arc;
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
+use lru::LruCache;
 use nasrudin_pg::entity::{api_keys, users};
 use nasrudin_pg::sea_orm::{DatabaseConnection, DbErr, EntityTrait};
 use serde::{Deserialize, Serialize};
@@ -170,63 +171,70 @@ pub fn should_promote(decision: &TrustDecision, theorem_id: &[u8]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// TrustCache — dashmap-backed, 30 s TTL, 4096 capacity (rough LRU).
+// TrustCache — `lru` crate behind a Mutex, 30 s TTL, 4096 capacity.
 // ---------------------------------------------------------------------------
+//
+// The previous DashMap implementation used a "drop the first 16 keys we
+// encounter" eviction that wasn't actually LRU and could thrash on hot
+// keys under load. Switching to `LruCache` gives true recency-of-use
+// eviction; the Mutex is fine here because critical sections are tiny
+// (one HashMap probe + Instant compare) and the call rate is bounded by
+// the worker submission rate.
 
 #[derive(Clone)]
 pub struct TrustCache {
-    inner: Arc<DashMap<Uuid, (Instant, TrustDecision)>>,
+    inner: Arc<Mutex<LruCache<Uuid, (Instant, TrustDecision)>>>,
     ttl: Duration,
-    capacity: usize,
 }
 
 impl TrustCache {
     pub fn new(ttl: Duration, capacity: usize) -> Self {
+        // capacity = 0 would panic on the NonZeroUsize unwrap; clamp to 1.
+        let cap = NonZeroUsize::new(capacity.max(1)).expect("capacity > 0");
         Self {
-            inner: Arc::new(DashMap::with_capacity(capacity)),
+            inner: Arc::new(Mutex::new(LruCache::new(cap))),
             ttl,
-            capacity,
         }
     }
 
     pub fn get(&self, key_id: &Uuid) -> Option<TrustDecision> {
-        let entry = self.inner.get(key_id)?;
-        let (when, ref dec) = *entry;
-        if when.elapsed() < self.ttl {
-            Some(dec.clone())
+        let mut g = self.inner.lock().ok()?;
+        // `get` bumps the entry to most-recently-used. If the entry is
+        // past TTL we evict and treat it as a miss so the caller refreshes
+        // from PG.
+        let entry = g.get(key_id)?.clone();
+        if entry.0.elapsed() < self.ttl {
+            Some(entry.1)
         } else {
+            g.pop(key_id);
             None
         }
     }
 
     pub fn put(&self, key_id: Uuid, decision: TrustDecision) {
-        if self.inner.len() >= self.capacity {
-            // Cheap eviction: drop the first 16 entries we encounter.
-            // The TTL still prunes stale entries naturally on get(), so
-            // this just bounds memory.
-            let mut evicted = 0;
-            self.inner.retain(|_, _| {
-                evicted += 1;
-                evicted > 16
-            });
+        if let Ok(mut g) = self.inner.lock() {
+            g.put(key_id, (Instant::now(), decision));
         }
-        self.inner.insert(key_id, (Instant::now(), decision));
     }
 
     pub fn invalidate(&self, key_id: &Uuid) {
-        self.inner.remove(key_id);
+        if let Ok(mut g) = self.inner.lock() {
+            g.pop(key_id);
+        }
     }
 
     pub fn purge_all(&self) {
-        self.inner.clear();
+        if let Ok(mut g) = self.inner.lock() {
+            g.clear();
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.inner.len()
+        self.inner.lock().map(|g| g.len()).unwrap_or(0)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.inner.lock().map(|g| g.is_empty()).unwrap_or(true)
     }
 }
 

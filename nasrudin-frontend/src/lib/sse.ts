@@ -8,6 +8,12 @@ import type { ConjectureSseEvent, ResearchJobEvent } from './types';
 /**
  * Subscribes to the /api/events/discoveries SSE stream and invalidates
  * the React Query cache for theorem-related queries on each event.
+ *
+ * Invalidations are debounced to a 250 ms window so a verification burst
+ * doesn't trigger 100 invalidations/sec across every mounted query
+ * consumer. Reconnection on transient errors uses exponential backoff
+ * (1 s → 30 s) instead of the browser's default — when the API restarts,
+ * thousands of clients reconnecting in lockstep is a thundering herd.
  */
 export function useDiscoveryFeed(onEvent?: (e: MessageEvent) => void) {
   const qc = useQueryClient();
@@ -15,34 +21,70 @@ export function useDiscoveryFeed(onEvent?: (e: MessageEvent) => void) {
 
   useEffect(() => {
     if (typeof window === 'undefined') return; // SSR guard
-    const es = new EventSource(`${API_BASE}/api/events/discoveries`);
 
-    const handler = (event: MessageEvent) => {
-      qc.invalidateQueries({ queryKey: ['theorems'] });
-      qc.invalidateQueries({ queryKey: ['workers'] });
-      // Network pulse strip reads from this query — refresh the
-      // verified_24h / last_verified_at / by_domain_24h fields on every
-      // verification so the ticker stays live without a 60 s lag.
-      qc.invalidateQueries({ queryKey: ['stats', 'landing'] });
-      onEvent?.(event);
+    let closed = false;
+    let backoffMs = 1000;
+    const maxBackoffMs = 30000;
+    let pendingInvalidate: number | null = null;
+    let pendingFlags = { theorems: false, workers: false, stats: false };
+
+    const flushInvalidations = () => {
+      pendingInvalidate = null;
+      const flags = pendingFlags;
+      pendingFlags = { theorems: false, workers: false, stats: false };
+      if (flags.theorems) qc.invalidateQueries({ queryKey: ['theorems'] });
+      if (flags.workers) qc.invalidateQueries({ queryKey: ['workers'] });
+      if (flags.stats) qc.invalidateQueries({ queryKey: ['stats', 'landing'] });
     };
 
-    for (const name of [
-      'theorem_pending',
-      'theorem_verified',
-      'theorem_rejected',
-      'ga_discovery',
-    ]) {
-      es.addEventListener(name, handler);
-    }
-
-    es.onerror = () => {
-      // Browser auto-reconnects; nothing to do here.
+    const scheduleFlush = () => {
+      if (pendingInvalidate !== null) return;
+      pendingInvalidate = window.setTimeout(flushInvalidations, 250);
     };
 
-    ref.current = es;
+    const connect = () => {
+      if (closed) return;
+      const es = new EventSource(`${API_BASE}/api/events/discoveries`);
+      ref.current = es;
+
+      const handler = (event: MessageEvent) => {
+        // Theorem events refresh the funnel + the recent feed but do NOT
+        // affect the worker list — that's heartbeat-driven on a different
+        // SSE channel, so don't blow that cache.
+        pendingFlags.theorems = true;
+        pendingFlags.stats = true;
+        scheduleFlush();
+        onEvent?.(event);
+      };
+
+      for (const name of [
+        'theorem_pending',
+        'theorem_verified',
+        'theorem_rejected',
+        'ga_discovery',
+      ]) {
+        es.addEventListener(name, handler);
+      }
+
+      es.onopen = () => {
+        backoffMs = 1000; // success — reset
+      };
+
+      es.onerror = () => {
+        es.close();
+        ref.current = null;
+        if (closed) return;
+        const wait = backoffMs;
+        backoffMs = Math.min(backoffMs * 2, maxBackoffMs);
+        window.setTimeout(connect, wait);
+      };
+    };
+
+    connect();
     return () => {
-      es.close();
+      closed = true;
+      if (pendingInvalidate !== null) window.clearTimeout(pendingInvalidate);
+      ref.current?.close();
       ref.current = null;
     };
   }, [qc, onEvent]);

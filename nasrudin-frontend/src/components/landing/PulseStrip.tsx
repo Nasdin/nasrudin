@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { useLandingStats } from '~/lib/queries';
 import { useDiscoveryFeed } from '~/lib/sse';
 
@@ -20,7 +20,7 @@ function prettyDomain(d: string): string {
   return d.replace(/_/g, ' ');
 }
 
-export function PulseStrip() {
+export const PulseStrip = memo(function PulseStrip() {
   const stats = useLandingStats();
   useDiscoveryFeed();
 
@@ -55,4 +55,4 @@ export function PulseStrip() {
       )}
     </div>
   );
-}
+});

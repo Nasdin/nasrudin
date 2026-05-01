@@ -18,10 +18,61 @@ use axum::{
     response::IntoResponse,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 use crate::state::AppState;
 use nasrudin_pg::query::theorems;
+
+/// 30-second TTL cache for `GET /api/theorems/recent`. Keyed on
+/// `(limit, domain)`; cursor is always None on this endpoint. The
+/// frontend's React Query staleTime + polling cadence is already 60 s,
+/// so the user-visible freshness is unchanged while we collapse hot
+/// traffic into one PG round-trip per (limit, domain) pair.
+const RECENT_TTL: Duration = Duration::from_secs(30);
+/// Hard cap on cache entries — cache_key is `(limit_bucket, Option<domain>)`
+/// and a small handful of (limit, domain) combos covers >99 % of traffic.
+const RECENT_MAX_ENTRIES: usize = 64;
+
+type RecentKey = (u64, Option<String>);
+
+/// Per-(limit, domain) cached response body. `Arc<String>` so cache hits
+/// avoid both PG and re-serialisation.
+#[derive(Default)]
+pub struct TheoremsRecentCache {
+    inner: RwLock<HashMap<RecentKey, (Instant, Arc<String>)>>,
+}
+
+impl TheoremsRecentCache {
+    pub fn new() -> Self {
+        Self {
+            inner: RwLock::new(HashMap::new()),
+        }
+    }
+
+    async fn get_fresh(&self, key: &RecentKey) -> Option<Arc<String>> {
+        let g = self.inner.read().await;
+        g.get(key).and_then(|(ts, body)| {
+            (ts.elapsed() < RECENT_TTL).then(|| body.clone())
+        })
+    }
+
+    async fn store(&self, key: RecentKey, body: Arc<String>) {
+        let mut g = self.inner.write().await;
+        // Bound entries; on overflow drop expired or arbitrary entries.
+        if g.len() >= RECENT_MAX_ENTRIES {
+            g.retain(|_, (ts, _)| ts.elapsed() < RECENT_TTL);
+            if g.len() >= RECENT_MAX_ENTRIES {
+                if let Some(k) = g.keys().next().cloned() {
+                    g.remove(&k);
+                }
+            }
+        }
+        g.insert(key, (Instant::now(), body));
+    }
+}
 
 /// Query params shared by `list` and `recent`. `recent` ignores `cursor`.
 #[derive(Deserialize)]
@@ -72,12 +123,58 @@ pub async fn list(
 
 /// `GET /api/theorems/recent` — same query shape as `list` but the cursor
 /// param is dropped before the DB call so it always returns the newest page.
+/// 30 s TTL cache keyed on `(limit, domain)`.
 pub async fn recent(
     State(state): State<Arc<AppState>>,
-    Query(mut q): Query<ListQuery>,
+    Query(q): Query<ListQuery>,
 ) -> impl IntoResponse {
-    q.cursor = None;
-    list(State(state), Query(q)).await
+    let limit = q.limit.unwrap_or(50).min(500);
+    let cache_key: RecentKey = (limit, q.domain.clone());
+
+    if let Some(body) = state.theorems_recent_cache.get_fresh(&cache_key).await {
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            body.as_bytes().to_vec(),
+        )
+            .into_response();
+    }
+
+    let Some(pg) = &state.pg else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "pg_unavailable" })),
+        )
+            .into_response();
+    };
+
+    match theorems::list_verified(pg, None, limit, q.domain).await {
+        Ok(page) => {
+            let payload = serde_json::json!({
+                "theorems": page.items,
+                "next_cursor": page.next_cursor,
+                "total": page.total,
+                "total_capped": page.total_capped,
+            });
+            let body = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
+            let body_arc = Arc::new(body);
+            state
+                .theorems_recent_cache
+                .store(cache_key, body_arc.clone())
+                .await;
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                body_arc.as_bytes().to_vec(),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 /// `GET /api/theorems/{id}` — fetch one theorem by its 8-byte hex id.

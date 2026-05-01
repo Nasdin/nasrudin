@@ -96,31 +96,40 @@ pub async fn concept_search(
     if let (Some(index), Some(embedder)) = (state.embed.as_ref(), state.embedder.as_ref()) {
         let k = (limit * 2).min(MAX_LIMIT) as usize;
         if let Ok(hits) = index.nearest_text(embedder, q, k) {
+            // Batch-fetch all rows in one PG round-trip instead of N. The
+            // embedding index returns up to `2*limit` neighbours; resolving
+            // each one individually was O(k) round-trips before.
+            let ids: Vec<Vec<u8>> = hits.iter().map(|h| h.theorem_id.to_vec()).collect();
+            let rows = nasrudin_pg::query::theorems::list_by_ids(pg, &ids)
+                .await
+                .unwrap_or_default();
+            let row_by_id: HashMap<Vec<u8>, _> =
+                rows.into_iter().map(|m| (m.id.clone(), m)).collect();
+
             // Cosine distance ∈ [0, 2]; convert to [0, 1] similarity.
             for h in hits {
-                let id_bytes = h.theorem_id;
-                let id_hex = id_bytes
+                let Some(row) = row_by_id.get(h.theorem_id.as_slice()) else {
+                    continue;
+                };
+                let id_hex = h
+                    .theorem_id
                     .iter()
                     .map(|b| format!("{b:02x}"))
                     .collect::<String>();
-                if let Ok(Some(row)) =
-                    nasrudin_pg::query::theorems::get_by_id(pg, &id_bytes).await
-                {
-                    let score = (1.0 - (h.distance / 2.0)).clamp(0.0, 1.0);
-                    merged.insert(
-                        id_hex.clone(),
-                        ConceptHit {
-                            theorem_id: id_hex,
-                            canonical_statement: row.canonical_statement,
-                            latex: row.latex,
-                            domain: row.domain,
-                            status: row.status,
-                            depth: row.depth,
-                            score,
-                            source: "embed",
-                        },
-                    );
-                }
+                let score = (1.0 - (h.distance / 2.0)).clamp(0.0, 1.0);
+                merged.insert(
+                    id_hex.clone(),
+                    ConceptHit {
+                        theorem_id: id_hex,
+                        canonical_statement: row.canonical_statement.clone(),
+                        latex: row.latex.clone(),
+                        domain: row.domain.clone(),
+                        status: row.status.clone(),
+                        depth: row.depth,
+                        score,
+                        source: "embed",
+                    },
+                );
             }
         }
     }

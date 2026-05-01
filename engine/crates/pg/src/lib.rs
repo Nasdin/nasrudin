@@ -42,10 +42,26 @@ pub struct PgConfig {
 
 impl Default for PgConfig {
     fn default() -> Self {
+        // Pool sized for the API's concurrent paths (admin pagination,
+        // lake-promotion drain, steerer, conjecture lease reaper, ingest,
+        // landing-stats compute). With the new partial indexes from
+        // m20260501_000020 each query is cheap, but contention on a
+        // 10-connection pool was visible under load. 32 with a 4-min
+        // floor leaves headroom without exhausting PG's max_connections.
+        // Override per-deploy via `DATABASE_MAX_CONNECTIONS` /
+        // `DATABASE_MIN_CONNECTIONS`.
+        let max_connections = std::env::var("DATABASE_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(32);
+        let min_connections = std::env::var("DATABASE_MIN_CONNECTIONS")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(4);
         Self {
             database_url: String::new(),
-            max_connections: 10,
-            min_connections: 2,
+            max_connections,
+            min_connections,
             connect_timeout: Duration::from_secs(5),
             max_lifetime: Duration::from_secs(30 * 60),
             sql_logging: false,

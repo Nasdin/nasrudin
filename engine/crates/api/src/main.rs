@@ -523,6 +523,10 @@ async fn main() -> anyhow::Result<()> {
         capacity: Arc::new(physics_api::jobs::capacity::CapacityTracker::new()),
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
+        workers_list_cache: Arc::new(physics_api::handlers::workers::WorkersListCache::new()),
+        theorems_recent_cache: Arc::new(
+            physics_api::handlers::theorems::TheoremsRecentCache::new(),
+        ),
         firebase_project_id,
         firebase_jwks,
         stripe_http: reqwest::Client::new(),
@@ -670,9 +674,15 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref pg) = state.pg {
         let pg_for_reaper = pg.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            // ±10 % jitter on every tick. With multiple API instances
+            // running, fixed-cadence ticks march in lockstep and dogpile
+            // PG; randomising the period spreads load evenly.
+            use rand::Rng as _;
             loop {
-                tick.tick().await;
+                let jitter_ms: u64 = rand::rng().random_range(0..12_000);
+                let period =
+                    std::time::Duration::from_secs(54) + std::time::Duration::from_millis(jitter_ms);
+                tokio::time::sleep(period).await;
                 match physics_api::jobs::reaper::reap_dead_leases(&pg_for_reaper).await {
                     Ok(n) if n > 0 => {
                         tracing::info!(n, "reaped expired conjecture-job leases")
@@ -689,9 +699,13 @@ async fn main() -> anyhow::Result<()> {
         // metric on the landing page reflects actual recent activity.
         let pg_for_worker_reaper = pg.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            // ±10 % jitter — same rationale as the lease reaper above.
+            use rand::Rng as _;
             loop {
-                tick.tick().await;
+                let jitter_ms: u64 = rand::rng().random_range(0..6_000);
+                let period =
+                    std::time::Duration::from_secs(27) + std::time::Duration::from_millis(jitter_ms);
+                tokio::time::sleep(period).await;
                 match physics_api::jobs::reaper::mark_stale_workers(&pg_for_worker_reaper).await {
                     Ok(n) if n > 0 => {
                         tracing::info!(n, "marked stale workers as inactive")

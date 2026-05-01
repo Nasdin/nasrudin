@@ -1,10 +1,11 @@
+import { memo } from 'react';
 import { useLandingStats } from '~/lib/queries';
 
 function prettyDomain(d: string): string {
   return d.replace(/_/g, ' ');
 }
 
-export function NetworkBreakdown() {
+export const NetworkBreakdown = memo(function NetworkBreakdown() {
   const stats = useLandingStats();
   const rows = stats.data?.by_domain_24h ?? [];
   const max = rows.reduce((m, r) => (r.count > m ? r.count : m), 0);
@@ -35,4 +36,4 @@ export function NetworkBreakdown() {
       )}
     </div>
   );
-}
+});

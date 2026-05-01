@@ -14,7 +14,8 @@ const ReactQueryDevtools = import.meta.env.DEV
 import '~/styles/tokens.css';
 import '~/styles/styles.css';
 import '~/styles/platform.css';
-import 'katex/dist/katex.min.css';
+// KaTeX CSS is loaded by `src/lib/katex-inner.tsx` (lazy) — only routes
+// that actually render math pull it in.
 
 interface RouterContext {
   queryClient: QueryClient;

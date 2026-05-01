@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 function PipelineSteering() {
   return (
     <svg viewBox="0 0 600 80" width="100%" height="80" style={{ display: 'block' }}>
@@ -383,7 +385,7 @@ function PipelineLean({ acceptanceRate }: { acceptanceRate: string }) {
   );
 }
 
-export function PipelineDiagram({
+export const PipelineDiagram = memo(function PipelineDiagram({
   totalAxioms,
   totalVerified,
   acceptanceRate,
@@ -432,4 +434,4 @@ export function PipelineDiagram({
       ))}
     </div>
   );
-}
+});

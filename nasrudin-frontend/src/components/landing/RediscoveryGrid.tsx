@@ -1,8 +1,9 @@
+import { memo } from 'react';
 import { useFeaturedDiscoveries } from '~/lib/queries';
 import { Math as MathExpr } from '~/lib/katex';
 import type { Rediscovery } from '~/lib/featured';
 
-export function RediscoveryGrid() {
+export const RediscoveryGrid = memo(function RediscoveryGrid() {
   const { data: discoveries, isLoading, error } = useFeaturedDiscoveries();
 
   if (isLoading) {
@@ -115,4 +116,4 @@ export function RediscoveryGrid() {
       ))}
     </div>
   );
-}
+});

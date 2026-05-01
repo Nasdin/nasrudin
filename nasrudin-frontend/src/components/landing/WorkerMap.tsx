@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { useWorkers } from '~/lib/queries';
 
 const CITY_COORDS: Record<string, { x: number; y: number }> = {
@@ -41,7 +42,7 @@ const LAND_DOTS: ReadonlyArray<{ x: number; y: number }> = (() => {
   return dots;
 })();
 
-export function WorkerMap() {
+export const WorkerMap = memo(function WorkerMap() {
   const workers = useWorkers();
   const pins: Pin[] =
     workers.data
@@ -186,4 +187,4 @@ export function WorkerMap() {
       </div>
     </div>
   );
-}
+});
