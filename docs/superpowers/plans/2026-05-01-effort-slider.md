@@ -608,7 +608,7 @@ async fn setup_job_for_cancel(
 }
 
 #[tokio::test]
-async fn cancel_with_refund_zero_verified_proportional() {
+async fn cancel_with_refund_running_job_marks_was_in_flight_true() {
     // 5-credit job (480 quota), 192 consumed (40%), no verified.
     // Refund = floor(5 * (1 - 192/480)) = floor(5 * 0.6) = 3.
     let (db, _c) = test_pg().await;
@@ -616,6 +616,8 @@ async fn cancel_with_refund_zero_verified_proportional() {
         setup_job_for_cancel(&db, "running", 480, 192.0, 0, false).await;
 
     let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert!(r.row_was_cancelled);
+    assert!(r.was_in_flight, "running state must report was_in_flight");
     assert_eq!(r.refunded_credits, 3);
     assert_eq!(r.allocated_slots, 4);
 
@@ -629,13 +631,30 @@ async fn cancel_with_refund_zero_verified_proportional() {
 }
 
 #[tokio::test]
-async fn cancel_with_refund_zero_consumed_full_refund() {
+async fn cancel_with_refund_queued_job_marks_was_in_flight_false() {
+    // Critical: a queued job never reserved cluster capacity, so the
+    // caller must NOT release_paid_slots(...). Prove was_in_flight is
+    // false in this case so the handler can branch correctly.
     let (db, _c) = test_pg().await;
     let (job, owner, _) =
         setup_job_for_cancel(&db, "queued", 480, 0.0, 0, false).await;
 
     let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert!(r.row_was_cancelled);
+    assert!(!r.was_in_flight, "queued state must report was_in_flight=false");
     assert_eq!(r.refunded_credits, 5);
+}
+
+#[tokio::test]
+async fn cancel_with_refund_claimed_job_marks_was_in_flight_true() {
+    // claimed (post-claim, pre-first-heartbeat) is still a state that
+    // reserved cluster capacity. Treated like running.
+    let (db, _c) = test_pg().await;
+    let (job, owner, _) =
+        setup_job_for_cancel(&db, "claimed", 96, 0.0, 0, false).await;
+
+    let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
+    assert!(r.was_in_flight);
 }
 
 #[tokio::test]
@@ -679,7 +698,8 @@ async fn cancel_with_refund_already_terminal_returns_none() {
         setup_job_for_cancel(&db, "proved", 96, 50.0, 1, false).await;
 
     let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
-    assert!(r.row_was_cancelled == false);
+    assert!(!r.row_was_cancelled);
+    assert!(!r.was_in_flight);
     let user = nasrudin_pg::entity::users::Entity::find_by_id(owner)
         .one(&db).await.unwrap().unwrap();
     assert_eq!(user.research_credits, 0); // no refund applied
@@ -693,7 +713,8 @@ async fn cancel_with_refund_wrong_owner_returns_none() {
     let other = create_user(&db).await;
 
     let r = q::cancel_paid_with_refund(&db, job, other).await.unwrap();
-    assert!(r.row_was_cancelled == false);
+    assert!(!r.row_was_cancelled);
+    assert!(!r.was_in_flight);
 }
 
 #[tokio::test]
@@ -736,25 +757,29 @@ pub struct CancelOutcome {
     /// Credits returned to the user. 0 if `row_was_cancelled` is false
     /// or if any theorem was verified.
     pub refunded_credits: i32,
-    /// `allocated_slots` value the row carried at cancel time. Caller
-    /// uses this to release in-memory cluster capacity counters.
+    /// True iff the row's prior state was `claimed` or `running`. The
+    /// caller uses this to decide whether to release in-memory cluster
+    /// capacity — for a `queued` cancel no slots were ever reserved.
+    pub was_in_flight: bool,
+    /// `allocated_slots` value the row carried at cancel time. Only
+    /// meaningful when `was_in_flight == true`.
     pub allocated_slots: i32,
 }
 
 /// Atomically cancel a paid Researcher job and refund the user
 /// proportionally to the unused budget. Single transaction:
-///   1. Conditional UPDATE on conjecture_jobs flips state→'cancelled'
-///      iff state was queued/claimed/running AND owner matches.
-///   2. If step 1 affected a row, UPDATE users to add the computed
-///      refund (zero when any theorem was verified, or when consumed
-///      ≥ quota).
-/// The credits_spent denominator is reconstructed from the row:
+///   1. SELECT ... FOR UPDATE to lock the row and capture its prior
+///      state (we need pre-cancel state to decide whether the job was
+///      in-flight; the UPDATE's RETURNING shows post-update values).
+///   2. Bail if the row doesn't exist, the owner mismatches, or the
+///      state is already terminal.
+///   3. UPDATE state→'cancelled', clear claim columns; RETURNING gives
+///      us quota/consumed/verified/priority for the refund calc.
+///   4. If verified == 0, increment users.research_credits by
+///      floor(credits_spent × max(0, 1 - consumed/quota)).
+/// `credits_spent` is reconstructed from the row:
 ///   credits_spent = (lake_slot_hours_quota / 96)
 ///                 + (slice_priority > 5 ? 1 : 0)
-/// Refund formula:
-///   refund = candidates_verified == 0
-///          ? floor(credits_spent * max(0, 1 - consumed/quota))
-///          : 0
 pub async fn cancel_paid_with_refund(
     db: &DatabaseConnection,
     job_id: Uuid,
@@ -762,30 +787,55 @@ pub async fn cancel_paid_with_refund(
 ) -> Result<CancelOutcome, DbErr> {
     let txn = db.begin().await?;
 
-    // Step 1: conditional terminal transition. RETURNING gives us the
-    // row's pre-cancel quota/consumed/verified/priority/allocated_slots
-    // PLUS the computed credits_spent and refund_credits in one go.
+    // Step 1: lock + snapshot prior state. FOR UPDATE serialises
+    // concurrent heartbeats and double-cancel attempts behind us.
+    let lock_stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        SELECT state, allocated_slots
+          FROM conjecture_jobs
+         WHERE id = $1 AND owner_id = $2
+         FOR UPDATE
+        "#,
+        [job_id.into(), owner_id.into()],
+    );
+    let lock_row = txn.query_one(lock_stmt).await?;
+    let Some(lock_row) = lock_row else {
+        // Row doesn't exist or owner mismatched.
+        txn.rollback().await?;
+        return Ok(CancelOutcome {
+            row_was_cancelled: false,
+            refunded_credits: 0,
+            was_in_flight: false,
+            allocated_slots: 0,
+        });
+    };
+    let prior_state: String = lock_row.try_get_by_index(0)?;
+    let allocated_slots: i32 = lock_row.try_get_by_index(1)?;
+    if !matches!(prior_state.as_str(), "queued" | "claimed" | "running") {
+        // Already terminal — nothing to do.
+        txn.rollback().await?;
+        return Ok(CancelOutcome {
+            row_was_cancelled: false,
+            refunded_credits: 0,
+            was_in_flight: false,
+            allocated_slots: 0,
+        });
+    }
+    let was_in_flight = matches!(prior_state.as_str(), "claimed" | "running");
+
+    // Step 2: terminal transition + refund-amount calc in one statement.
     let cancel_stmt = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
-        WITH cancelled AS (
-          UPDATE conjecture_jobs
-             SET state = 'cancelled',
-                 completed_at = NOW(),
-                 claimed_by = NULL,
-                 claimed_at = NULL,
-                 lease_expires_at = NULL
-           WHERE id = $1
-             AND owner_id = $2
-             AND state IN ('queued', 'claimed', 'running')
-           RETURNING lake_slot_hours_quota,
-                    lake_slot_hours_consumed,
-                    candidates_verified,
-                    allocated_slots,
-                    slice_priority
-        )
-        SELECT
-            allocated_slots,
+        UPDATE conjecture_jobs
+           SET state = 'cancelled',
+               completed_at = NOW(),
+               claimed_by = NULL,
+               claimed_at = NULL,
+               lease_expires_at = NULL
+         WHERE id = $1
+        RETURNING
             CASE
                 WHEN candidates_verified = 0 THEN
                   FLOOR(
@@ -795,25 +845,16 @@ pub async fn cancel_paid_with_refund(
                   )::int
                 ELSE 0
             END AS refund_credits
-          FROM cancelled
         "#,
-        [job_id.into(), owner_id.into()],
+        [job_id.into()],
     );
-    let row = txn.query_one(cancel_stmt).await?;
-    let Some(row) = row else {
-        // No rows updated — already-terminal or wrong owner. No refund.
-        txn.rollback().await?;
-        return Ok(CancelOutcome {
-            row_was_cancelled: false,
-            refunded_credits: 0,
-            allocated_slots: 0,
-        });
-    };
+    let row = txn.query_one(cancel_stmt).await?
+        .ok_or_else(|| DbErr::Custom(
+            "cancel_paid_with_refund: row vanished between SELECT FOR UPDATE and UPDATE".into()
+        ))?;
+    let refund: i32 = row.try_get_by_index(0)?;
 
-    let allocated_slots: i32 = row.try_get_by_index(0)?;
-    let refund: i32 = row.try_get_by_index(1)?;
-
-    // Step 2: apply refund (no-op when refund == 0).
+    // Step 3: apply refund (no-op when refund == 0).
     if refund > 0 {
         crate::query::users::refund_research_credits_n(&txn, owner_id, refund).await?;
     }
@@ -823,6 +864,7 @@ pub async fn cancel_paid_with_refund(
     Ok(CancelOutcome {
         row_was_cancelled: true,
         refunded_credits: refund,
+        was_in_flight,
         allocated_slots,
     })
 }
@@ -1314,13 +1356,15 @@ pub async fn cancel(
         }))).into_response();
     }
 
-    // Release in-memory cluster capacity outside the transaction.
-    // Allocated_slots is only meaningful when the row was claimed/running;
-    // for a queued cancel it's 4 (default) but no slots were reserved.
-    // The capacity counter is rebuilt from DB on API restart, so a crash
-    // between commit and this call self-heals.
-    let allocated = (outcome.allocated_slots as u32).max(1);
-    state.capacity.release_paid_slots(allocated);
+    // Release in-memory cluster capacity outside the transaction —
+    // ONLY for jobs that were actually in-flight. For a queued-then-
+    // cancelled job, no slots were ever reserved, so calling
+    // release_paid_slots(allocated) would credit phantom slots back
+    // to the pool and inflate cluster capacity.
+    if outcome.was_in_flight {
+        let allocated = (outcome.allocated_slots as u32).max(1);
+        state.capacity.release_paid_slots(allocated);
+    }
 
     tracing::info!(
         user = %auth.user.id,
