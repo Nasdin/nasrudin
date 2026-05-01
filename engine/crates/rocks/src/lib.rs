@@ -139,8 +139,32 @@ pub fn compute_block_cache_bytes() -> (usize, usize) {
         // Fall back to a conservative 256 MB.
         return (256 * 1024 * 1024, 0);
     }
-    const RESERVED_FOR_OTHERS: usize = 1024 * 1024 * 1024;
-    let avail = total_bytes.saturating_sub(RESERVED_FOR_OTHERS);
+    // Reserve = max(1.5 GB, 50 % of total).
+    //
+    // The 1.5 GB floor covers measured non-cache services co-located on
+    // the production droplet: Postgres ~300 MB shared_buffers, Caddy
+    // ~20 MB, Node SSR frontend ~250 MB, the GA worker + Lean
+    // toolchain ~400 MB, kernel + journald + sshd ~300 MB, and the
+    // API process baseline excluding cache ~150 MB ≈ 1.42 GB. 1.5 GB
+    // gives a small safety margin.
+    //
+    // The 50 % rule kicks in on bigger boxes (4 GB+): even when the
+    // 1.5 GB floor is comfortable, we don't want cache eating more
+    // than half the RAM — leaves headroom for spike loads (a
+    // particularly large Lean compile, an LLM steerer call buffering
+    // a big response, etc).
+    //
+    // Effective sizing:
+    //   1 GB: 64 MB (floor; 1.5 GB > total → 0, clamped to floor)
+    //   2 GB: 512 MB (25 %; 1.5 GB binds, leaves 512 MB)
+    //   4 GB: 2 GB (50 %; the 50 % rule binds)
+    //   8 GB: 4 GB (50 %)
+    //   16 GB+: 8 GB (cap)
+    //
+    // Override via `NASRUDIN_ROCKS_BLOCK_CACHE_MB`.
+    const ABSOLUTE_RESERVE_MIN: usize = 1_500 * 1024 * 1024;
+    let reserved = std::cmp::max(ABSOLUTE_RESERVE_MIN, total_bytes / 2);
+    let avail = total_bytes.saturating_sub(reserved);
     let clamped = avail.clamp(64 * 1024 * 1024, 8 * 1024 * 1024 * 1024);
     (clamped, total_bytes)
 }
