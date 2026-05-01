@@ -33,7 +33,6 @@ use nasrudin_ga::{DiscoveryEvent as GaDiscoveryEvent, GaStatusSnapshot};
 use nasrudin_pg::{connect_simple, query::theorems as theorem_q, run_migrations};
 use nasrudin_rocks::TheoremDb;
 
-use physics_api::auth as api_auth;
 use physics_api::handlers;
 use physics_api::lake_builder::LakeBuilder;
 use physics_api::rate_limit::WorkerRateLimiter;
@@ -59,10 +58,17 @@ const RESET_SQL: &str = "DROP TABLE IF EXISTS user_saved_theorems CASCADE; \
      DROP TABLE IF EXISTS cluster_reports CASCADE; \
      DROP TABLE IF EXISTS cluster_bandit_arms CASCADE; \
      DROP TABLE IF EXISTS cluster_directive_arms CASCADE; \
+     DROP TABLE IF EXISTS cluster_directive_linucb CASCADE; \
+     DROP TABLE IF EXISTS cluster_compute_arms CASCADE; \
+     DROP TABLE IF EXISTS cluster_compute_linucb CASCADE; \
+     DROP TABLE IF EXISTS directive_pull_events CASCADE; \
+     DROP TABLE IF EXISTS llm_proposed_targets CASCADE; \
      DROP TABLE IF EXISTS admin_audit_log CASCADE; \
      DROP TABLE IF EXISTS impersonation_sessions CASCADE; \
      DROP TABLE IF EXISTS refund_records CASCADE; \
      DROP TABLE IF EXISTS bulk_runs CASCADE; \
+     DROP TABLE IF EXISTS email_outbox CASCADE; \
+     DROP TABLE IF EXISTS user_sponsorships CASCADE; \
      DROP FUNCTION IF EXISTS prevent_last_admin_demotion() CASCADE; \
      DROP TABLE IF EXISTS theorems CASCADE; \
      DROP TABLE IF EXISTS workers CASCADE; \
@@ -374,6 +380,49 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         .route(
             "/api/conjecture/{id}/complete",
             axum::routing::post(handlers::conjecture::complete_handler),
+        )
+        // Paid Researcher tier surface — separate from /api/conjecture/*.
+        // Tests covering the effort-slider feature need these wired so
+        // they can exercise credits_budget/rush at the handler level.
+        .route(
+            "/api/research/jobs",
+            axum::routing::post(handlers::research_jobs::create)
+                .get(handlers::research_jobs::list),
+        )
+        .route(
+            "/api/research/jobs/{id}",
+            axum::routing::get(handlers::research_jobs::detail),
+        )
+        .route(
+            "/api/research/jobs/{id}/events",
+            axum::routing::get(handlers::research_jobs::events),
+        )
+        .route(
+            "/api/research/jobs/{id}/cancel",
+            axum::routing::post(handlers::research_jobs::cancel),
+        )
+        // Worker-facing /api/jobs/* — used by smoke tests asserting the
+        // auth gate fires for unauthenticated callers.
+        .route(
+            "/api/jobs/claim",
+            axum::routing::post(handlers::jobs_claim::claim),
+        )
+        .route(
+            "/api/jobs/{id}/heartbeat",
+            axum::routing::post(handlers::jobs_claim::heartbeat),
+        )
+        .route(
+            "/api/jobs/{id}/release",
+            axum::routing::post(handlers::jobs_claim::release),
+        )
+        .route(
+            "/api/jobs/{id}/mark_proved",
+            axum::routing::post(handlers::jobs_claim::mark_proved),
+        )
+        // Public steering snapshot — anonymous read returns 200 + ETag.
+        .route(
+            "/api/steering",
+            axum::routing::get(handlers::steering::steering),
         )
         .layer(session_layer)
         .with_state(Arc::clone(&state));

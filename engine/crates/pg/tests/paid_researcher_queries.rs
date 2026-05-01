@@ -43,6 +43,8 @@ async fn fresh_db() -> Option<(DatabaseConnection, MutexGuard<'static, ()>)> {
          DROP TABLE IF EXISTS impersonation_sessions CASCADE; \
          DROP TABLE IF EXISTS refund_records CASCADE; \
          DROP TABLE IF EXISTS bulk_runs CASCADE; \
+         DROP TABLE IF EXISTS email_outbox CASCADE; \
+         DROP TABLE IF EXISTS user_sponsorships CASCADE; \
          DROP FUNCTION IF EXISTS prevent_last_admin_demotion() CASCADE; \
          DROP TABLE IF EXISTS theorems CASCADE; \
          DROP TABLE IF EXISTS api_keys CASCADE; \

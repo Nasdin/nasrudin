@@ -46,10 +46,26 @@ pub struct CreateBody {
     pub hunch: String,
     #[serde(default)]
     pub domain_hint: Option<String>,
+    /// Number of credits worth of cluster compute to spend on this job
+    /// (1 credit = 96 lake-slot-hours). Default 1 reproduces the
+    /// legacy single-credit behavior.
+    #[serde(default = "default_credits_budget")]
+    pub credits_budget: i32,
+    /// When true, costs +1 credit and bumps `slice_priority` to 6 so
+    /// the job claims ahead of normal-priority work.
+    #[serde(default)]
+    pub rush: bool,
 }
 
-/// `POST /api/research/jobs` — atomically decrement the user's
-/// `research_credits` and queue a paid conjecture.
+fn default_credits_budget() -> i32 {
+    1
+}
+
+/// `POST /api/research/jobs` — atomically debit
+/// `credits_budget + (rush ? 1 : 0)` research_credits and queue a
+/// paid conjecture, both inside one Postgres transaction. On any
+/// downstream failure the rollback automatically restores the credits
+/// — no separate refund call needed.
 pub async fn create(
     State(state): State<Arc<AppState>>,
     auth: AuthOrApiKey,
@@ -62,27 +78,72 @@ pub async fn create(
         )
             .into_response();
     }
+    if body.credits_budget < 1 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "invalid_credits_budget" })),
+        )
+            .into_response();
+    }
     let pg = match &state.pg {
         Some(p) => p,
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
     let user_id = auth.user.id;
+    let total_cost: i32 = body.credits_budget + if body.rush { 1 } else { 0 };
+    let quota: i32 = 96 * body.credits_budget;
+    let priority: i32 = 5 + if body.rush { 1 } else { 0 };
 
-    // Atomic credit-decrement-or-no-op.
-    let decremented = nasrudin_pg::query::users::try_decrement_research_credits(pg, user_id)
-        .await
-        .unwrap_or(false);
-    if !decremented {
-        return (
-            StatusCode::PAYMENT_REQUIRED,
-            Json(serde_json::json!({ "error": "no_research_credits" })),
-        )
-            .into_response();
-    }
-
-    // Insert the job in `queued` state with the default 96 lake-slot-
-    // hour quota.
     use nasrudin_pg::sea_orm::*;
+    let txn = match pg.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    // Atomic decrement. `>= total_cost` predicate makes this safe
+    // under concurrent submissions — only one wins when there isn't
+    // enough headroom.
+    let decrement_result =
+        nasrudin_pg::query::users::try_decrement_research_credits_n(&txn, user_id, total_cost)
+            .await;
+    let new_remaining = match decrement_result {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            // Read fresh remaining for the 402 body, then rollback.
+            let remaining = nasrudin_pg::query::users::try_decrement_research_credits_n(
+                &txn, user_id, 0,
+            )
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+            let _ = txn.rollback().await;
+            return (
+                StatusCode::PAYMENT_REQUIRED,
+                Json(serde_json::json!({
+                    "error": "insufficient_research_credits",
+                    "required": total_cost,
+                    "remaining": remaining,
+                })),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            let _ = txn.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
     let id = Uuid::new_v4();
     let am = nasrudin_pg::entity::conjecture_jobs::ActiveModel {
         id: Set(id),
@@ -110,18 +171,24 @@ pub async fn create(
         created_at: Set(chrono::Utc::now().into()),
         completed_at: Set(None),
         paper_draft: Set(None),
-        lake_slot_hours_quota: Set(96),
+        lake_slot_hours_quota: Set(quota),
         lake_slot_hours_consumed: Set(0.0),
-        slice_priority: Set(5),
+        slice_priority: Set(priority),
         tier: Set("researcher".into()),
         // Default 4 — `atomic_claim_paid` overwrites this with the
         // claiming worker's reported available_lake_slots.
         allocated_slots: Set(4),
     };
-    if let Err(e) = am.insert(pg).await {
-        // Refund the credit we just took so the user isn't charged
-        // for a phantom row.
-        let _ = nasrudin_pg::query::users::refund_research_credit(pg, user_id).await;
+    if let Err(e) = am.insert(&txn).await {
+        // Transaction rollback restores the credits automatically.
+        let _ = txn.rollback().await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+    if let Err(e) = txn.commit().await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -129,9 +196,24 @@ pub async fn create(
             .into_response();
     }
 
+    tracing::info!(
+        user = %user_id,
+        job = %id,
+        credits = total_cost,
+        budget = body.credits_budget,
+        rush = body.rush,
+        remaining = new_remaining,
+        "submit_decremented",
+    );
+
     (
         StatusCode::CREATED,
-        Json(serde_json::json!({ "job_id": id, "state": "queued" })),
+        Json(serde_json::json!({
+            "job_id": id,
+            "state": "queued",
+            "credits_spent": total_cost,
+            "credits_remaining": new_remaining,
+        })),
     )
         .into_response()
 }

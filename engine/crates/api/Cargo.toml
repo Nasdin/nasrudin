@@ -91,7 +91,7 @@ bytes = { workspace = true }
 arc-swap = { workspace = true }
 dashmap = { workspace = true }
 async-trait = { workspace = true }
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 lru = { workspace = true }
 
 [dev-dependencies]
