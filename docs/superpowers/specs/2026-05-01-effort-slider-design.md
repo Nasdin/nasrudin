@@ -28,7 +28,7 @@ These were settled during brainstorming on 2026-05-01:
 
 A paid conjecture is now sized at submit by two knobs:
 
-- **Budget** — slider in 1-credit increments, 1 ≤ budget ≤ `me.research_credits_remaining`. Each credit buys 96 lake-slot-hours of cluster time. The chosen value is multiplied by 96 and persisted as `conjecture_jobs.lake_slot_hours_quota`.
+- **Budget** — slider in 1-credit increments, 1 ≤ budget ≤ `me.research_credits`. Each credit buys 96 lake-slot-hours of cluster time. The chosen value is multiplied by 96 and persisted as `conjecture_jobs.lake_slot_hours_quota`.
 - **Rush** — boolean. When set, the row's `slice_priority` is `6` instead of the default `5`, and total cost is incremented by 1.
 
 `total_credits = credits_budget + (rush ? 1 : 0)` is debited atomically at submit. Nothing changes mid-flight.
@@ -41,7 +41,7 @@ Zero schema changes. Migration `m20260501_000002_paid_job_quota` already added t
 
 The two helpers in `nasrudin_pg::query::users` gain an `n: u32` parameter:
 
-- `try_decrement_research_credits_n(pg_or_txn, user_id, n) -> Option<u32>` — returns the new remaining count when the predicate `remaining >= n` holds, else `None`. Uses `RETURNING research_credits_remaining` so the caller can echo the fresh value back to clients on 402.
+- `try_decrement_research_credits_n(pg_or_txn, user_id, n) -> Option<u32>` — returns the new remaining count when the predicate `remaining >= n` holds, else `None`. Uses `RETURNING research_credits` so the caller can echo the fresh value back to clients on 402.
 - `refund_research_credits_n(pg_or_txn, user_id, n) -> ()` — increments by `n`. Pure additive update.
 
 The single-credit callers either pass `n=1` directly or get thin wrappers — implementation choice during planning.
@@ -108,7 +108,7 @@ WITH cancelled AS (
               + CASE WHEN slice_priority > 5 THEN 1 ELSE 0 END) AS credits_spent
 )
 UPDATE users
-   SET research_credits_remaining = research_credits_remaining + (
+   SET research_credits = research_credits + (
      SELECT CASE
        WHEN candidates_verified = 0 THEN
          FLOOR(
@@ -121,7 +121,7 @@ UPDATE users
    )
  WHERE id = $user_id
    AND EXISTS (SELECT 1 FROM cancelled)
-RETURNING research_credits_remaining;
+RETURNING research_credits;
 
 COMMIT;
 ```
@@ -174,7 +174,7 @@ Total: 4 credits  ·  6 remaining
 const [creditsBudget, setCreditsBudget] = useState(1);
 const [rush, setRush] = useState(false);
 const me = useMe();
-const remaining = me.data?.research_credits_remaining ?? 0;
+const remaining = me.data?.research_credits ?? 0;
 const totalCost = creditsBudget + (rush ? 1 : 0);
 const canSubmit = hunch.trim().length > 0 && totalCost <= remaining && totalCost >= 1;
 ```
@@ -193,7 +193,7 @@ const canSubmit = hunch.trim().length > 0 && totalCost <= remaining && totalCost
 catch (e) {
   if (isApiError(e) && e.status === 402 && typeof e.body?.remaining === 'number') {
     qc.setQueryData(meProfileQueryKey, (old: Me | undefined) =>
-      old ? { ...old, research_credits_remaining: e.body.remaining } : old
+      old ? { ...old, research_credits: e.body.remaining } : old
     );
     setError(`Need ${e.body.required} credits, you have ${e.body.remaining}.`);
   }
@@ -262,13 +262,11 @@ The cancel mutation's `onSuccess` reads `refunded_credits` from the response and
 
 ## Open implementation-time verifications
 
-These need to be confirmed when writing the plan / writing code, not now:
+Status as of implementation (2026-05-01):
 
-1. **Heartbeat WHERE clause includes state guard.** The cancel race-safety argument assumes `UPDATE conjecture_jobs SET lake_slot_hours_consumed = ... WHERE id = ? AND state IN ('claimed','running')`. If the existing heartbeat path doesn't include the state filter, add it.
-2. **Capacity counter rebuilds from DB on API restart.** The slot-pool release happens outside the cancel transaction. If the API can crash between commit and in-memory release, the rebuild path must reconcile from `conjecture_jobs` rows in non-terminal states. If no such rebuild exists today, this spec needs a follow-up.
-3. **`/api/me` exposes `research_credits_remaining`.** The frontend slider depends on it. Quick grep confirms the field exists on `users`; verify the `me` handler surfaces it.
-
-These are listed for the planning phase to investigate; none change the design.
+1. ~~**Heartbeat WHERE clause includes state guard.**~~ **Resolved.** The existing `heartbeat_paid` had no state filter — a stale heartbeat from the still-running worker after a cancel commit would have flipped the row back to `'running'` and bumped `lake_slot_hours_consumed`. Fixed by adding `AND state IN ('claimed', 'running')` to both the read-side early return and the UPDATE's WHERE clause, with a regression test in `paid_researcher_queries.rs::heartbeat_paid_no_ops_after_cancel`.
+2. **Capacity counter rebuilds from DB on API restart.** Still open. The slot-pool release happens outside the cancel transaction. The handler now correctly skips `release_paid_slots` for queued (never-in-flight) cancels via `outcome.was_in_flight`, so the only loss window is a crash between transaction commit and the in-memory `release_paid_slots` call for a claimed/running job. Operations follow-up: confirm the API restart path rebuilds `state.capacity` from `conjecture_jobs` rows in `claimed`/`running`.
+3. ~~**`/api/me` exposes `research_credits`.**~~ **Resolved.** `AuthUser` now carries `research_credits`, surfaced via `/api/auth/me`. Note this is the `/api/auth/me` endpoint (not `/api/me/profile`); the frontend reads it via `useMe()` (queryKey `meQueryKey`).
 
 ## Out of scope
 
