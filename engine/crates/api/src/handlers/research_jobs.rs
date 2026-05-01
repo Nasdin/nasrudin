@@ -291,10 +291,9 @@ pub async fn events(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-/// `POST /api/research/jobs/{id}/cancel` — terminal-ish. Refund rule:
-/// full refund only if the run had zero verified results AND fewer
-/// than 1000 candidates attempted. Anything past those thresholds is
-/// "value delivered" and the credit stays consumed.
+/// `POST /api/research/jobs/{id}/cancel` — single-transaction terminal
+/// transition + proportional refund. Idempotent against double-clicks:
+/// a second call after the row is terminal returns 409.
 pub async fn cancel(
     State(state): State<Arc<AppState>>,
     auth: AuthOrApiKey,
@@ -304,11 +303,15 @@ pub async fn cancel(
         Some(p) => p,
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
-    let job = match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
-        Ok(Some(j)) if j.owner_id == auth.user.id => j,
-        // (cancel handler — owner-only path)
-        Ok(Some(_)) => return (StatusCode::FORBIDDEN, "not_owner").into_response(),
-        Ok(None) => return (StatusCode::NOT_FOUND, "not_found").into_response(),
+
+    let outcome = match nasrudin_pg::query::conjecture_jobs::cancel_paid_with_refund(
+        pg,
+        id,
+        auth.user.id,
+    )
+    .await
+    {
+        Ok(o) => o,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -317,41 +320,49 @@ pub async fn cancel(
                 .into_response();
         }
     };
-    if matches!(
-        job.state.as_str(),
-        "proved" | "budget_exhausted" | "cancelled" | "Complete"
-    ) {
-        return (StatusCode::CONFLICT, "terminal_state").into_response();
+
+    if !outcome.row_was_cancelled {
+        // Either the row was already terminal, doesn't exist, or the
+        // owner mismatched. Collapse to 409 — the user can refresh to
+        // see the current state. (404/403 fan-out is reserved for
+        // cases where we want to distinguish; the cancel button on
+        // the UI doesn't.)
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "terminal_state" })),
+        )
+            .into_response();
     }
 
-    let was_in_flight = matches!(job.state.as_str(), "claimed" | "running" | "Running");
-    // Release the actual slot count this job had committed, not a
-    // fixed 4. `allocated_slots` is set at claim time from the
-    // worker's reported available_lake_slots.
-    let allocated_slots = (job.allocated_slots as u32).max(1);
-    let _ = nasrudin_pg::query::conjecture_jobs::release_paid_claim(
-        pg,
+    // Release in-memory cluster capacity outside the transaction —
+    // ONLY for jobs that were actually in-flight. For a queued job
+    // no slots were ever reserved, and unconditional release would
+    // credit phantom slots to the pool.
+    if outcome.was_in_flight {
+        let allocated = (outcome.allocated_slots as u32).max(1);
+        state.capacity.release_paid_slots(allocated);
+    }
+
+    tracing::info!(
+        user = %auth.user.id,
+        job = %id,
+        refund = outcome.refunded_credits,
+        was_in_flight = outcome.was_in_flight,
+        "cancel_refunded",
+    );
+
+    emit_job_event(
+        &state,
         id,
-        None, // bypass worker check; cancel is owner-driven
-        "cancelled",
-    )
-    .await;
-    if was_in_flight {
-        state.capacity.release_paid_slots(allocated_slots);
-    }
-
-    let refund_eligible =
-        job.candidates_verified == 0 && job.candidates_attempted < 1000;
-    if refund_eligible {
-        let _ = nasrudin_pg::query::users::refund_research_credit(pg, auth.user.id).await;
-    }
-
-    emit_job_event(&state, id, JobEvent::Cancelled);
+        JobEvent::Cancelled {
+            refunded_credits: outcome.refunded_credits,
+        },
+    );
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "cancelled": true,
-            "refunded": refund_eligible,
+            "refunded_credits": outcome.refunded_credits,
         })),
     )
         .into_response()

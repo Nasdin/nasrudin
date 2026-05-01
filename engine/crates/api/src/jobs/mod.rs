@@ -38,5 +38,10 @@ pub enum JobEvent {
         best_partial_summary: String,
         refund_credits: i32,
     },
-    Cancelled,
+    Cancelled {
+        /// Credits refunded to the owner. 0 when work had already
+        /// produced verified theorems or the job had fully consumed
+        /// its budget.
+        refunded_credits: i32,
+    },
 }
