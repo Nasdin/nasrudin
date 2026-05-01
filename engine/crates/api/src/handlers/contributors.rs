@@ -77,12 +77,13 @@ pub async fn list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 pub async fn get_user_workers(
     State(state): State<Arc<AppState>>,
     Path(user_id): Path<String>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let Some(db) = state.pg.clone() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": "postgres not configured" })),
-        );
+        )
+            .into_response();
     };
 
     let uuid = match uuid::Uuid::parse_str(&user_id) {
@@ -91,7 +92,8 @@ pub async fn get_user_workers(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": "invalid user id" })),
-            );
+            )
+                .into_response();
         }
     };
 
@@ -101,7 +103,8 @@ pub async fn get_user_workers(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": format!("{e}") })),
-            );
+            )
+                .into_response();
         }
     };
 

@@ -237,6 +237,9 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         theorems_recent_cache: Arc::new(
             physics_api::handlers::theorems::TheoremsRecentCache::new(),
         ),
+        contributors_list_cache: Arc::new(
+            physics_api::handlers::contributors::ContributorsListCache::new(),
+        ),
         firebase_project_id: opts
             .firebase_project_id
             .or_else(|| Some("test-project".into())),

@@ -67,6 +67,11 @@ pub struct NewTheorem {
     pub worker_trusted: bool,
     /// 1-in-N sampling rate at ingest; None means env default.
     pub worker_spot_check_rate: Option<i32>,
+    /// Email of the user who owns the worker's API key. `None` for
+    /// anonymous workers. Powers the user-level contributor leaderboard
+    /// — aggregations group by `user_email` so one user's many workers
+    /// roll up into a single row.
+    pub user_email: Option<String>,
 }
 
 impl Default for NewTheorem {
@@ -101,6 +106,7 @@ impl Default for NewTheorem {
             worker_verified: false,
             worker_trusted: false,
             worker_spot_check_rate: None,
+            user_email: None,
         }
     }
 }
@@ -169,10 +175,7 @@ pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<
         worker_verified: Set(n.worker_verified),
         worker_trusted: Set(n.worker_trusted),
         worker_spot_check_rate: Set(n.worker_spot_check_rate),
-        // Populated by the ingest path when the worker's API key is
-        // linked to a user account (see handlers/ingest.rs); NotSet
-        // here lets the DB default (NULL) stand.
-        user_email: NotSet,
+        user_email: Set(n.user_email),
     };
 
     active

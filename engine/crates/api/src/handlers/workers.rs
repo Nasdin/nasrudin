@@ -235,6 +235,9 @@ pub async fn list(
     };
 
     let limit = query.limit.unwrap_or(50).min(100);
+    // Snapshot the pagination shape *before* moving cursor into the query —
+    // the legacy/paginated branch decision below needs the original input.
+    let want_paginated = query.limit.is_some() || query.cursor.is_some();
 
     // Use paginated query if cursor or limit is provided
     let (rows, next_cursor) = match nasrudin_pg::query::workers::list_paginated(
@@ -287,7 +290,7 @@ pub async fn list(
         .collect();
 
     // Return paginated response if pagination params were provided
-    if query.limit.is_some() || query.cursor.is_some() {
+    if want_paginated {
         return (
             StatusCode::OK,
             Json(serde_json::json!({
