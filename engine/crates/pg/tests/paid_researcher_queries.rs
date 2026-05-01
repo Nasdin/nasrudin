@@ -524,3 +524,46 @@ async fn refund_research_credits_n_zero_is_noop() {
         .unwrap();
     assert_eq!(m.research_credits, 3);
 }
+
+#[tokio::test]
+async fn heartbeat_paid_no_ops_after_cancel() {
+    // Race scenario: cancel transaction terminalises the row, then a
+    // late heartbeat from the still-running worker arrives. Without a
+    // state guard the heartbeat would (a) update lake_slot_hours_consumed
+    // and (b) flip state back to 'running' — undoing the cancel and
+    // leaking compute. Required regression test for the cancel path.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "heartbeat-after-cancel").await;
+    seed_queued_paid_job(&db, owner).await;
+    let claimed = q::atomic_claim_paid(&db, "worker", 4).await.unwrap().unwrap();
+
+    // Mark cancelled directly (simulating the cancel transaction
+    // having committed before this stale heartbeat lands).
+    db.execute_raw(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE conjecture_jobs SET state = 'cancelled' WHERE id = $1",
+        [claimed.id.into()],
+    ))
+    .await
+    .unwrap();
+    let before = q::get_by_id(&db, claimed.id).await.unwrap().unwrap();
+
+    // Stale heartbeat from the same worker — must be ignored.
+    let r = q::heartbeat_paid(&db, claimed.id, "worker", 100, 0, 1.0)
+        .await
+        .unwrap();
+    assert!(r.is_none(), "heartbeat must return None when row is terminal");
+
+    let after = q::get_by_id(&db, claimed.id).await.unwrap().unwrap();
+    assert_eq!(after.state, "cancelled", "state must remain cancelled");
+    assert_eq!(
+        after.lake_slot_hours_consumed, before.lake_slot_hours_consumed,
+        "consumed must not be bumped by stale heartbeat"
+    );
+    assert_eq!(
+        after.candidates_attempted, before.candidates_attempted,
+        "counters must not be bumped by stale heartbeat"
+    );
+}

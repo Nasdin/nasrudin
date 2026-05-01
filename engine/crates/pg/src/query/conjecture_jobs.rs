@@ -435,6 +435,14 @@ pub async fn heartbeat_paid(
     if job.claimed_by.as_deref() != Some(worker_id) {
         return Ok(None);
     }
+    // Heartbeats are only valid while the row is in the active band.
+    // Cancellation, budget exhaustion, and `proved` transitions all
+    // terminalise the row — a late heartbeat must not flip state back
+    // to `running` or eat more quota. The cancel transaction's race-
+    // safety argument depends on this guard.
+    if !matches!(job.state.as_str(), "claimed" | "running") {
+        return Ok(None);
+    }
     // Sanity cap: max 2× the wallclock since last heartbeat × slot
     // count. The slot count is the per-job `allocated_slots` stamped
     // at claim time, so the cap follows the actual capacity committed
@@ -460,7 +468,9 @@ pub async fn heartbeat_paid(
             candidates_attempted = candidates_attempted + $2,
             candidates_verified = candidates_verified + $3,
             lake_slot_hours_consumed = lake_slot_hours_consumed + $4
-           WHERE id = $1 AND claimed_by = $5"#,
+           WHERE id = $1
+             AND claimed_by = $5
+             AND state IN ('claimed', 'running')"#,
         [
             id.into(),
             cand_attempted_delta.into(),
