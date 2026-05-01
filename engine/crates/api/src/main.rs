@@ -523,6 +523,7 @@ async fn main() -> anyhow::Result<()> {
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
         workers_list_cache: Arc::new(physics_api::handlers::workers::WorkersListCache::new()),
+        contributors_list_cache: Arc::new(physics_api::handlers::contributors::ContributorsListCache::new()),
         theorems_recent_cache: Arc::new(
             physics_api::handlers::theorems::TheoremsRecentCache::new(),
         ),
@@ -1096,6 +1097,9 @@ async fn main() -> anyhow::Result<()> {
     // Public workers list — readable without auth (returns [] if PG unavailable).
     let workers_public = Router::new()
         .route("/api/workers", get(handlers::workers::list))
+        // Public contributors leaderboard — users ranked by theorems
+        .route("/api/contributors", get(handlers::contributors::list))
+        .route("/api/contributors/{id}", get(handlers::contributors::get_user_workers))
         // Public profile + sponsorship summary. No auth — these are
         // intentionally world-readable so contributors can link to
         // their profile pages from anywhere. Sensitive fields

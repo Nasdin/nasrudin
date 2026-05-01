@@ -57,6 +57,8 @@ export interface Theorem {
   status: 'Pending' | 'Verified' | 'Rejected' | string;
   rejected_reason: string | null;
   contributor_id: string;
+  /** Email of the user who owns the worker that contributed this theorem. */
+  user_email: string | null;
   /** ISO 8601 timestamp with offset (`DateTimeWithTimeZone`). */
   created_at: string;
   /** ISO 8601 timestamp with offset, or `null` while pending. */
@@ -144,6 +146,15 @@ export interface WorkerOwner {
   display_name: string | null;
   /** Local part of the email — a short public handle. */
   handle: string;
+}
+
+export interface Contributor {
+  user_id: string;
+  display_name: string | null;
+  handle: string;
+  worker_count: number;
+  theorems_contributed: number;
+  active_worker_count: number;
 }
 
 export interface Worker {

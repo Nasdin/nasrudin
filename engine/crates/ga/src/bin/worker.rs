@@ -2517,7 +2517,7 @@ mod embed_autopull {
             values.push(id);
         }
         let hnsw = HnswBuilder::default().build(points, values);
-        let bytes = bincode::serialize(&hnsw)?;
+        let bytes = postcard::to_allocvec(&hnsw)?;
         let sidecar = sidecar_path(main);
         std::fs::write(&sidecar, &bytes)?;
         Ok(())

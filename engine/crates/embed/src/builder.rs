@@ -103,7 +103,7 @@ fn write_hnsw_sidecar(main_path: &Path, rows: &[(TheoremId, Vec<f32>)]) -> Resul
     let points: Vec<CosinePoint> = rows.iter().map(|(_, v)| CosinePoint(v.clone())).collect();
     let values: Vec<TheoremId> = rows.iter().map(|(id, _)| *id).collect();
     let hnsw = HnswBuilder::default().build(points, values);
-    let bytes = bincode::serialize(&hnsw).context("serialise HNSW")?;
+    let bytes = postcard::to_allocvec(&hnsw).context("serialise HNSW")?;
     std::fs::write(&tmp, &bytes).with_context(|| format!("write {tmp:?}"))?;
     std::fs::rename(&tmp, &sidecar).context("rename hnsw tmp into place")?;
     Ok(())

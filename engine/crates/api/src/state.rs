@@ -157,6 +157,8 @@ pub struct AppState {
     pub landing_stats: Arc<crate::handlers::stats::LandingStatsCache>,
     /// 30-second cache backing `GET /api/workers` (public list).
     pub workers_list_cache: Arc<crate::handlers::workers::WorkersListCache>,
+    /// 30-second cache backing `GET /api/contributors` (user leaderboard).
+    pub contributors_list_cache: Arc<crate::handlers::contributors::ContributorsListCache>,
     /// 30-second cache backing `GET /api/theorems/recent`. Keyed by
     /// `(limit, domain)` since both vary independently across the few
     /// callers that hit this endpoint.

@@ -169,6 +169,10 @@ pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<
         worker_verified: Set(n.worker_verified),
         worker_trusted: Set(n.worker_trusted),
         worker_spot_check_rate: Set(n.worker_spot_check_rate),
+        // Populated by the ingest path when the worker's API key is
+        // linked to a user account (see handlers/ingest.rs); NotSet
+        // here lets the DB default (NULL) stand.
+        user_email: NotSet,
     };
 
     active

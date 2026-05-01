@@ -53,6 +53,10 @@ pub struct Model {
     pub status: String,
     pub rejected_reason: Option<String>,
     pub contributor_id: String,
+    /// Email of the user who owns the worker that contributed this theorem.
+    /// Retrieved from the api_keys table when the theorem is ingested.
+    #[sea_orm(nullable)]
+    pub user_email: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub verified_at: Option<DateTimeWithTimeZone>,
     /// P-Task 12: worker locally lake-built before submitting. When

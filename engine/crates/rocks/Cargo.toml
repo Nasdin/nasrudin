@@ -12,9 +12,10 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 hex = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
-# Cold-tier corpus encoding (Mathlib ~195k axioms via bincode + serde
-# derives on `nasrudin_core::Axiom`).
-bincode = { workspace = true }
+# Cold-tier corpus encoding (Mathlib ~195k axioms). rkyv gives
+# zero-copy reads on cache hits — the GA hot loop pays no decode cost
+# for axioms the block cache already has.
+rkyv = { workspace = true }
 # Dynamic block-cache sizing — read total system RAM at DB open time.
 sysinfo = { workspace = true }
 

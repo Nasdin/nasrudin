@@ -114,6 +114,14 @@ function TheoremView({ thm }: { thm: Theorem }) {
         <h4>Provenance</h4>
         <ul className="meta-list">
           <li>
+            Worker <strong style={{ fontFamily: 'var(--font-mono)' }}>{thm.contributor_id}</strong>
+          </li>
+          {thm.user_email && (
+            <li>
+              User <strong style={{ fontFamily: 'var(--font-mono)' }}>{thm.user_email}</strong>
+            </li>
+          )}
+          <li>
             Generation <strong>{thm.generation ?? 0}</strong>
           </li>
           <li>

@@ -250,8 +250,8 @@ impl CorpusBackend for CorpusDb {
             .context("Missing corpus_axiom CF")?;
         match self.db.get_cf(&cf, name.as_bytes()).context("get corpus axiom")? {
             Some(bytes) => {
-                let axiom: Axiom = bincode::deserialize(&bytes)
-                    .context("deserialize corpus axiom")?;
+                let axiom: Axiom = rkyv::from_bytes::<Axiom, rkyv::rancor::Error>(&bytes)
+                    .map_err(|e| anyhow::anyhow!("rkyv corpus axiom decode: {e}"))?;
                 Ok(Some(axiom))
             }
             None => Ok(None),
@@ -275,8 +275,8 @@ impl CorpusBackend for CorpusDb {
         for r in results {
             match r.context("multi_get corpus axiom")? {
                 Some(bytes) => {
-                    let axiom: Axiom = bincode::deserialize(&bytes)
-                        .context("deserialize corpus axiom")?;
+                    let axiom: Axiom = rkyv::from_bytes::<Axiom, rkyv::rancor::Error>(&bytes)
+                        .map_err(|e| anyhow::anyhow!("rkyv corpus axiom decode: {e}"))?;
                     out.push(Some(axiom));
                 }
                 None => out.push(None),
@@ -295,8 +295,8 @@ impl CorpusBackend for CorpusDb {
             let (k, v) = item.context("iter corpus_axiom")?;
             let name = String::from_utf8(k.to_vec())
                 .context("corpus_axiom key not utf8")?;
-            let axiom: Axiom = bincode::deserialize(&v)
-                .context("deserialize corpus axiom")?;
+            let axiom: Axiom = rkyv::from_bytes::<Axiom, rkyv::rancor::Error>(&v)
+                .map_err(|e| anyhow::anyhow!("rkyv corpus axiom decode: {e}"))?;
             Ok((name, axiom))
         }))
     }
@@ -346,8 +346,8 @@ impl CorpusBackend for CorpusDb {
                 .ok_or_else(|| {
                     anyhow::anyhow!("corpus_domain points to missing axiom: {name}")
                 })?;
-            let axiom: Axiom =
-                bincode::deserialize(&payload).context("deserialize corpus axiom")?;
+            let axiom: Axiom = rkyv::from_bytes::<Axiom, rkyv::rancor::Error>(&payload)
+                .map_err(|e| anyhow::anyhow!("rkyv corpus axiom decode: {e}"))?;
             Ok((name, axiom))
         }))
     }
@@ -389,8 +389,9 @@ impl CorpusBackend for CorpusDb {
             .cf_handle(CF_CORPUS_DOMAIN)
             .context("Missing corpus_domain CF")?;
 
-        let value = bincode::serialize(axiom).context("serialize corpus axiom")?;
-        batch.put_cf(&axiom_cf, axiom.name.as_bytes(), &value);
+        let value = rkyv::to_bytes::<rkyv::rancor::Error>(axiom)
+            .map_err(|e| anyhow::anyhow!("rkyv corpus axiom encode: {e}"))?;
+        batch.put_cf(&axiom_cf, axiom.name.as_bytes(), value.as_slice());
 
         let domain_str = domain_to_key(&axiom.domain);
         let dkey = Self::domain_key(&domain_str, &axiom.name);
@@ -415,9 +416,9 @@ impl CorpusBackend for CorpusDb {
 
         let mut batch = WriteBatch::default();
         for axiom in axioms {
-            let value = bincode::serialize(axiom)
-                .with_context(|| format!("serialize corpus axiom {}", axiom.name))?;
-            batch.put_cf(&axiom_cf, axiom.name.as_bytes(), &value);
+            let value = rkyv::to_bytes::<rkyv::rancor::Error>(axiom)
+                .map_err(|e| anyhow::anyhow!("rkyv corpus axiom encode {}: {e}", axiom.name))?;
+            batch.put_cf(&axiom_cf, axiom.name.as_bytes(), value.as_slice());
 
             let domain_str = domain_to_key(&axiom.domain);
             let dkey = Self::domain_key(&domain_str, &axiom.name);

@@ -71,7 +71,7 @@ impl EmbeddingIndex {
         let hnsw_path = sidecar_path(path);
         let hnsw_bytes = std::fs::read(&hnsw_path)
             .with_context(|| format!("read hnsw sidecar {hnsw_path:?}"))?;
-        let hnsw: HnswMap<CosinePoint, TheoremId> = bincode::deserialize(&hnsw_bytes)
+        let hnsw: HnswMap<CosinePoint, TheoremId> = postcard::from_bytes(&hnsw_bytes)
             .context("deserialise HNSW sidecar")?;
 
         Ok(Self {

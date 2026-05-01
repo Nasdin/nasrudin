@@ -6,13 +6,13 @@ import {
   type ColumnDef,
   type SortingState,
 } from '@tanstack/react-table';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FunnelChart } from '~/components/landing/FunnelChart';
 import { NetworkBreakdown } from '~/components/landing/NetworkBreakdown';
 import { PulseStrip } from '~/components/landing/PulseStrip';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
-import { useWorkers, workersOptions } from '~/lib/queries';
+import { useInfiniteWorkers, useWorkers, workersOptions } from '~/lib/queries';
 import type { Worker } from '~/lib/types';
 
 export const Route = createFileRoute('/workers')({
@@ -128,6 +128,15 @@ function WorkersPage() {
               <WorkersTable workers={filtered} />
             </div>
           )}
+        </div>
+
+        {/* Infinite scroll table section */}
+        <div style={{ marginTop: 64 }}>
+          <h2 style={{ marginBottom: 24 }}>All Workers</h2>
+          <p style={{ color: 'var(--ink-500)', marginBottom: 24 }}>
+            Browse all workers on the platform with infinite scroll. Shows workers ordered by theorems contributed.
+          </p>
+          <InfiniteWorkersTable />
         </div>
       </div>
       <AppFooter />
@@ -343,4 +352,206 @@ function formatRelative(iso: string): string {
   const day = Math.floor(hr / 24);
   if (day < 30) return `${day}d ago`;
   return new Date(iso).toLocaleDateString();
+}
+
+function InfiniteWorkersTable() {
+  const { data, isPending, isFetchingNextPage, hasNextPage, fetchNextPage } = useInfiniteWorkers();
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  
+  const allWorkers = data?.pages.flatMap((page) => page.workers) ?? [];
+  const columns: ColumnDef<Worker>[] = [
+    {
+      accessorKey: 'id',
+      header: 'Worker',
+      cell: (info) => {
+        const w = info.row.original;
+        const status = String(w.status).toLowerCase();
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background:
+                  status === 'active'
+                    ? 'var(--olive-500)'
+                    : status === 'inactive'
+                      ? 'var(--saffron-500)'
+                      : 'var(--paper-300)',
+                boxShadow: status === 'active' ? '0 0 0 3px var(--olive-50)' : 'none',
+              }}
+            />
+            <span className="handle-cell">{w.id}</span>
+          </div>
+        );
+      },
+    },
+    {
+      id: 'owner',
+      header: 'Owner',
+      cell: (info) => {
+        const w = info.row.original;
+        const ownerLabel =
+          w.owner?.display_name ?? (w.owner?.handle ? `@${w.owner.handle}` : null) ?? 'Anonymous';
+        const ownerStyle = w.owner
+          ? { fontFamily: 'var(--font-serif)', fontSize: 14 }
+          : { fontStyle: 'italic', color: 'var(--ink-500)' };
+        const ownerColor = w.owner ? 'var(--ink-900)' : 'var(--ink-500)';
+        return (
+          <span style={ownerStyle}>
+            <span style={{ color: ownerColor }}>{ownerLabel}</span>
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'host',
+      header: 'Host',
+      cell: (info) => {
+        const host = info.getValue() as string | null;
+        return (
+          <span style={{ color: 'var(--ink-500)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            {host ?? '—'}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: (info) => {
+        const w = info.row.original;
+        const status = String(w.status).toLowerCase();
+        const color =
+          status === 'active'
+            ? 'var(--olive-700)'
+            : status === 'inactive'
+              ? 'var(--saffron-700)'
+              : 'var(--ink-500)';
+        return (
+          <span
+            className="num-cell"
+            style={{
+              color,
+              textTransform: 'uppercase',
+              letterSpacing: 'var(--tracking-allcaps)',
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          >
+            {status}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'theorems_contributed',
+      header: 'Theorems',
+      cell: (info) => (
+        <span className="num-cell">{(info.getValue() as number).toLocaleString()}</span>
+      ),
+    },
+    {
+      id: 'lastVerified',
+      header: 'Last verified',
+      cell: (info) => {
+        const w = info.row.original;
+        return (
+          <span className="num-cell" style={{ color: 'var(--ink-500)' }}>
+            {w.last_contribution_at ? formatRelative(w.last_contribution_at) : '—'}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'lastSeen',
+      header: 'Last seen',
+      cell: (info) => {
+        const w = info.row.original;
+        return (
+          <span className="num-cell" style={{ color: 'var(--ink-500)' }}>
+            {formatRelative(w.last_seen)}
+          </span>
+        );
+      },
+    },
+  ];
+
+  const table = useReactTable({
+    data: allWorkers,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    onSortingChange: setSorting,
+    state: { sorting },
+  });
+
+  // Infinite scroll trigger
+  useEffect(() => {
+    const container = tableContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      if (scrollHeight - scrollTop - clientHeight < 100 && hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  if (isPending) return <p style={{ color: 'var(--ink-500)' }}>Loading workers…</p>;
+  if (allWorkers.length === 0) return <p style={{ color: 'var(--ink-500)' }}>No workers found.</p>;
+
+  return (
+    <div className="lead-table-scroll" ref={tableContainerRef} style={{ height: 600, overflow: 'auto' }}>
+      <table className="lead-table">
+        <thead>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <tr key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <th
+                  key={header.id}
+                  style={{
+                    textAlign: 'right',
+                    cursor: header.column.getCanSort() ? 'pointer' : 'default',
+                  }}
+                  onClick={header.column.getToggleSortingHandler()}
+                >
+                  {header.isPlaceholder
+                    ? null
+                    : flexRender(header.column.columnDef.header, header.getContext())}
+                  {header.column.getIsSorted() === 'asc' ? ' ↑' : null}
+                  {header.column.getIsSorted() === 'desc' ? ' ↓' : null}
+                </th>
+              ))}
+            </tr>
+          ))}
+        </thead>
+        <tbody>
+          {table.getRowModel().rows.map((row) => (
+            <tr key={row.id}>
+              {row.getVisibleCells().map((cell) => (
+                <td
+                  key={cell.id}
+                  className="num-cell"
+                  style={{ textAlign: 'right' }}
+                >
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {isFetchingNextPage && (
+        <p style={{ color: 'var(--ink-500)', textAlign: 'center', padding: 16 }}>
+          Loading more workers…
+        </p>
+      )}
+    </div>
+  );
 }

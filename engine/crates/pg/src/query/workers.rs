@@ -309,6 +309,39 @@ pub async fn list_all(db: &impl ConnectionTrait) -> Result<Vec<workers::Model>> 
         .await?)
 }
 
+/// Paginated list of workers ordered by `theorems_contributed DESC`.
+/// Returns a page of workers and a cursor for the next page.
+pub async fn list_paginated(
+    db: &impl ConnectionTrait,
+    limit: u64,
+    cursor: Option<String>,
+) -> Result<(Vec<workers::Model>, Option<String>)> {
+    let limit = std::cmp::min(limit, 100); // Cap at 100 per page
+    let mut query = workers::Entity::find()
+        .order_by_desc(workers::Column::TheoremsContributed);
+
+    // If cursor is provided, decode it and use it to skip to that position
+    if let Some(cursor) = cursor {
+        if let Ok(theorems_contributed) = cursor.parse::<i64>() {
+            query = query.filter(workers::Column::TheoremsContributed.lt(theorems_contributed));
+        }
+    }
+
+    let workers_list = query
+        .limit(limit as u64)
+        .all(db)
+        .await?;
+
+    // Generate next cursor from the last worker's theorems_contributed value
+    let next_cursor = if workers_list.len() >= limit as usize {
+        workers_list.last().map(|w| w.theorems_contributed.to_string())
+    } else {
+        None
+    };
+
+    Ok((workers_list, next_cursor))
+}
+
 /// Count workers whose `last_seen` is more recent than `now() - threshold`.
 /// Used by the public landing-stats endpoint.
 pub async fn count_active_workers(

@@ -1,10 +1,11 @@
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 /// Unique symbol identifier
 pub type Symbol = String;
 
 /// Physical constant identifiers
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub enum PhysConst {
     SpeedOfLight,
     PlanckConst,
@@ -22,7 +23,7 @@ pub enum PhysConst {
 }
 
 /// Binary operators
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub enum BinOp {
     Add,
     Sub,
@@ -45,7 +46,7 @@ pub enum BinOp {
 }
 
 /// Unary operators
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub enum UnOp {
     Neg,
     Abs,
@@ -67,7 +68,26 @@ pub enum UnOp {
 }
 
 /// Mathematical expression AST
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// `#[rkyv(omit_bounds)]` is required on every recursive `Box<Expr>` /
+/// `Option<Box<Expr>>` field — Expr references itself, and rkyv's auto-
+/// bound generator can't resolve the cycle. The container-level
+/// `serialize_bounds` / `deserialize_bounds` / `bytecheck(bounds(...))`
+/// re-introduce the constraints rkyv would otherwise infer per-field;
+/// without them the omit_bounds fields would have no bounds at all.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[rkyv(
+    serialize_bounds(
+        __S: rkyv::ser::Writer + rkyv::ser::Allocator,
+        __S::Error: rkyv::rancor::Source,
+    ),
+    deserialize_bounds(
+        __D::Error: rkyv::rancor::Source,
+    ),
+    bytecheck(
+        bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)
+    )
+)]
 pub enum Expr {
     /// Variable: x, y, m, c, E
     Var(Symbol),
@@ -76,48 +96,59 @@ pub enum Expr {
     /// Rational literal (numerator, denominator)
     Lit(i64, u64),
     /// Function application: f(x)
-    App(Box<Expr>, Box<Expr>),
+    App(#[rkyv(omit_bounds)] Box<Expr>, #[rkyv(omit_bounds)] Box<Expr>),
     /// Lambda: lambda(x : T). body
-    Lam(Symbol, Box<Expr>, Box<Expr>),
+    Lam(Symbol, #[rkyv(omit_bounds)] Box<Expr>, #[rkyv(omit_bounds)] Box<Expr>),
     /// Dependent function type: Pi(x : A). B
-    Pi(Symbol, Box<Expr>, Box<Expr>),
+    Pi(Symbol, #[rkyv(omit_bounds)] Box<Expr>, #[rkyv(omit_bounds)] Box<Expr>),
     /// Binary operation
-    BinOp(BinOp, Box<Expr>, Box<Expr>),
+    BinOp(BinOp, #[rkyv(omit_bounds)] Box<Expr>, #[rkyv(omit_bounds)] Box<Expr>),
     /// Unary operation
-    UnOp(UnOp, Box<Expr>),
+    UnOp(UnOp, #[rkyv(omit_bounds)] Box<Expr>),
     /// Derivative: d/dx f
-    Deriv(Box<Expr>, Symbol),
+    Deriv(#[rkyv(omit_bounds)] Box<Expr>, Symbol),
     /// Partial derivative: partial/partial_x f
-    PartialDeriv(Box<Expr>, Symbol),
+    PartialDeriv(#[rkyv(omit_bounds)] Box<Expr>, Symbol),
     /// Integral: integral_a^b f dx
     Integral {
+        #[rkyv(omit_bounds)]
         body: Box<Expr>,
         var: Symbol,
+        #[rkyv(omit_bounds)]
         lower: Option<Box<Expr>>,
+        #[rkyv(omit_bounds)]
         upper: Option<Box<Expr>>,
     },
     /// Sum: Sigma_{i=a}^{b} f(i)
     Sum {
+        #[rkyv(omit_bounds)]
         body: Box<Expr>,
         var: Symbol,
+        #[rkyv(omit_bounds)]
         lower: Box<Expr>,
+        #[rkyv(omit_bounds)]
         upper: Box<Expr>,
     },
     /// Product: Pi_{i=a}^{b} f(i)
     Prod {
+        #[rkyv(omit_bounds)]
         body: Box<Expr>,
         var: Symbol,
+        #[rkyv(omit_bounds)]
         lower: Box<Expr>,
+        #[rkyv(omit_bounds)]
         upper: Box<Expr>,
     },
     /// Limit: lim_{x -> a} f(x)
     Limit {
+        #[rkyv(omit_bounds)]
         body: Box<Expr>,
         var: Symbol,
+        #[rkyv(omit_bounds)]
         approaching: Box<Expr>,
     },
     /// Let binding: let x = e1 in e2
-    Let(Symbol, Box<Expr>, Box<Expr>),
+    Let(Symbol, #[rkyv(omit_bounds)] Box<Expr>, #[rkyv(omit_bounds)] Box<Expr>),
 }
 
 impl Expr {

@@ -55,6 +55,7 @@ use crate::{
     trust::{LocalSocket, TrustDecision},
 };
 use nasrudin_pg::query::theorems;
+use nasrudin_pg::sea_orm::{ActiveModelTrait, NotSet, Set};
 use nasrudin_rocks::ReverifyJob;
 
 /// Reject batches when the reverify queue holds more than this many jobs.
@@ -330,36 +331,66 @@ pub async fn ingest_one_theorem(
         .and_then(|v| v.get("type").and_then(|x| x.as_str()).map(String::from))
         .unwrap_or_else(|| "Axiom".to_string());
 
-    let new_row = theorems::NewTheorem {
-        id: theorem_id.clone(),
-        canonical_hash: canonical_hash.clone(),
-        canonical_ac_hash: canonical_ac_hash.clone(),
-        canonical_statement: t.canonical_statement.clone(),
-        latex: t.latex.clone(),
-        lean_source: t.lean_source.clone(),
-        domain: t.domain.clone(),
-        axioms_used: t.axioms_used.clone(),
-        chain_json: t.chain.clone(),
-        parents: parents_bytes,
-        origin_kind,
-        origin_payload: t.origin.clone(),
-        depth: t.depth.map(|x| x as i32),
-        complexity: t.complexity.map(|x| x as i32),
-        generation: t.generation.map(|x| x as i64),
-        fitness_novelty: extract_fitness(&t.fitness, "novelty"),
-        fitness_compactness: extract_fitness(&t.fitness, "compactness"),
-        fitness_dimensional_correctness: extract_fitness(&t.fitness, "dimensional_correctness"),
-        fitness_domain_coverage: extract_fitness(&t.fitness, "domain_coverage"),
-        fitness_axiom_efficiency: extract_fitness(&t.fitness, "axiom_efficiency"),
-        fitness_nasrudin_relevance: extract_fitness(&t.fitness, "nasrudin_relevance"),
-        fitness_depth_score: extract_fitness(&t.fitness, "depth"),
-        dimension: t.dimension.map(|d| d.to_vec()),
-        engine_git_sha: engine_git_sha.to_string(),
-        lean_version: lean_version.to_string(),
-        contributor_id: worker_id.to_string(),
-        worker_verified: t.worker_verified,
-        worker_trusted: decision.trusted,
-        worker_spot_check_rate: Some(decision.spot_check_rate as i32),
+    // Look up the user's email from the worker's api_key
+    let user_email = if let Some(pg) = &state.pg {
+        use sea_orm::{EntityTrait, QueryFilter, ColumnTrait};
+        if let Ok(Some(key)) = nasrudin_pg::entity::api_keys::Entity::find()
+            .filter(nasrudin_pg::entity::api_keys::Column::Name.eq(worker_id))
+            .filter(nasrudin_pg::entity::api_keys::Column::Kind.eq("worker"))
+            .filter(nasrudin_pg::entity::api_keys::Column::RevokedAt.is_null())
+            .one(pg)
+            .await
+        {
+            if let Some(user_id) = key.user_id {
+                if let Ok(Some(user)) = nasrudin_pg::entity::users::Entity::find_by_id(user_id)
+                    .one(pg)
+                    .await
+                {
+                    Some(user.email)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let new_row = nasrudin_pg::entity::theorems::ActiveModel {
+        id: Set(id_bytes_arr.to_vec()),
+        canonical_hash: Set(canonical_hash.to_vec()),
+        canonical_ac_hash: Set(canonical_ac_hash),
+        canonical_statement: Set(t.canonical_statement.clone()),
+        latex: Set(t.latex.clone()),
+        lean_source: Set(t.lean_source.clone()),
+        domain: Set(t.domain.clone()),
+        axioms_used: Set(t.axioms_used.clone()),
+        chain_json: Set(t.chain.clone().into()),
+        parents: Set(t.parents.clone().map(|p| p.into_iter().map(|v| v.to_vec()).collect())),
+        origin_kind: Set(origin_kind),
+        origin_payload: Set(t.origin.clone().map(|p| p.into())),
+        depth: Set(t.depth),
+        complexity: Set(t.complexity),
+        generation: Set(t.generation),
+        fitness_novelty: Set(extract_fitness(&t.fitness, "novelty")),
+        fitness_compactness: Set(extract_fitness(&t.fitness, "compactness")),
+        fitness_dimensional_correctness: Set(extract_fitness(&t.fitness, "dimensional_correctness")),
+        fitness_domain_coverage: Set(extract_fitness(&t.fitness, "domain_coverage")),
+        fitness_axiom_efficiency: Set(extract_fitness(&t.fitness, "axiom_efficiency")),
+        fitness_nasrudin_relevance: Set(extract_fitness(&t.fitness, "nasrudin_relevance")),
+        fitness_depth_score: Set(extract_fitness(&t.fitness, "depth")),
+        dimension: Set(t.dimension.map(|d| d.to_vec())),
+        engine_git_sha: Set(engine_git_sha.to_string()),
+        lean_version: Set(lean_version.to_string()),
+        contributor_id: Set(worker_id.to_string()),
+        user_email: Set(user_email),
+        worker_verified: Set(t.worker_verified),
+        worker_trusted: Set(decision.trusted),
+        worker_spot_check_rate: Set(Some(decision.spot_check_rate as i32)),
     };
 
     let id_arr = id_bytes_arr;

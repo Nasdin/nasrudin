@@ -22,7 +22,10 @@ memmap2 = { workspace = true }
 blake3 = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
-bincode = "1"
+# HnswMap is a third-party type that derives serde; postcard is the
+# maintained serde-compat binary format (bincode 1.x was the last
+# functional release; bincode 3.0 is a `compile_error!` joke).
+postcard = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

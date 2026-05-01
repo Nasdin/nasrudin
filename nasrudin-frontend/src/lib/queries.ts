@@ -1,4 +1,10 @@
-import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  queryOptions,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { apiFetch, isApiError } from './api';
 import {
   firebaseSignOut,
@@ -15,6 +21,7 @@ import type {
   ConceptSearchResponse,
   ConjectureListResponse,
   ConjectureView,
+  Contributor,
   CreateConjectureRequest,
   CreateConjectureResponse,
   CreateResearchJobRequest,
@@ -441,6 +448,54 @@ export const workersOptions = () =>
 
 export function useWorkers() {
   return useQuery(workersOptions());
+}
+
+// --- workers (paginated infinite scroll) ---
+
+interface WorkersPageResponse {
+  workers: Worker[];
+  next_cursor: string | null;
+}
+
+export function useInfiniteWorkers() {
+  return useInfiniteQuery({
+    queryKey: ['workers', 'infinite'] as const,
+    queryFn: async ({ pageParam }) => {
+      const params = new URLSearchParams();
+      params.set('limit', '50');
+      if (pageParam) {
+        params.set('cursor', pageParam as string);
+      }
+      return apiFetch<WorkersPageResponse>(`/api/workers?${params.toString()}`);
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    staleTime: 10_000,
+  });
+}
+
+// --- contributors (user leaderboard) ---
+
+export const contributorsOptions = () =>
+  queryOptions({
+    queryKey: ['contributors'] as const,
+    queryFn: () => apiFetch<Contributor[]>('/api/contributors'),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+export function useContributors() {
+  return useQuery(contributorsOptions());
+}
+
+export function useContributorWorkers(userId: string) {
+  return useQuery<Worker[]>({
+    queryKey: ['contributors', userId, 'workers'],
+    queryFn: () => apiFetch<Worker[]>(`/api/contributors/${userId}`),
+    enabled: !!userId,
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  });
 }
 
 // --- stats ---

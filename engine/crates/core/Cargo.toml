@@ -10,6 +10,9 @@ xxhash-rust = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
 blake3 = { workspace = true }
+# Zero-copy binary serialization for the cold-tier corpus. The hot
+# `Axiom`/`Expr` types live here, so rkyv's derives must too.
+rkyv = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

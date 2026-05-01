@@ -15,6 +15,11 @@ const domainMetaStyle: React.CSSProperties = {
   textTransform: 'uppercase',
   fontWeight: 600,
 };
+const contributorStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: 'var(--ink-500)',
+  fontFamily: 'var(--font-mono)',
+};
 
 export const ResultCard = memo(function ResultCard({ thm }: { thm: Theorem }) {
   // Phase 9 schema: prefer LaTeX for math rendering; fall back to canonical
@@ -22,6 +27,7 @@ export const ResultCard = memo(function ResultCard({ thm }: { thm: Theorem }) {
   const stmt = thm.latex ?? thm.canonical_statement;
   const idHex = bytesToHex(thm.id);
   const isVerified = thm.status === 'Verified';
+
   return (
     <Link
       to="/theorem/$id"
@@ -42,6 +48,19 @@ export const ResultCard = memo(function ResultCard({ thm }: { thm: Theorem }) {
           <span>gen {thm.generation ?? 0}</span>
           <span className="dot">·</span>
           <span>depth {thm.depth ?? 0}</span>
+        </div>
+        <div className="result-meta" style={{ marginTop: 4 }}>
+          <span style={contributorStyle}>
+            Worker: {thm.contributor_id}
+          </span>
+          {thm.user_email && (
+            <>
+              <span className="dot" style={{ color: 'var(--ink-400)' }}>·</span>
+              <span style={contributorStyle}>
+                User: {thm.user_email}
+              </span>
+            </>
+          )}
         </div>
       </div>
       <div className="result-side">

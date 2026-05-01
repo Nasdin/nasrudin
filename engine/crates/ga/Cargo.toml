@@ -31,7 +31,8 @@ bytes = { workspace = true }
 url = "2"
 thiserror = { workspace = true }
 instant-distance = { workspace = true }
-bincode = "1"
+# HnswMap (third-party) → postcard for the embed sidecar; see embed/Cargo.toml.
+postcard = { workspace = true }
 num_cpus = { workspace = true }
 sysinfo = { workspace = true }
 

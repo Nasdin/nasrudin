@@ -1,11 +1,24 @@
 use crate::dimension::Dimension;
 use crate::expr::Expr;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub type TheoremId = [u8; 8];
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
+#[rkyv(
+    serialize_bounds(
+        __S: rkyv::ser::Writer + rkyv::ser::Allocator,
+        __S::Error: rkyv::rancor::Source,
+    ),
+    deserialize_bounds(
+        __D::Error: rkyv::rancor::Source,
+    ),
+    bytecheck(
+        bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source)
+    )
+)]
 pub enum Domain {
     PureMath,
     ClassicalMechanics,
@@ -18,7 +31,11 @@ pub enum Domain {
     Thermodynamics,
     Optics,
     FluidDynamics,
-    CrossDomain(Vec<Domain>),
+    /// `omit_bounds` — Domain references itself through `Vec`. rkyv's
+    /// auto-bound generation can't handle the cycle on its own; this
+    /// attribute tells it to skip emitting the recursive `Vec<Domain>:
+    /// Archive` bound, which the impl provides via `Domain: Archive`.
+    CrossDomain(#[rkyv(omit_bounds)] Vec<Domain>),
 }
 
 impl fmt::Display for Domain {

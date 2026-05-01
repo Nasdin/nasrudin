@@ -17,6 +17,7 @@
 //! `engine/crates/rocks/src/lib.rs` for the cold-tier wiring.
 
 use crate::{Domain, Expr};
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 /// A named axiom with its domain and expression.
@@ -26,7 +27,7 @@ use serde::{Deserialize, Serialize};
 /// engine substitutes into the proof state. `description` is an
 /// operator-facing free-form blurb (typically the first line of the
 /// Lean docstring).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct Axiom {
     /// Human-readable name (e.g., `"energy_momentum_relation"`,
     /// `"Real.add_comm"`).

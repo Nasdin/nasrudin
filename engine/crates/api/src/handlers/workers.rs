@@ -1,5 +1,5 @@
 //! Worker registration + heartbeat + public list.
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{Json, extract::{Query, State}, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -48,6 +48,12 @@ pub struct RegisterBody {
     pub host: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct WorkersListQuery {
+    pub limit: Option<u64>,
+    pub cursor: Option<String>,
+}
+
 /// `POST /api/workers/register` — unauthenticated. Returns `{ worker_id, api_key }`.
 pub async fn register(
     State(state): State<Arc<AppState>>,
@@ -81,6 +87,27 @@ pub async fn register(
         );
     }
 
+    // Check if this is a droplet worker (host contains "droplet" or similar indicator)
+    // If so, attribute to the special user nasrudin.salim.suden@gmail.com
+    let droplet_user_id = if let Some(host) = &body.host {
+        if host.contains("droplet") {
+            if let Ok(Some(user)) = nasrudin_pg::query::contributors::get_user_by_email(
+                &db,
+                "nasrudin.salim.suden@gmail.com",
+            )
+            .await
+            {
+                Some(user.id)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let generated = match keygen::generate("worker") {
         Ok(k) => k,
         Err(e) => {
@@ -92,7 +119,7 @@ pub async fn register(
     };
     if let Err(e) = nasrudin_pg::query::api_keys::create(
         &db,
-        None,
+        droplet_user_id,
         "worker",
         body.handle.trim(),
         &generated.prefix,
@@ -174,24 +201,49 @@ pub async fn heartbeat(
 /// linked to a user account; otherwise `owner` is `null` (anonymous worker
 /// registered via `POST /api/workers/register`).
 ///
+/// Supports pagination via `limit` and `cursor` query params. When
+/// pagination params are provided, returns `{ workers, next_cursor }`.
+/// When not provided, returns the full list (legacy behavior).
+///
 /// Returns `[]` (HTTP 200) when Postgres is unavailable so the frontend
 /// leaderboard renders gracefully. 30 s in-process cache: the frontend
 /// already revalidates every 30 s via React Query, so this is invisible
 /// freshness-wise but collapses concurrent traffic into one PG round-trip.
-pub async fn list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    if let Some(body) = state.workers_list_cache.get_fresh().await {
-        return (
-            StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "application/json")],
-            body.as_bytes().to_vec(),
-        )
-            .into_response();
+pub async fn list(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<WorkersListQuery>,
+) -> impl IntoResponse {
+    // Only use cache for non-paginated requests (backward compatibility)
+    if query.limit.is_none() && query.cursor.is_none() {
+        if let Some(body) = state.workers_list_cache.get_fresh().await {
+            return (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                body.as_bytes().to_vec(),
+            )
+                .into_response();
+        }
     }
 
     let Some(db) = state.pg.clone() else {
-        return (StatusCode::OK, Json(serde_json::json!([]))).into_response();
+        let response = if query.limit.is_some() || query.cursor.is_some() {
+            serde_json::json!({ "workers": [], "next_cursor": null })
+        } else {
+            serde_json::json!([])
+        };
+        return (StatusCode::OK, Json(response)).into_response();
     };
-    let rows = match nasrudin_pg::query::workers::list_all(&db).await {
+
+    let limit = query.limit.unwrap_or(50).min(100);
+
+    // Use paginated query if cursor or limit is provided
+    let (rows, next_cursor) = match nasrudin_pg::query::workers::list_paginated(
+        &db,
+        limit,
+        query.cursor,
+    )
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             return (
@@ -201,6 +253,7 @@ pub async fn list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 .into_response();
         }
     };
+
     let owners = nasrudin_pg::query::me_workers::owner_map(&db)
         .await
         .unwrap_or_default();
@@ -233,6 +286,19 @@ pub async fn list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         })
         .collect();
 
+    // Return paginated response if pagination params were provided
+    if query.limit.is_some() || query.cursor.is_some() {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "workers": enriched,
+                "next_cursor": next_cursor,
+            })),
+        )
+            .into_response();
+    }
+
+    // Legacy response: return full list
     let body = serde_json::to_string(&enriched).unwrap_or_else(|_| "[]".to_string());
     let body_arc = Arc::new(body);
     state.workers_list_cache.store(body_arc.clone()).await;
