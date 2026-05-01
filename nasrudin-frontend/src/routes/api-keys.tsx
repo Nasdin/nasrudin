@@ -230,7 +230,7 @@ function ApiKeysPage() {
                       >
                         {header.isPlaceholder
                           ? null
-                          : header.column.columnDef.header}
+                          : flexRender(header.column.columnDef.header, header.getContext())}
                         {header.column.getIsSorted() === 'asc' ? ' ↑' : null}
                         {header.column.getIsSorted() === 'desc' ? ' ↓' : null}
                       </th>
@@ -427,7 +427,9 @@ function WorkersTable({ workers }: { workers: Worker[] }) {
                     }}
                     onClick={header.column.getToggleSortingHandler()}
                   >
-                    {header.isPlaceholder ? null : header.column.columnDef.header}
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(header.column.columnDef.header, header.getContext())}
                     {header.column.getIsSorted() === 'asc' ? ' ↑' : null}
                     {header.column.getIsSorted() === 'desc' ? ' ↓' : null}
                   </th>

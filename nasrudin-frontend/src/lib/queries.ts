@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, isApiError } from './api';
 import {
   firebaseSignOut,
@@ -51,7 +51,9 @@ export function useMe() {
         throw e;
       }
     },
-    staleTime: 60_000,
+    // Auth identity rarely flips inside a session; mutations
+    // (login/logout/profile-update) explicitly invalidate this key.
+    staleTime: 3 * 60_000,
   });
 }
 
@@ -169,12 +171,24 @@ export function useLandingStats() {
 
 // --- theorems ---
 
-export function useRecentTheorems(limit = 20) {
-  return useQuery({
-    queryKey: ['theorems', 'recent', limit],
+/// Factory + hook pair for the recent-theorems list. The factory shape
+/// lets TanStack Router route loaders call
+/// `queryClient.ensureQueryData(recentTheoremsOptions(limit))` so the
+/// `/browse` route prefetches on hover (the router's
+/// `defaultPreload: 'intent'` handles the hover trigger), then the
+/// component renders from cache instantly on click.
+export const recentTheoremsOptions = (limit = 20) =>
+  queryOptions({
+    queryKey: ['theorems', 'recent', limit] as const,
     queryFn: () => apiFetch<TheoremListResponse>(`/api/theorems/recent?limit=${limit}`),
-    staleTime: 60_000,
+    // SSE invalidates this key on every theorem_verified event, so the
+    // cache stays fresh through ticks; the pull is just for first-paint
+    // and reconnect recovery. 5 min is plenty.
+    staleTime: 5 * 60_000,
   });
+
+export function useRecentTheorems(limit = 20) {
+  return useQuery(recentTheoremsOptions(limit));
 }
 
 /// Manual "Verify with Lake" trigger (P-Task 4 endpoint). Enqueues the
@@ -229,7 +243,9 @@ export function useApiKeys() {
   return useQuery({
     queryKey: ['api-keys'],
     queryFn: () => apiFetch<{ keys: ApiKeySummary[] }>('/api/api-keys'),
-    staleTime: 60_000,
+    // Keys only change on explicit create/revoke (which invalidate);
+    // session views are otherwise read-only.
+    staleTime: 3 * 60_000,
   });
 }
 
@@ -257,7 +273,8 @@ export function useSavedSearches() {
   return useQuery({
     queryKey: ['saved-searches'],
     queryFn: () => apiFetch<{ saved_searches: SavedSearch[] }>('/api/saved-searches'),
-    staleTime: 60_000,
+    // User-owned, mutation-invalidated.
+    staleTime: 3 * 60_000,
   });
 }
 
@@ -294,21 +311,30 @@ export interface LibraryFoldersResponse {
 export const libraryQueryKey = (folderId?: string) =>
   folderId ? (['library', 'theorems', folderId] as const) : (['library', 'theorems'] as const);
 
-export function useLibraryTheorems(folderId?: string) {
+export const libraryTheoremsOptions = (folderId?: string) => {
   const qs = folderId ? `?folder_id=${encodeURIComponent(folderId)}` : '';
-  return useQuery({
+  return queryOptions({
     queryKey: libraryQueryKey(folderId),
     queryFn: () => apiFetch<LibraryListResponse>(`/api/me/library/theorems${qs}`),
-    staleTime: 60_000,
+    // Library is mutation-driven; save/unsave invalidates this key.
+    staleTime: 5 * 60_000,
   });
+};
+
+export function useLibraryTheorems(folderId?: string) {
+  return useQuery(libraryTheoremsOptions(folderId));
 }
 
-export function useLibraryFolders() {
-  return useQuery({
-    queryKey: ['library', 'folders'],
+export const libraryFoldersOptions = () =>
+  queryOptions({
+    queryKey: ['library', 'folders'] as const,
     queryFn: () => apiFetch<LibraryFoldersResponse>('/api/me/library/folders'),
-    staleTime: 60_000,
+    // Folders rarely change; create/rename/delete mutations invalidate.
+    staleTime: 5 * 60_000,
   });
+
+export function useLibraryFolders() {
+  return useQuery(libraryFoldersOptions());
 }
 
 export interface LibraryFullError {
@@ -404,12 +430,17 @@ export function usePatchFolder() {
 
 // --- workers ---
 
-export function useWorkers() {
-  return useQuery({
-    queryKey: ['workers'],
+export const workersOptions = () =>
+  queryOptions({
+    queryKey: ['workers'] as const,
     queryFn: () => apiFetch<Worker[]>('/api/workers'),
+    // Cache hits between 30 s polls = instant render on tab-switch.
+    staleTime: 10_000,
     refetchInterval: 30_000,
   });
+
+export function useWorkers() {
+  return useQuery(workersOptions());
 }
 
 // --- stats ---
@@ -418,6 +449,7 @@ export function useStats() {
   return useQuery({
     queryKey: ['stats'],
     queryFn: () => apiFetch<DbStats>('/api/stats'),
+    staleTime: 20_000,
     refetchInterval: 60_000,
   });
 }
@@ -428,7 +460,8 @@ export function useMeStats() {
   return useQuery({
     queryKey: ['me', 'stats'],
     queryFn: () => apiFetch<MeStats>('/api/me/stats'),
-    staleTime: 60_000,
+    // User-owned aggregate; mutations invalidate.
+    staleTime: 2 * 60_000,
   });
 }
 
@@ -440,7 +473,8 @@ export function useMeProfile() {
   return useQuery({
     queryKey: meProfileQueryKey,
     queryFn: () => apiFetch<MeProfile>('/api/me/profile'),
-    staleTime: 60_000,
+    // Profile mutations invalidate; otherwise read-only across a session.
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -465,6 +499,7 @@ export function useMyWorkers() {
   return useQuery({
     queryKey: ['me', 'workers'],
     queryFn: () => apiFetch<{ workers: Worker[] }>('/api/me/workers'),
+    staleTime: 10_000,
     refetchInterval: 30_000,
   });
 }
@@ -496,7 +531,8 @@ export function useLlmKeys() {
   return useQuery<LlmKeysListResponse>({
     queryKey: llmKeysQueryKey,
     queryFn: () => apiFetch<LlmKeysListResponse>('/api/me/llm-keys'),
-    staleTime: 60_000,
+    // User-owned credentials; set/revoke mutations invalidate.
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -545,7 +581,13 @@ export function useConceptSearch(
     queryKey: ['concept-search', query, includePending, limit],
     queryFn: () => apiFetch<ConceptSearchResponse>(`/api/search/concept?${params}`),
     enabled,
-    staleTime: 30_000,
+    // Search-result keys are query-specific; debouncer already
+    // throttles network. 90 s avoids re-fetch when the user retypes
+    // the same query after a brief detour.
+    staleTime: 90_000,
+    // While the user types and the debouncer fires, show the previous
+    // results instead of a loading flicker until the new ones arrive.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -557,6 +599,7 @@ export function useMyConjectures() {
   return useQuery<ConjectureListResponse>({
     queryKey: conjecturesQueryKey,
     queryFn: () => apiFetch<ConjectureListResponse>('/api/me/conjectures'),
+    staleTime: 10_000,
     refetchInterval: 30_000,
   });
 }
@@ -619,6 +662,7 @@ export function useResearchJobs() {
   return useQuery<{ jobs: ResearchJob[] }>({
     queryKey: researchJobsQueryKey,
     queryFn: () => apiFetch<{ jobs: ResearchJob[] }>('/api/research/jobs'),
+    staleTime: 10_000,
     refetchInterval: 30_000,
   });
 }
@@ -628,6 +672,7 @@ export function useResearchJob(id: string | null) {
     queryKey: ['research-job', id],
     queryFn: () => apiFetch<ResearchJob>(`/api/research/jobs/${id}`),
     enabled: !!id,
+    staleTime: 5_000,
     refetchInterval: (q) => {
       // Stop polling once the job hits a terminal state — SSE feeds
       // live updates anyway.
@@ -715,7 +760,9 @@ export function useBillingMe() {
   return useQuery<BillingMe>({
     queryKey: ['billing', 'me'],
     queryFn: () => apiFetch<BillingMe>('/api/billing/me'),
-    staleTime: 30_000,
+    // Stripe webhooks invalidate this; sub state otherwise stable
+    // across a session.
+    staleTime: 3 * 60_000,
   });
 }
 
@@ -751,6 +798,8 @@ export function useUserSponsorship(userId: string | null | undefined) {
     queryFn: () =>
       apiFetch<PublicSponsorshipSummary>(`/api/users/${userId}/sponsorship`),
     enabled: !!userId,
-    staleTime: 60_000,
+    // Public profile data — Stripe webhook updates land within a few
+    // minutes, but for badge rendering 5 min staleness is fine.
+    staleTime: 5 * 60_000,
   });
 }

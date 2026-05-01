@@ -92,11 +92,19 @@ export interface LandingStats {
   last_verified_at: string | null;
   last_verified_domain: string | null;
   by_domain_24h: DomainCount[];
+  funnel_24h: FunnelStats;
 }
 
 export interface DomainCount {
   domain: string;
   count: number;
+}
+
+export interface FunnelStats {
+  submitted_24h: number;
+  verified_24h: number;
+  rejected_24h: number;
+  pending_now: number;
 }
 
 export interface AuthUser {

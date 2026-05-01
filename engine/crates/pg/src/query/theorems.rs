@@ -516,6 +516,50 @@ pub async fn count_verified_by_domain_since(
     Ok(rows.into_iter().map(|r| (r.domain, r.cnt)).collect())
 }
 
+/// COUNT(*) of theorems submitted in the window `created_at >= since`.
+/// Backs the "submitted" stage of the landing-page funnel ticker.
+/// O(log n) via `idx_theorems_created_at`.
+pub async fn count_submitted_since(
+    db: &impl ConnectionTrait,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<u64> {
+    use sea_orm::PaginatorTrait;
+    theorems::Entity::find()
+        .filter(theorems::Column::CreatedAt.gte(since.fixed_offset()))
+        .count(db)
+        .await
+        .context("count_submitted_since")
+}
+
+/// COUNT(*) of `Rejected` theorems with `created_at >= since`. Backs the
+/// "rejected" stage of the discard-funnel. The partial index
+/// `idx_theorems_rejected_created_at` covers this query exactly so it
+/// stays sub-millisecond even as the rejected pile grows.
+pub async fn count_rejected_since(
+    db: &impl ConnectionTrait,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<u64> {
+    use sea_orm::PaginatorTrait;
+    theorems::Entity::find()
+        .filter(theorems::Column::Status.eq("Rejected"))
+        .filter(theorems::Column::CreatedAt.gte(since.fixed_offset()))
+        .count(db)
+        .await
+        .context("count_rejected_since")
+}
+
+/// Current-pending count: COUNT(*) WHERE status='Pending'. Backs the
+/// "pending now" stage (lake-queue depth). Partial index keeps this
+/// O(1)-ish — the live pending slice is typically <0.1% of the table.
+pub async fn count_pending(db: &impl ConnectionTrait) -> Result<u64> {
+    use sea_orm::PaginatorTrait;
+    theorems::Entity::find()
+        .filter(theorems::Column::Status.eq("Pending"))
+        .count(db)
+        .await
+        .context("count_pending")
+}
+
 /// Most-recent `Verified` theorem's metadata for the "last verification Ks
 /// ago in [domain]" pulse line. Returns `None` when no theorems have been
 /// verified yet.

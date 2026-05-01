@@ -7,14 +7,23 @@ import {
   type SortingState,
 } from '@tanstack/react-table';
 import { useState } from 'react';
+import { FunnelChart } from '~/components/landing/FunnelChart';
 import { NetworkBreakdown } from '~/components/landing/NetworkBreakdown';
 import { PulseStrip } from '~/components/landing/PulseStrip';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
-import { useWorkers } from '~/lib/queries';
+import { useWorkers, workersOptions } from '~/lib/queries';
 import type { Worker } from '~/lib/types';
 
-export const Route = createFileRoute('/workers')({ component: WorkersPage });
+export const Route = createFileRoute('/workers')({
+  // Prefetch the worker list on hover. The route still polls (via
+  // workersOptions().refetchInterval) once mounted; the prefetch just
+  // warms the first paint.
+  loader: async ({ context }) => {
+    await context.queryClient.ensureQueryData(workersOptions());
+  },
+  component: WorkersPage,
+});
 
 type StatusFilter = 'all' | 'active' | 'inactive' | 'disconnected';
 
@@ -79,8 +88,16 @@ function WorkersPage() {
           </div>
         </div>
 
-        <div style={{ marginBottom: 32 }}>
+        <div
+          style={{
+            marginBottom: 32,
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+            gap: 24,
+          }}
+        >
           <NetworkBreakdown />
+          <FunnelChart />
         </div>
 
         <div className="lead-tabs" style={{ marginBottom: 16 }}>
@@ -262,7 +279,9 @@ function WorkersTable({ workers }: { workers: Worker[] }) {
                 }}
                 onClick={header.column.getToggleSortingHandler()}
               >
-                {header.isPlaceholder ? null : header.column.columnDef.header}
+                {header.isPlaceholder
+                  ? null
+                  : flexRender(header.column.columnDef.header, header.getContext())}
                 {header.column.getIsSorted() === 'asc' ? ' ↑' : null}
                 {header.column.getIsSorted() === 'desc' ? ' ↓' : null}
               </th>

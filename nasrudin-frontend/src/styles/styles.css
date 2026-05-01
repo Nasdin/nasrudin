@@ -1582,3 +1582,114 @@ a { color: inherit; }
   color: var(--ink-500);
   font-style: italic;
 }
+
+/* ─── FunnelChart ───────────────────────────────────────────────────── */
+
+.funnel-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+  background: var(--paper-50);
+  border: 1px solid var(--paper-300);
+  border-radius: 8px;
+}
+
+.funnel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.funnel-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  color: var(--ink-500);
+  margin: 0;
+}
+
+.funnel-survival {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-700);
+}
+
+.funnel-survival strong {
+  color: var(--olive-700);
+  font-weight: 600;
+}
+
+.funnel-empty {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-500);
+  font-style: italic;
+  margin: 0;
+}
+
+.funnel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.funnel-row {
+  display: grid;
+  grid-template-columns: 200px 1fr 80px;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.funnel-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.funnel-row-name {
+  color: var(--ink-900);
+  font-weight: 600;
+}
+
+.funnel-row-sub {
+  color: var(--ink-500);
+  font-size: 11px;
+}
+
+.funnel-row-bar {
+  height: 8px;
+  background: var(--paper-200);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.funnel-row-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s var(--ease-out);
+}
+
+.funnel-row-fill--olive { background: var(--olive-500); }
+.funnel-row-fill--terracotta { background: var(--terracotta-500); }
+.funnel-row-fill--saffron { background: var(--saffron-500); }
+.funnel-row-fill--ink { background: var(--ink-700); }
+
+.funnel-row-count {
+  color: var(--ink-900);
+  font-weight: 600;
+  text-align: right;
+}
+
+.funnel-note {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--ink-500);
+  margin: 4px 0 0;
+}

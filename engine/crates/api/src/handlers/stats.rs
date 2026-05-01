@@ -41,12 +41,48 @@ pub struct LandingStats {
     /// Per-domain breakdown of the `verified_24h` count, ordered by count
     /// descending. `(domain, count)` pairs.
     pub by_domain_24h: Vec<DomainCount>,
+    /// Discard-funnel for the last 24 hours: how many candidates the
+    /// network produced, how many landed in pending verification, how
+    /// many Lean accepted, how many it rejected. Honest "1-in-N
+    /// survives" view of the pipeline.
+    pub funnel_24h: FunnelStats,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DomainCount {
     pub domain: String,
     pub count: u64,
+}
+
+/// Pipeline funnel — see `LandingStats::funnel_24h`. All four counts
+/// live in the `theorems` mirror table; queries are O(log n) via
+/// partial indexes added in m20260501_000020.
+#[derive(Clone, Debug, Serialize)]
+pub struct FunnelStats {
+    /// Theorems whose `created_at` falls inside the 24h window —
+    /// every worker submission lands here regardless of outcome.
+    pub submitted_24h: u64,
+    /// Theorems with `status='Verified'` and `verified_at` in window.
+    /// Same number as the top-level `verified_24h`; duplicated here so
+    /// the funnel is self-contained for the chart component.
+    pub verified_24h: u64,
+    /// Theorems with `status='Rejected'` and `created_at` in window —
+    /// Lean kernel said no.
+    pub rejected_24h: u64,
+    /// Live pending count — theorems sitting in the lake-build queue
+    /// right now. Not bounded to 24h: this is the instantaneous depth.
+    pub pending_now: u64,
+}
+
+impl FunnelStats {
+    pub fn zero() -> Self {
+        Self {
+            submitted_24h: 0,
+            verified_24h: 0,
+            rejected_24h: 0,
+            pending_now: 0,
+        }
+    }
 }
 
 impl LandingStats {
@@ -60,6 +96,7 @@ impl LandingStats {
             last_verified_at: None,
             last_verified_domain: None,
             by_domain_24h: Vec::new(),
+            funnel_24h: FunnelStats::zero(),
         }
     }
 }
@@ -163,6 +200,20 @@ async fn compute(state: &Arc<AppState>) -> anyhow::Result<LandingStats> {
             stats.last_verified_at = Some(verified_at.to_rfc3339());
             stats.last_verified_domain = Some(domain);
         }
+
+        // Discard funnel — same 24h window as `verified_24h` so the
+        // submitted vs verified ratio reads consistently. `pending_now`
+        // is instantaneous (no time window), reflecting current lake
+        // queue depth.
+        let submitted = nasrudin_pg::query::theorems::count_submitted_since(pg, since_24h).await?;
+        let rejected = nasrudin_pg::query::theorems::count_rejected_since(pg, since_24h).await?;
+        let pending = nasrudin_pg::query::theorems::count_pending(pg).await?;
+        stats.funnel_24h = FunnelStats {
+            submitted_24h: submitted,
+            verified_24h: stats.verified_24h,
+            rejected_24h: rejected,
+            pending_now: pending,
+        };
     }
 
     Ok(stats)

@@ -7,6 +7,8 @@ import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import {
   type LibraryFolder,
+  libraryFoldersOptions,
+  libraryTheoremsOptions,
   type SavedTheoremRow,
   useCreateFolder,
   useDeleteFolder,
@@ -19,7 +21,19 @@ import {
   useUnsaveTheorem,
 } from '~/lib/queries';
 
-export const Route = createFileRoute('/library')({ component: LibraryPage });
+export const Route = createFileRoute('/library')({
+  // Prefetch library theorems + folders in parallel on hover. Both
+  // are user-scoped queries that hit small tables; warming both
+  // means the library page hydrates without any network round-trip
+  // when the user clicks the nav link.
+  loader: async ({ context }) => {
+    await Promise.all([
+      context.queryClient.ensureQueryData(libraryTheoremsOptions()),
+      context.queryClient.ensureQueryData(libraryFoldersOptions()),
+    ]);
+  },
+  component: LibraryPage,
+});
 
 type Tab = 'theorems' | 'searches';
 type FolderFilter = 'all' | 'ungrouped' | string; // 'all' | 'ungrouped' | uuid
@@ -137,6 +151,7 @@ function LibraryPage() {
                     >
                       {virtualizer.getVirtualItems().map((virtualItem) => {
                         const row = savedTheorems[virtualItem.index];
+                        if (!row) return null;
                         return (
                           <div
                             key={bytesToHex(row.theorem.id)}

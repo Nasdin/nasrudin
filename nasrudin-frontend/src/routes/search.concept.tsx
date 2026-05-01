@@ -11,7 +11,9 @@ export const Route = createFileRoute('/search/concept')({ component: ConceptSear
 
 function ConceptSearchPage() {
   const [draft, setDraft] = useState('');
-  const debouncedDraft = useDebouncedValue(draft, { wait: 300 });
+  // @tanstack/react-pacer v0.22+ returns `[debouncedValue, debouncerInstance]`.
+  // We only need the value; the instance lets you `flush()` etc. but we don't.
+  const [debouncedDraft] = useDebouncedValue(draft, { wait: 300 });
   const [includePending, setIncludePending] = useState(true);
   const search = useConceptSearch(debouncedDraft.trim(), { includePending });
 
