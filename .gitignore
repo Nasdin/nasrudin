@@ -54,3 +54,4 @@ physlean-extract/output/math_corpus_full.json
 # tarball, so prod boot finds them at /opt/nasrudin/physlean-extract/output/.
 physlean-extract/output/math_corpus.json
 physlean-extract/output/catalog.json
+backups/
