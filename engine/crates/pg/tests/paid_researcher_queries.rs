@@ -11,7 +11,7 @@ use nasrudin_pg::{
     run_migrations,
     sea_orm,
 };
-use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, EntityTrait, Statement};
 use tokio::sync::{Mutex, MutexGuard};
 use uuid::Uuid;
 
@@ -26,11 +26,24 @@ async fn fresh_db() -> Option<(DatabaseConnection, MutexGuard<'static, ()>)> {
     let drop_sql = "DROP TABLE IF EXISTS conjecture_events CASCADE; \
          DROP TABLE IF EXISTS conjecture_jobs CASCADE; \
          DROP TABLE IF EXISTS cluster_steering CASCADE; \
+         DROP TABLE IF EXISTS cluster_reports CASCADE; \
+         DROP TABLE IF EXISTS cluster_bandit_arms CASCADE; \
+         DROP TABLE IF EXISTS cluster_directive_arms CASCADE; \
+         DROP TABLE IF EXISTS cluster_directive_linucb CASCADE; \
+         DROP TABLE IF EXISTS cluster_compute_arms CASCADE; \
+         DROP TABLE IF EXISTS cluster_compute_linucb CASCADE; \
+         DROP TABLE IF EXISTS directive_pull_events CASCADE; \
+         DROP TABLE IF EXISTS llm_proposed_targets CASCADE; \
          DROP TABLE IF EXISTS manual_verifications CASCADE; \
          DROP TABLE IF EXISTS targeted_search_usage CASCADE; \
          DROP TABLE IF EXISTS api_usage_daily CASCADE; \
          DROP TABLE IF EXISTS billing_events CASCADE; \
          DROP TABLE IF EXISTS user_llm_keys CASCADE; \
+         DROP TABLE IF EXISTS admin_audit_log CASCADE; \
+         DROP TABLE IF EXISTS impersonation_sessions CASCADE; \
+         DROP TABLE IF EXISTS refund_records CASCADE; \
+         DROP TABLE IF EXISTS bulk_runs CASCADE; \
+         DROP FUNCTION IF EXISTS prevent_last_admin_demotion() CASCADE; \
          DROP TABLE IF EXISTS theorems CASCADE; \
          DROP TABLE IF EXISTS api_keys CASCADE; \
          DROP TABLE IF EXISTS workers CASCADE; \
@@ -384,4 +397,80 @@ async fn refund_eligibility_zero_verified_under_threshold() {
         !refund_eligible2,
         "≥1000 attempts must lose refund eligibility"
     );
+}
+
+#[tokio::test]
+async fn try_decrement_n_succeeds_when_remaining_ge_n() {
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "decrement-n-ok").await;
+    db.execute_raw(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE users SET research_credits = 5 WHERE id = $1",
+        [owner.into()],
+    ))
+    .await
+    .unwrap();
+
+    let r = u::try_decrement_research_credits_n(&db, owner, 3)
+        .await
+        .unwrap();
+    assert_eq!(r, Some(2), "returns new remaining after decrement");
+}
+
+#[tokio::test]
+async fn try_decrement_n_fails_when_remaining_lt_n() {
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "decrement-n-poor").await;
+    db.execute_raw(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE users SET research_credits = 2 WHERE id = $1",
+        [owner.into()],
+    ))
+    .await
+    .unwrap();
+
+    let r = u::try_decrement_research_credits_n(&db, owner, 3)
+        .await
+        .unwrap();
+    assert_eq!(r, None);
+    let m = nasrudin_pg::entity::users::Entity::find_by_id(owner)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.research_credits, 2, "ledger untouched on failed decrement");
+}
+
+#[tokio::test]
+async fn try_decrement_n_zero_request_is_pure_read() {
+    // n=0 must report current remaining without modifying it. This
+    // gives the API submit handler a uniform read path inside the
+    // same transaction it uses to atomically decrement — no separate
+    // SELECT helper needed.
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "decrement-n-zero").await;
+    db.execute_raw(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE users SET research_credits = 4 WHERE id = $1",
+        [owner.into()],
+    ))
+    .await
+    .unwrap();
+
+    let r = u::try_decrement_research_credits_n(&db, owner, 0)
+        .await
+        .unwrap();
+    assert_eq!(r, Some(4));
+    let m = nasrudin_pg::entity::users::Entity::find_by_id(owner)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.research_credits, 4);
 }

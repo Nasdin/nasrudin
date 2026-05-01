@@ -109,23 +109,51 @@ pub async fn delete_user(db: &DatabaseConnection, id: Uuid) -> Result<DeleteResu
     users::Entity::delete_by_id(id).exec(db).await
 }
 
-/// Atomic credit decrement for the paid Researcher tier. Returns
-/// `Ok(true)` when one credit was successfully consumed; `Ok(false)`
-/// when the user has zero credits (the UPDATE matches no rows). The
-/// `WHERE research_credits > 0` clause makes this safe under
+/// Atomic multi-credit decrement for the paid Researcher tier. Returns
+/// `Some(new_remaining)` when the predicate `research_credits >= n`
+/// holds and the row was updated; `None` when the user can't afford
+/// `n`. The `WHERE research_credits >= $n` clause makes this safe under
 /// concurrent submission attempts — only one wins.
-pub async fn try_decrement_research_credits(
-    db: &DatabaseConnection,
+///
+/// `n = 0` is allowed: returns the current `research_credits` without
+/// modifying the row, so callers can read-without-decrementing inside
+/// the same transaction they used for the (failed) atomic decrement.
+///
+/// Takes `&impl ConnectionTrait` so callers can run this inside a
+/// transaction (the API submit path needs decrement + insert atomic).
+pub async fn try_decrement_research_credits_n(
+    db: &impl ConnectionTrait,
     user_id: Uuid,
-) -> Result<bool, DbErr> {
+    n: i32,
+) -> Result<Option<i32>, DbErr> {
+    if n == 0 {
+        let m = crate::entity::users::Entity::find_by_id(user_id)
+            .one(db)
+            .await?;
+        return Ok(m.map(|u| u.research_credits));
+    }
     let stmt = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "UPDATE users SET research_credits = research_credits - 1 \
-         WHERE id = $1 AND research_credits > 0",
-        [user_id.into()],
+        "UPDATE users SET research_credits = research_credits - $2 \
+         WHERE id = $1 AND research_credits >= $2 \
+         RETURNING research_credits",
+        [user_id.into(), n.into()],
     );
-    let r = db.execute_raw(stmt).await?;
-    Ok(r.rows_affected() == 1)
+    let row = db.query_one_raw(stmt).await?;
+    let Some(row) = row else { return Ok(None) };
+    Ok(Some(row.try_get_by_index::<i32>(0)?))
+}
+
+/// Single-credit wrapper. Kept for backward compatibility with callers
+/// that haven't been ported to the multi-credit path; equivalent to
+/// `try_decrement_research_credits_n(db, user_id, 1).map(|x| x.is_some())`.
+pub async fn try_decrement_research_credits(
+    db: &impl ConnectionTrait,
+    user_id: Uuid,
+) -> Result<bool, DbErr> {
+    Ok(try_decrement_research_credits_n(db, user_id, 1)
+        .await?
+        .is_some())
 }
 
 /// Refund one research credit. Used by cancel-before-progress and the
