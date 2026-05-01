@@ -972,6 +972,19 @@ mod tests {
                 .insert(axiom.name.clone(), axiom.clone());
             Ok(())
         }
+        fn put_many(&self, axioms: &[Axiom], _wal_disabled: bool) -> anyhow::Result<()> {
+            let mut g = self.axioms.lock().unwrap();
+            for a in axioms {
+                g.insert(a.name.clone(), a.clone());
+            }
+            Ok(())
+        }
+        fn meta_get(&self, _key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+        fn meta_put(&self, _key: &str, _value: &[u8]) -> anyhow::Result<()> {
+            Ok(())
+        }
         fn finish_hydration(&self, _total: u64) -> anyhow::Result<()> {
             *self.hydrated.lock().unwrap() = true;
             Ok(())
