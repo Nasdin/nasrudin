@@ -156,20 +156,39 @@ pub async fn try_decrement_research_credits(
         .is_some())
 }
 
-/// Refund one research credit. Used by cancel-before-progress and the
-/// (rare) atomic create-failure path. No bound check — refunds are
-/// privileged operations the caller has already justified.
-pub async fn refund_research_credit(
-    db: &DatabaseConnection,
+/// Multi-credit refund for the paid Researcher tier. No bound check —
+/// refunds are privileged operations the caller has already justified
+/// (cancel-with-no-progress, etc.).
+///
+/// `n <= 0` is a no-op (returns 0 rows affected) so cancel paths can
+/// call it unconditionally without branching on whether a refund is
+/// actually owed.
+///
+/// Takes `&impl ConnectionTrait` so callers can run this inside a
+/// transaction (the cancel path needs state-flip + refund atomic).
+pub async fn refund_research_credits_n(
+    db: &impl ConnectionTrait,
     user_id: Uuid,
+    n: i32,
 ) -> Result<u64, DbErr> {
+    if n <= 0 {
+        return Ok(0);
+    }
     let stmt = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        "UPDATE users SET research_credits = research_credits + 1 WHERE id = $1",
-        [user_id.into()],
+        "UPDATE users SET research_credits = research_credits + $2 WHERE id = $1",
+        [user_id.into(), n.into()],
     );
     let r = db.execute_raw(stmt).await?;
     Ok(r.rows_affected())
+}
+
+/// Single-credit wrapper. Kept for backward compatibility.
+pub async fn refund_research_credit(
+    db: &impl ConnectionTrait,
+    user_id: Uuid,
+) -> Result<u64, DbErr> {
+    refund_research_credits_n(db, user_id, 1).await
 }
 
 /// Grant `credits` research credits to the Stripe customer's user iff

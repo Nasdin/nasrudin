@@ -474,3 +474,53 @@ async fn try_decrement_n_zero_request_is_pure_read() {
         .unwrap();
     assert_eq!(m.research_credits, 4);
 }
+
+#[tokio::test]
+async fn refund_research_credits_n_increments() {
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "refund-n-ok").await;
+    db.execute_raw(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE users SET research_credits = 1 WHERE id = $1",
+        [owner.into()],
+    ))
+    .await
+    .unwrap();
+
+    let n = u::refund_research_credits_n(&db, owner, 4).await.unwrap();
+    assert_eq!(n, 1, "one row updated");
+    let m = nasrudin_pg::entity::users::Entity::find_by_id(owner)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.research_credits, 5);
+}
+
+#[tokio::test]
+async fn refund_research_credits_n_zero_is_noop() {
+    // n=0 must NOT issue an UPDATE — keeps cancel paths simple
+    // (refund unconditionally, the helper handles the no-refund case).
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
+    let owner = seed_owner(&db, "refund-n-zero").await;
+    db.execute_raw(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "UPDATE users SET research_credits = 3 WHERE id = $1",
+        [owner.into()],
+    ))
+    .await
+    .unwrap();
+
+    let n = u::refund_research_credits_n(&db, owner, 0).await.unwrap();
+    assert_eq!(n, 0, "no rows updated when n=0");
+    let m = nasrudin_pg::entity::users::Entity::find_by_id(owner)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.research_credits, 3);
+}
