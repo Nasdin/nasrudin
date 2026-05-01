@@ -294,6 +294,7 @@ function JobRow({ job }: { job: ResearchJob }) {
   const cancel = useCancelResearchJob();
   const terminal = ['proved', 'budget_exhausted', 'cancelled', 'Complete'];
   const isTerminal = terminal.includes(job.state);
+  const isRush = job.slice_priority > 5;
   const slotPct = Math.min(
     100,
     Math.round((job.lake_slot_hours_consumed / job.lake_slot_hours_quota) * 100),
@@ -322,7 +323,10 @@ function JobRow({ job }: { job: ResearchJob }) {
           {job.hunch.slice(0, 80)}
           {job.hunch.length > 80 && '…'}
         </a>
-        <StateBadge state={job.state} />
+        <div style={{ display: 'flex', gap: 6 }}>
+          {isRush && <RushChip />}
+          <StateBadge state={job.state} />
+        </div>
       </div>
       <div
         style={{
@@ -353,10 +357,23 @@ function JobRow({ job }: { job: ResearchJob }) {
             onClick={() => {
               if (
                 confirm(
-                  'Cancel this conjecture? You may get a refund if no theorems were verified yet.',
+                  "Cancel this conjecture? If no theorems were verified, you'll be refunded credits proportional to the unused budget.",
                 )
               ) {
-                cancel.mutate(job.id);
+                cancel
+                  .mutateAsync(job.id)
+                  .then((r) => {
+                    if (r.refunded_credits > 0) {
+                      alert(
+                        `Cancelled. Refunded ${r.refunded_credits} credit${r.refunded_credits === 1 ? '' : 's'}.`,
+                      );
+                    } else {
+                      alert('Cancelled. No refund (work was completed or in-flight).');
+                    }
+                  })
+                  .catch(() => {
+                    /* mutation error already surfaced via cancel.error */
+                  });
               }
             }}
           >
@@ -365,6 +382,24 @@ function JobRow({ job }: { job: ResearchJob }) {
         </div>
       )}
     </li>
+  );
+}
+
+function RushChip() {
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        padding: '4px 8px',
+        borderRadius: 'var(--radius-sm)',
+        background: 'var(--terracotta-100, var(--paper-300))',
+        color: 'var(--terracotta-700, var(--ink-700))',
+      }}
+    >
+      Rush
+    </span>
   );
 }
 
