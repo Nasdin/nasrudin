@@ -161,20 +161,49 @@ pub async fn update_heartbeat(
     uptime_seconds: i64,
     engine_git_sha: &str,
 ) -> Result<()> {
-    let model = workers::Entity::find_by_id(id.to_string())
-        .one(db)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("worker not found: {id}"))?;
-    let mut am: workers::ActiveModel = model.into();
+    // Upsert semantics: if the workers row was lost (e.g. after a
+    // PG dump/restore that pre-dated the worker's first heartbeat,
+    // or a fresh-install where the operator already has a valid
+    // api_key entry but never seeded the workers table), the
+    // heartbeat itself reconstructs the row. The auth layer
+    // (WorkerAuth → matches against api_keys) has already proven
+    // the caller is the legitimate owner of `id` by this point —
+    // creating the workers row in their name is safe and turns
+    // the system self-healing across DB rebuilds.
     let now: chrono::DateTime<chrono::FixedOffset> = Utc::now().into();
-    am.last_heartbeat_at = Set(Some(now));
-    am.last_seen = Set(now);
-    am.current_generation = Set(current_generation);
-    am.theorems_produced_total = Set(theorems_produced_total);
-    am.uptime_seconds = Set(uptime_seconds);
-    am.engine_git_sha = Set(Some(engine_git_sha.into()));
-    am.status = Set(WorkerStatus::Active);
-    am.update(db).await?;
+    match workers::Entity::find_by_id(id.to_string()).one(db).await? {
+        Some(model) => {
+            let mut am: workers::ActiveModel = model.into();
+            am.last_heartbeat_at = Set(Some(now));
+            am.last_seen = Set(now);
+            am.current_generation = Set(current_generation);
+            am.theorems_produced_total = Set(theorems_produced_total);
+            am.uptime_seconds = Set(uptime_seconds);
+            am.engine_git_sha = Set(Some(engine_git_sha.into()));
+            am.status = Set(WorkerStatus::Active);
+            am.update(db).await?;
+        }
+        None => {
+            tracing::info!(
+                worker_id = id,
+                "heartbeat from unknown worker — auto-registering (api_keys auth already verified ownership)"
+            );
+            let am = workers::ActiveModel {
+                id: Set(id.to_string()),
+                name: Set(Some(id.to_string())),
+                host: Set(None),
+                last_heartbeat_at: Set(Some(now)),
+                last_seen: Set(now),
+                current_generation: Set(current_generation),
+                theorems_produced_total: Set(theorems_produced_total),
+                uptime_seconds: Set(uptime_seconds),
+                engine_git_sha: Set(Some(engine_git_sha.into())),
+                status: Set(WorkerStatus::Active),
+                ..Default::default()
+            };
+            am.insert(db).await?;
+        }
+    }
     Ok(())
 }
 
