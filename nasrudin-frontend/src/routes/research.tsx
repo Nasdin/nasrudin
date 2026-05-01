@@ -1,10 +1,17 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { isApiError } from '~/lib/api';
-import { useCancelResearchJob, useCreateResearchJob, useMe, useResearchJobs } from '~/lib/queries';
-import type { ResearchJob } from '~/lib/types';
+import {
+  meQueryKey,
+  useCancelResearchJob,
+  useCreateResearchJob,
+  useMe,
+  useResearchJobs,
+} from '~/lib/queries';
+import type { AuthUser, ResearchJob } from '~/lib/types';
 
 export const Route = createFileRoute('/research')({ component: ResearchPage });
 
@@ -69,9 +76,26 @@ function ResearchPage() {
 function NewJobForm() {
   const create = useCreateResearchJob();
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const me = useMe();
   const [hunch, setHunch] = useState('');
   const [domainHint, setDomainHint] = useState('');
+  const [creditsBudget, setCreditsBudget] = useState(1);
+  const [rush, setRush] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const remaining = me.data?.research_credits ?? 0;
+  const totalCost = creditsBudget + (rush ? 1 : 0);
+  const slotHours = creditsBudget * 96;
+
+  // Re-clamp the slider when remaining drops (e.g. another tab spent
+  // credits) or the rush toggle flips. Keeps the UI consistent with
+  // the wallet view returned by /api/auth/me.
+  useEffect(() => {
+    const cap = Math.max(1, remaining - (rush ? 1 : 0));
+    if (creditsBudget > cap) setCreditsBudget(cap);
+    if (rush && remaining < 2) setRush(false);
+  }, [remaining, rush, creditsBudget]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -80,14 +104,27 @@ function NewJobForm() {
       const res = await create.mutateAsync({
         hunch: hunch.trim(),
         domain_hint: domainHint.trim() || null,
+        credits_budget: creditsBudget,
+        rush,
       });
       navigate({ to: '/research/$id', params: { id: res.job_id } });
     } catch (e) {
       if (isApiError(e)) {
-        if (e.status === 402) {
-          setError(
-            'No research credits remaining for this billing period. Upgrade your plan or wait for renewal.',
+        if (
+          e.status === 402 &&
+          e.body &&
+          typeof e.body === 'object' &&
+          'remaining' in e.body
+        ) {
+          // Backend told us the truth — sync the cache so the slider's
+          // useEffect re-clamps on next render.
+          const body = e.body as Record<string, unknown>;
+          const fresh = Number(body.remaining ?? 0);
+          const required = Number(body.required ?? totalCost);
+          qc.setQueryData(meQueryKey, (old: AuthUser | null | undefined) =>
+            old ? { ...old, research_credits: fresh } : old,
           );
+          setError(`Need ${required} credit${required === 1 ? '' : 's'}, you have ${fresh}.`);
         } else if (e.body && typeof e.body === 'object' && 'error' in e.body) {
           setError(String((e.body as { error: unknown }).error));
         } else {
@@ -98,6 +135,15 @@ function NewJobForm() {
       }
     }
   }
+
+  const submitDisabled =
+    create.isPending ||
+    hunch.trim().length === 0 ||
+    totalCost > remaining ||
+    remaining === 0;
+
+  const sliderMax = Math.max(1, remaining - (rush ? 1 : 0));
+  const rushDisabled = !rush && remaining - creditsBudget < 1;
 
   return (
     <form onSubmit={onSubmit} style={{ maxWidth: 640, marginTop: 32 }}>
@@ -147,6 +193,86 @@ function NewJobForm() {
         </span>
       </div>
 
+      {remaining === 0 ? (
+        <div
+          className="hint"
+          style={{
+            marginTop: 24,
+            padding: 12,
+            border: '1px solid var(--paper-200)',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-raised)',
+          }}
+        >
+          0 credits available. Wait for renewal or <a href="/pricing">upgrade your plan</a>.
+        </div>
+      ) : (
+        <div className="field" style={{ marginTop: 24 }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+            }}
+          >
+            <label htmlFor="credits-budget">Effort</label>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+              {creditsBudget} credit{creditsBudget === 1 ? '' : 's'}
+            </span>
+          </div>
+          <input
+            id="credits-budget"
+            type="range"
+            min={1}
+            max={sliderMax}
+            step={1}
+            value={creditsBudget}
+            onChange={(e) => setCreditsBudget(Number(e.target.value))}
+            style={{ width: '100%', marginTop: 8 }}
+          />
+          <span className="hint">
+            {slotHours} lake-slot-hours of cluster time · ≈ 4 slots × {slotHours / 4} h, or 12 slots
+            × {(slotHours / 12).toFixed(1)} h
+          </span>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginTop: 16,
+              fontSize: 14,
+              color: rushDisabled ? 'var(--ink-500)' : 'var(--ink-900)',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={rush}
+              disabled={rushDisabled}
+              onChange={(e) => setRush(e.target.checked)}
+            />
+            <span>
+              <strong>Rush</strong> — +1 credit, jumps your job ahead of normal-priority work
+            </span>
+          </label>
+
+          <div
+            style={{
+              marginTop: 16,
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: 13,
+              color: 'var(--ink-600)',
+            }}
+          >
+            <span>
+              Total: <strong>{totalCost}</strong> credit{totalCost === 1 ? '' : 's'}
+            </span>
+            <span>{remaining} remaining</span>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div role="alert" style={{ color: 'var(--danger-500)', fontSize: 13, marginTop: 12 }}>
           {error}
@@ -154,12 +280,10 @@ function NewJobForm() {
       )}
 
       <div style={{ marginTop: 24 }}>
-        <button
-          type="submit"
-          className="btn btn-primary"
-          disabled={create.isPending || hunch.trim().length === 0}
-        >
-          {create.isPending ? 'Submitting…' : 'Submit (1 credit)'}
+        <button type="submit" className="btn btn-primary" disabled={submitDisabled}>
+          {create.isPending
+            ? 'Submitting…'
+            : `Submit (${totalCost} credit${totalCost === 1 ? '' : 's'})`}
         </button>
       </div>
     </form>
