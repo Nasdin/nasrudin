@@ -731,8 +731,12 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Conjecture lease reaper (paid jobs) spawned");
 
         // Worker status reaper: mark workers as inactive if they haven't
-        // been seen in the last 60 seconds. This ensures the "active workers"
-        // metric on the landing page reflects actual recent activity.
+        // been seen in the last 180 seconds (6× the worker's 30 s tick).
+        // The wider window means a single missed beat — network blip, API
+        // restart, brief socket hang during a Lake build — never flips a
+        // healthy worker to Inactive. The reaper itself ticks every ~30 s
+        // (with jitter) so a genuinely-dead worker is reflected within
+        // ~3.5 min, not all at once.
         let pg_for_worker_reaper = pg.clone();
         tokio::spawn(async move {
             // ±10 % jitter — same rationale as the lease reaper above.

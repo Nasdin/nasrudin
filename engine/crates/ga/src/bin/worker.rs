@@ -168,6 +168,101 @@ async fn main() {
     };
     println!();
 
+    // ── Background heartbeat to /api/workers/heartbeat ───────────────
+    //
+    // Spawned BEFORE corpus hydration, axiom dump, Lean elaborator
+    // bringup, and chunk loop so a worker shows `Active` on
+    // /api/workers within seconds of process start — not minutes
+    // after corpus enumeration completes. Without this, a contributor
+    // running the worker on a spare laptop sees "Inactive" for the
+    // entire warm-up window and assumes the worker is broken.
+    //
+    // The first heartbeat lands immediately (no skipped tick). After
+    // each successful POST we wait the full 30 s tick; on any error we
+    // back off to 10 s so a transient network failure can't push us
+    // past the API's 180 s stale window.
+    //
+    // Counters are cumulative; the chunk loop `fetch_add`s them after
+    // each completed chunk — so the API surfaces real-time progress
+    // even when a single Lake build takes 10+ minutes.
+    let hb_gen = Arc::new(AtomicU64::new(0));
+    let hb_thms = Arc::new(AtomicU64::new(0));
+    let started_at = Instant::now();
+    if let Some(cfg) = api_cfg.as_ref() {
+        let api_url_for_hb = cfg.api_url.clone();
+        let worker_id_for_hb = cfg.worker_id.clone();
+        let worker_key_for_hb = cfg.worker_key.clone();
+        let hb_gen_task = Arc::clone(&hb_gen);
+        let hb_thms_task = Arc::clone(&hb_thms);
+        match nasrudin_ga::worker_http::WorkerHttp::from_env(&api_url_for_hb) {
+            Ok(http) => {
+                tokio::spawn(async move {
+                    let auth = format!("Bearer {worker_key_for_hb}");
+                    let git_sha = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
+                    let mut consecutive_failures: u32 = 0;
+                    loop {
+                        let body = serde_json::json!({
+                            "worker_id": worker_id_for_hb,
+                            "current_generation":
+                                hb_gen_task.load(Ordering::Relaxed) as i64,
+                            "theorems_produced_total":
+                                hb_thms_task.load(Ordering::Relaxed) as i64,
+                            "uptime_seconds": started_at.elapsed().as_secs() as i64,
+                            "engine_git_sha": git_sha,
+                        });
+                        match http
+                            .post_json::<_, serde_json::Value>(
+                                "/api/workers/heartbeat",
+                                &body,
+                                &[("authorization", auth.as_str())],
+                            )
+                            .await
+                        {
+                            Ok((status, _)) if (200..300).contains(&status) => {
+                                consecutive_failures = 0;
+                                tracing::debug!(status, "heartbeat ok");
+                            }
+                            Ok((status, body)) => {
+                                consecutive_failures =
+                                    consecutive_failures.saturating_add(1);
+                                tracing::warn!(
+                                    status,
+                                    body = %body,
+                                    failures = consecutive_failures,
+                                    "heartbeat non-2xx"
+                                );
+                            }
+                            Err(e) => {
+                                consecutive_failures =
+                                    consecutive_failures.saturating_add(1);
+                                tracing::warn!(
+                                    error = %e,
+                                    failures = consecutive_failures,
+                                    "heartbeat post failed"
+                                );
+                            }
+                        }
+                        let sleep = if consecutive_failures > 0 {
+                            Duration::from_secs(10)
+                        } else {
+                            Duration::from_secs(30)
+                        };
+                        tokio::time::sleep(sleep).await;
+                    }
+                });
+                println!(
+                    "▶ Heartbeat task running: POST /api/workers/heartbeat (30 s tick, 10 s backoff on failure)"
+                );
+                println!();
+            }
+            Err(e) => {
+                eprintln!(
+                    "  ! heartbeat client build failed: {e}; worker will appear Inactive on /api/workers"
+                );
+            }
+        }
+    }
+
     // ── Local cold-tier corpus boot ─────────────────────────────────
     //
     // Open a worker-local RocksDB at $NASRUDIN_WORKER_ROCKS (defaults
@@ -689,92 +784,6 @@ async fn main() {
     };
     let paid_slice_store: std::sync::Arc<AxiomStore> =
         std::sync::Arc::new(store.clone());
-
-    // ── Background heartbeat to /api/workers/heartbeat ───────────────
-    //
-    // Without this, the public `/api/workers` endpoint reports the
-    // worker as `Inactive` regardless of how long the GA has been
-    // running — only the paid-researcher slice path heartbeats today,
-    // and that targets `/api/jobs/heartbeat` (different table).
-    //
-    // Background `tokio::spawn` is the right shape here: a single GA
-    // chunk on a 1 vCPU box can take 10+ minutes when a Lake build is
-    // in flight. Inline heartbeats at chunk boundaries would leave the
-    // worker `Inactive` for the full chunk. The background task ticks
-    // every 30 s, reading lock-free atomic counters that the chunk
-    // loop bumps as it goes — so the API sees fresh `last_heartbeat_at`
-    // independent of chunk pacing.
-    //
-    // Counters are cumulative (matching the API field semantics:
-    // `current_generation` and `theorems_produced_total`); the chunk
-    // loop `fetch_add`s them right after each completed chunk.
-    let hb_gen = Arc::new(AtomicU64::new(0));
-    let hb_thms = Arc::new(AtomicU64::new(0));
-    let started_at = Instant::now();
-    if let Some(cfg) = api_cfg.as_ref() {
-        let api_url_for_hb = cfg.api_url.clone();
-        let worker_id_for_hb = cfg.worker_id.clone();
-        let worker_key_for_hb = cfg.worker_key.clone();
-        let hb_gen_task = Arc::clone(&hb_gen);
-        let hb_thms_task = Arc::clone(&hb_thms);
-        // Build the WorkerHttp once for the heartbeat loop. UDS-backed
-        // clients are cheap to keep around (Arc internally) and
-        // re-using one avoids reconnecting on every tick.
-        match nasrudin_ga::worker_http::WorkerHttp::from_env(&api_url_for_hb) {
-            Ok(http) => {
-                tokio::spawn(async move {
-                    let mut tick = tokio::time::interval(Duration::from_secs(30));
-                    // Skip the first immediate tick — the first
-                    // heartbeat lands ~30 s after boot, which gives
-                    // upstream init (UDS bind, PG handshake) a beat
-                    // to settle before we POST.
-                    tick.tick().await;
-                    let auth = format!("Bearer {worker_key_for_hb}");
-                    let git_sha = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
-                    loop {
-                        tick.tick().await;
-                        let body = serde_json::json!({
-                            "worker_id": worker_id_for_hb,
-                            "current_generation":
-                                hb_gen_task.load(Ordering::Relaxed) as i64,
-                            "theorems_produced_total":
-                                hb_thms_task.load(Ordering::Relaxed) as i64,
-                            "uptime_seconds": started_at.elapsed().as_secs() as i64,
-                            "engine_git_sha": git_sha,
-                        });
-                        match http.post_json::<_, serde_json::Value>(
-                            "/api/workers/heartbeat",
-                            &body,
-                            &[("authorization", auth.as_str())],
-                        ).await {
-                            Ok((status, _)) if (200..300).contains(&status) => {
-                                tracing::debug!(status, "heartbeat ok");
-                            }
-                            Ok((status, body)) => {
-                                tracing::warn!(
-                                    status,
-                                    body = %body,
-                                    "heartbeat non-2xx"
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "heartbeat post failed");
-                            }
-                        }
-                    }
-                });
-                println!(
-                    "▶ Heartbeat task running: POST /api/workers/heartbeat every 30 s"
-                );
-                println!();
-            }
-            Err(e) => {
-                eprintln!(
-                    "  ! heartbeat client build failed: {e}; worker will appear Inactive on /api/workers"
-                );
-            }
-        }
-    }
 
     for chunk_i in 0..chunks {
         // ── Paid Researcher claim (highest priority) ─────────────────────

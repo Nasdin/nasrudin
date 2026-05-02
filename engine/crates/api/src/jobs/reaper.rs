@@ -28,9 +28,15 @@ pub async fn reap_dead_leases(db: &DatabaseConnection) -> Result<u64, DbErr> {
 }
 
 /// Mark workers as inactive if they haven't been seen recently.
-/// Uses a 60-second threshold to match the "active workers last 60s"
-/// metric displayed on the landing page. Returns rows_affected.
+///
+/// 180-second threshold = 6× the worker's 30 s heartbeat tick. A single
+/// dropped heartbeat (transient network blip, brief socket hang during
+/// a Lake build, API restart) cannot flip a healthy worker to Inactive.
+/// Worker-side retry-with-backoff fires another beat 10 s after a
+/// failure, so even back-to-back failures stay well inside this window.
+/// Returns rows_affected.
 pub async fn mark_stale_workers(db: &DatabaseConnection) -> Result<u64, DbErr> {
-    let result = nasrudin_pg::query::workers::mark_stale(db, chrono::Duration::seconds(60)).await?;
+    let result =
+        nasrudin_pg::query::workers::mark_stale(db, chrono::Duration::seconds(180)).await?;
     Ok(result.rows_affected)
 }
