@@ -87,7 +87,7 @@ sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$PG_DB'" | 
 log "creating nasrudin system user + dirs"
 id -u nasrudin >/dev/null 2>&1 \
   || useradd --system --create-home --home-dir /var/lib/nasrudin --shell /usr/sbin/nologin nasrudin
-install -d -o nasrudin -g nasrudin "$INSTALL" "$INSTALL/bin" "$INSTALL/frontend" "$INSTALL/prover" "$INSTALL/elan"
+install -d -o nasrudin -g nasrudin "$INSTALL" "$INSTALL/bin" "$INSTALL/frontend" "$INSTALL/prover" "$INSTALL/elan" "$INSTALL/lib"
 install -d -o nasrudin -g nasrudin "$INSTALL/physlean-extract/output"
 install -d -o nasrudin -g nasrudin "$DATA" "$DATA/rocks" "$DATA/lake-cache"
 
@@ -96,6 +96,17 @@ log "syncing artifact -> $INSTALL"
 rsync -a --delete "$STAGING/bin/"      "$INSTALL/bin/"
 rsync -a --delete "$STAGING/frontend/" "$INSTALL/frontend/"
 rsync -a --delete "$STAGING/prover/"   "$INSTALL/prover/"
+# libonnxruntime.so.* — bundled by build-release.sh from the build
+# container's libonnxruntime-dev. The api + worker binaries link against
+# `libonnxruntime.so.1.21` (soname) at compile time but the dynamic linker
+# resolves it at runtime via the LD_LIBRARY_PATH=/opt/nasrudin/lib pinned
+# in the systemd units. Ubuntu 24.04 doesn't ship libonnxruntime in apt,
+# so bundling it ourselves is how we get a compatible .so on the droplet.
+# `-P` preserves the symlink chain (libonnxruntime.so → .so.1.21 → .so.1.21.0).
+if [ -d "$STAGING/lib" ] && [ -n "$(ls -A "$STAGING/lib" 2>/dev/null)" ]; then
+  rsync -a --delete "$STAGING/lib/" "$INSTALL/lib/"
+  ldconfig "$INSTALL/lib" 2>/dev/null || true
+fi
 # physics-api at boot reads:
 #   <PROVER_ROOT>/../physlean-extract/output/{catalog,math_corpus}.json
 # i.e. /opt/nasrudin/physlean-extract/output/*. We sync without --delete

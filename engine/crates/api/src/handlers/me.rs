@@ -43,9 +43,12 @@ pub async fn stats(auth: AuthOrApiKey, auth_sess: AuthSess) -> impl IntoResponse
     )
 }
 
-/// `PATCH /api/me/profile` — update display name and academic profile fields.
+/// `PATCH /api/me/profile` — update display name, country, and academic
+/// profile fields.
 ///
 /// `display_name` (when present) is written to `users.display_name`.
+/// `country_code` (when present) is validated as ISO-3166-1 alpha-2 and
+/// written to `users.country_code`. The empty string clears it.
 /// `profile` (when present) is shallow-merged into
 /// `user_preferences.preferences.profile` so partial updates preserve other
 /// fields. Recognised profile keys are `bio`, `handle`, `institution`,
@@ -53,7 +56,23 @@ pub async fn stats(auth: AuthOrApiKey, auth_sess: AuthSess) -> impl IntoResponse
 #[derive(Deserialize)]
 pub struct UpdateProfileBody {
     pub display_name: Option<String>,
+    /// ISO-3166-1 alpha-2 (uppercase, 2 letters). Empty string clears.
+    /// Server-side validation rejects anything else with 400.
+    pub country_code: Option<String>,
     pub profile: Option<serde_json::Value>,
+}
+
+/// Validate the user-supplied country_code. Returns `Ok(Some(canonical))`,
+/// `Ok(None)` (clear), or `Err(message)` for the client.
+fn normalize_country_code(raw: &str) -> Result<Option<String>, &'static str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() != 2 || !trimmed.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Err("country_code must be ISO-3166-1 alpha-2 (2 letters)");
+    }
+    Ok(Some(trimmed.to_ascii_uppercase()))
 }
 
 pub async fn update_profile(
@@ -71,6 +90,30 @@ pub async fn update_profile(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": format!("display_name: {e}") })),
+            );
+        }
+    }
+
+    if let Some(raw) = body.country_code.as_deref() {
+        let canonical = match normalize_country_code(raw) {
+            Ok(v) => v,
+            Err(msg) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": msg })),
+                );
+            }
+        };
+        if let Err(e) = nasrudin_pg::query::users::update_country_code(
+            db,
+            auth.user.id,
+            canonical.as_deref(),
+        )
+        .await
+        {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("country_code: {e}") })),
             );
         }
     }
@@ -150,6 +193,7 @@ pub async fn update_profile(
             "id": user.id,
             "email": user.email,
             "display_name": user.display_name,
+            "country_code": user.country_code,
             "created_at": user.created_at,
             "profile": profile,
         })),
@@ -172,6 +216,7 @@ pub async fn get_profile(auth: AuthOrApiKey, auth_sess: AuthSess) -> impl IntoRe
         Json(serde_json::json!({
             "display_name": auth.user.display_name,
             "email": auth.user.email,
+            "country_code": auth.user.country_code,
             "profile": profile,
         })),
     )

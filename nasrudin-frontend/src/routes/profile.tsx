@@ -1,6 +1,7 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { API_BASE } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
 import {
@@ -173,7 +174,13 @@ function ProfilePage() {
       </div>
     );
   if (!me) {
-    throw redirect({ to: '/signin' });
+    return (
+      <SignInPrompt
+        overline="Account"
+        title="Profile"
+        description="Your stats, contributions, sponsorships, saved searches, and API keys live here. Sign in to view yours."
+      />
+    );
   }
 
   const displayName = profile?.display_name ?? me.display_name ?? me.email;

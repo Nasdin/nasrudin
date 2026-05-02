@@ -35,6 +35,17 @@ use axum::routing::{delete, post};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Both `aws-lc-rs` and `ring` rustls backends are pulled in
+    // transitively (aws-lc-rs from libonnxruntime/AWS-LC, ring from
+    // reqwest). With both feature flags active, rustls 0.23 panics at
+    // first TLS use because it can't auto-pick a CryptoProvider.
+    // Install aws-lc-rs explicitly here, before any TLS handshake
+    // (Stripe + Firebase token verification both use rustls under
+    // reqwest). Idempotent — safe to call once.
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("rustls aws-lc-rs default provider already installed"))?;
+
     // Initialize tracing
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))

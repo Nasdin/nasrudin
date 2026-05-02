@@ -15,6 +15,8 @@ mod m20260429_000012_api_usage_daily;
 mod m20260901_000009_manual_verifications;
 mod m20260901_000010_worker_reputation;
 mod m20260901_000011_worker_verified;
+mod m20260901_000012_theorem_user_email;
+mod m20260502_000013_users_country;
 mod m20260430_000013_conjecture_paper_draft;
 mod m20260501_000001_cluster_steering;
 mod m20260501_000002_paid_job_quota;
@@ -66,6 +68,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260901_000009_manual_verifications::Migration),
             Box::new(m20260901_000010_worker_reputation::Migration),
             Box::new(m20260901_000011_worker_verified::Migration),
+            Box::new(m20260901_000012_theorem_user_email::Migration),
+            Box::new(m20260502_000013_users_country::Migration),
             Box::new(m20260430_000013_conjecture_paper_draft::Migration),
             Box::new(m20260501_000001_cluster_steering::Migration),
             Box::new(m20260501_000002_paid_job_quota::Migration),

@@ -12,6 +12,7 @@ import { NetworkBreakdown } from '~/components/landing/NetworkBreakdown';
 import { PulseStrip } from '~/components/landing/PulseStrip';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { countryByCode, flagEmoji } from '~/lib/countries';
 import { useInfiniteWorkers, useWorkers, workersOptions } from '~/lib/queries';
 import type { Worker } from '~/lib/types';
 
@@ -178,20 +179,7 @@ function WorkersTable({ workers }: { workers: Worker[] }) {
     {
       id: 'owner',
       header: 'Owner',
-      cell: (info) => {
-        const w = info.row.original;
-        const ownerLabel =
-          w.owner?.display_name ?? (w.owner?.handle ? `@${w.owner.handle}` : null) ?? 'Anonymous';
-        const ownerStyle = w.owner
-          ? { fontFamily: 'var(--font-serif)', fontSize: 14 }
-          : { fontStyle: 'italic', color: 'var(--ink-500)' };
-        const ownerColor = w.owner ? 'var(--ink-900)' : 'var(--ink-500)';
-        return (
-          <span style={ownerStyle}>
-            <span style={{ color: ownerColor }}>{ownerLabel}</span>
-          </span>
-        );
-      },
+      cell: (info) => <OwnerCell worker={info.row.original} />,
     },
     {
       accessorKey: 'host',
@@ -317,6 +305,47 @@ function WorkersTable({ workers }: { workers: Worker[] }) {
   );
 }
 
+function OwnerCell({ worker }: { worker: Worker }) {
+  const owner = worker.owner;
+  const ownerLabel =
+    owner?.display_name ?? (owner?.handle ? `@${owner.handle}` : null) ?? 'Anonymous';
+  const wrapperStyle = owner
+    ? { fontFamily: 'var(--font-serif)', fontSize: 14 }
+    : { fontStyle: 'italic', color: 'var(--ink-500)' };
+  const labelColor = owner ? 'var(--ink-900)' : 'var(--ink-500)';
+  const country = countryByCode(owner?.country_code);
+
+  return (
+    <span style={{ ...wrapperStyle, display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+      {country && (
+        <span
+          title={country.name}
+          aria-label={country.name}
+          style={{ fontSize: 16, lineHeight: 1 }}
+        >
+          {flagEmoji(country.code)}
+        </span>
+      )}
+      {owner ? (
+        <Link
+          to="/contributors/$id"
+          params={{ id: owner.user_id }}
+          style={{
+            color: labelColor,
+            textDecoration: 'underline',
+            textDecorationStyle: 'dotted',
+            textUnderlineOffset: 3,
+          }}
+        >
+          {ownerLabel}
+        </Link>
+      ) : (
+        <span style={{ color: labelColor }}>{ownerLabel}</span>
+      )}
+    </span>
+  );
+}
+
 function FilterTab({
   value,
   current,
@@ -391,20 +420,7 @@ function InfiniteWorkersTable() {
     {
       id: 'owner',
       header: 'Owner',
-      cell: (info) => {
-        const w = info.row.original;
-        const ownerLabel =
-          w.owner?.display_name ?? (w.owner?.handle ? `@${w.owner.handle}` : null) ?? 'Anonymous';
-        const ownerStyle = w.owner
-          ? { fontFamily: 'var(--font-serif)', fontSize: 14 }
-          : { fontStyle: 'italic', color: 'var(--ink-500)' };
-        const ownerColor = w.owner ? 'var(--ink-900)' : 'var(--ink-500)';
-        return (
-          <span style={ownerStyle}>
-            <span style={{ color: ownerColor }}>{ownerLabel}</span>
-          </span>
-        );
-      },
+      cell: (info) => <OwnerCell worker={info.row.original} />,
     },
     {
       accessorKey: 'host',

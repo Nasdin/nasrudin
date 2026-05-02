@@ -536,7 +536,12 @@ export function useMeProfile() {
 export function useUpdateMeProfile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { display_name?: string | null; profile?: UserProfileFields }) =>
+    mutationFn: (body: {
+      display_name?: string | null;
+      /** ISO-3166-1 alpha-2 (uppercase). Empty string clears. */
+      country_code?: string;
+      profile?: UserProfileFields;
+    }) =>
       apiFetch<MeProfile>('/api/me/profile', {
         method: 'PATCH',
         body: JSON.stringify(body),

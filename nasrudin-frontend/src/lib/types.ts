@@ -148,6 +148,10 @@ export interface WorkerOwner {
   display_name: string | null;
   /** Local part of the email — a short public handle. */
   handle: string;
+  /** ISO-3166-1 alpha-2 country code (e.g. "US", "SG") if the user set one
+   *  on their profile; null otherwise. Powers the flag pill on the
+   *  Workers page. */
+  country_code: string | null;
 }
 
 export interface Contributor {
@@ -203,6 +207,10 @@ export interface UserProfileFields {
 export interface MeProfile {
   display_name: string | null;
   email: string;
+  /** ISO-3166-1 alpha-2 country code (uppercase) the user has set, or null
+   *  if unset. Patched via the same `PATCH /api/me/profile` endpoint as
+   *  display_name. */
+  country_code: string | null;
   profile: UserProfileFields;
 }
 

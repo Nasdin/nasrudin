@@ -72,6 +72,7 @@ pub async fn owner_map(db: &impl ConnectionTrait) -> Result<HashMap<String, Owne
                 display_name: u.display_name.clone(),
                 // Email is private — we expose a redacted handle (local part).
                 email_local: u.email.split('@').next().unwrap_or("").to_owned(),
+                country_code: u.country_code.clone(),
             },
         );
     }
@@ -83,4 +84,7 @@ pub struct OwnerInfo {
     pub user_id: Uuid,
     pub display_name: Option<String>,
     pub email_local: String,
+    /// ISO-3166-1 alpha-2 country code (uppercase) when the user has set one.
+    /// Surfaced on the public Workers page as a flag / country pill.
+    pub country_code: Option<String>,
 }

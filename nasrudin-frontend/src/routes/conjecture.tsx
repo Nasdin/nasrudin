@@ -1,7 +1,8 @@
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { type FormEvent, useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { isApiError } from '~/lib/api';
 import { useCreateConjecture, useMe } from '~/lib/queries';
 
@@ -20,7 +21,15 @@ function ConjecturePage() {
   const [error, setError] = useState<string | null>(null);
 
   if (me.isPending) return null;
-  if (!me.data) throw redirect({ to: '/signin' });
+  if (!me.data)
+    return (
+      <SignInPrompt
+        active="conjecture"
+        overline="Research"
+        title="New conjecture"
+        description="Describe a hypothesis in plain English and the router hands it to your chosen LLM, which proposes seed axioms + initial populations. Sign in to submit one."
+      />
+    );
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

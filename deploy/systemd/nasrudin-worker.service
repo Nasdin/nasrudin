@@ -23,6 +23,10 @@ Environment=LAKE_WORKSPACE_ROOT=/var/lib/nasrudin/lake-cache
 Environment=ROCKS_DB_PATH=/var/lib/nasrudin/rocks-worker
 Environment=ELAN_HOME=/opt/nasrudin/elan
 Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
+# Worker links against libonnxruntime.so.1.21 (via fastembed → ort) the
+# same way the api does. The .so is bundled into /opt/nasrudin/lib/ by
+# build-release.sh; LD_LIBRARY_PATH points the dynamic linker at it.
+Environment=LD_LIBRARY_PATH=/opt/nasrudin/lib
 # RUST_LOG=info gives us a sensible default journal stream; tune via .env if
 # the worker gets too chatty.
 Environment=RUST_LOG=info
@@ -40,7 +44,16 @@ Environment=RUST_LOG=info
 # its own start, so this resolves nearly instantly on every reboot.
 ExecStartPre=/bin/bash -c 'for i in $(seq 1 90); do test -S /run/nasrudin/api-local.sock && exit 0; sleep 1; done; echo "[worker] api UDS /run/nasrudin/api-local.sock did not appear within 90 s — aborting" >&2; exit 1'
 ExecStart=/opt/nasrudin/bin/worker --verify /opt/nasrudin/prover --domain sr
-Restart=on-failure
+# `--gens 50` (the worker's default) finishes a full discovery run in
+# ~50–60 min on the 1 vCPU box, then exits 0. Without `Restart=always`
+# the unit would stay in `inactive (dead)` after each clean exit and
+# the public Workers page would correctly report "0 workers live" for
+# the rest of the day. We want the spontaneous worker to loop forever:
+# each ExecStart picks up the latest /api/seed (peer-verified theorems
+# from other workers + the steerer's mutation rate updates), runs
+# another 50 generations, then restarts. RestartSec=30 keeps successive
+# runs from hammering the API on a degenerate fast-fail.
+Restart=always
 RestartSec=30
 LimitNOFILE=65536
 StandardOutput=journal

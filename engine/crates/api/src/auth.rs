@@ -54,6 +54,11 @@ pub struct AuthUser {
     /// /api/auth/me so the frontend can assert "this is the user I think
     /// it is" before issuing API calls.
     pub firebase_uid: String,
+    /// ISO-3166-1 alpha-2 country (uppercase) when the user has set one.
+    /// Exposed on `/api/me/profile` and surfaced (via the `owner` enrichment)
+    /// on the public `/api/workers` endpoint so the Workers page can render
+    /// a flag next to each contributor.
+    pub country_code: Option<String>,
 }
 
 impl AuthUser {
@@ -70,6 +75,7 @@ impl AuthUser {
             plan_cycle_start: m.plan_cycle_start,
             research_credits: m.research_credits,
             firebase_uid: m.firebase_uid,
+            country_code: m.country_code,
         }
     }
 }

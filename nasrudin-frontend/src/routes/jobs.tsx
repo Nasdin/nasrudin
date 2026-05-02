@@ -1,6 +1,7 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { useMe, useMyConjectures } from '~/lib/queries';
 
 export const Route = createFileRoute('/jobs')({ component: JobsPage });
@@ -10,7 +11,15 @@ function JobsPage() {
   const list = useMyConjectures();
 
   if (me.isPending) return null;
-  if (!me.data) throw redirect({ to: '/signin' });
+  if (!me.data)
+    return (
+      <SignInPrompt
+        active="conjecture"
+        overline="Research"
+        title="Your conjectures"
+        description="Hypotheses you've sent through the loop will live here once you sign in."
+      />
+    );
 
   return (
     <div className="app">

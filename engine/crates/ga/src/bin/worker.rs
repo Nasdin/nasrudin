@@ -53,6 +53,12 @@ const DEFAULT_WORKER_ID: &str = "in-proc-worker-1";
 
 #[tokio::main]
 async fn main() {
+    // Pin rustls 0.23's CryptoProvider before any TLS handshake. With both
+    // aws-lc-rs and ring features active in the dep tree (via fastembed →
+    // ort + reqwest), rustls panics at first TLS use unless one is
+    // explicitly installed. Idempotent — silently no-ops on re-call.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let args: Vec<String> = std::env::args().collect();
 
     let gens: usize = arg_value(&args, "--gens").unwrap_or(50);
@@ -284,9 +290,22 @@ async fn main() {
         }
     };
 
-    println!("▶ Upstream axiom set ({} axioms):", store.len());
-    for name in store.names() {
+    // Print a sample of axiom names for visual confirmation. The full
+    // corpus on prod is ~195k entries (Mathlib + PhysLean + classical/SR
+    // postulates) — listing each one produces ~10 MB of journal traffic
+    // and blocks the boot sequence for several minutes on a 1 vCPU box,
+    // which delays the heartbeat task that surfaces the worker as
+    // `Active` on /api/workers. Sample is enough for the no-cheat audit
+    // sanity-check; the full set is queryable by intent via the API.
+    let total = store.len();
+    let names: Vec<String> = store.names().iter().cloned().collect();
+    let preview: Vec<&String> = names.iter().take(10).collect();
+    println!("▶ Upstream axiom set ({total} axioms):");
+    for name in &preview {
         println!("    • {name}");
+    }
+    if total > preview.len() {
+        println!("    … ({} more, full set in cold-tier RocksDB)", total - preview.len());
     }
     println!();
 

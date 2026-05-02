@@ -93,6 +93,13 @@ dashmap = { workspace = true }
 async-trait = { workspace = true }
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 lru = { workspace = true }
+# Both `aws-lc-rs` and `ring` rustls crypto backends end up in the
+# binary transitively (aws-lc-rs from libonnxruntime/AWS-LC, ring from
+# reqwest). With both on, rustls 0.23 panics at first TLS use because
+# it can't auto-pick one. We install aws-lc-rs explicitly at startup
+# in main.rs (see `CryptoProvider::install_default()`); declaring
+# rustls here pins the version we link against.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 
 [dev-dependencies]
 tempfile = "3"

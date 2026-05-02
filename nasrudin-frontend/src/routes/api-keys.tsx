@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import {
   flexRender,
   getCoreRowModel,
@@ -10,6 +10,7 @@ import { type CSSProperties, useState } from 'react';
 import { CreateKeyDialog, RevealKeyModal } from '~/components/apikeys/CreateKeyDialog';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { useApiKeys, useMe, useMyWorkers, useRevokeApiKey } from '~/lib/queries';
 import type { ApiKeySummary, NewApiKey, Worker } from '~/lib/types';
 
@@ -25,7 +26,15 @@ function ApiKeysPage() {
   const [sorting, setSorting] = useState<SortingState>([]);
 
   if (me.isPending) return null;
-  if (!me.data) throw redirect({ to: '/signin' });
+  if (!me.data)
+    return (
+      <SignInPrompt
+        active="api-keys"
+        overline="Programmatic access"
+        title="API keys"
+        description="Mint live + worker keys for the Nasrudin REST API and the worker bundle. Sign in to create one."
+      />
+    );
 
   const keys = data?.keys ?? [];
   const workers = workersResp?.workers ?? [];

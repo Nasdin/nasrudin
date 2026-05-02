@@ -1,9 +1,11 @@
-import { createFileRoute, redirect } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { type FormEvent, useEffect, useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { LlmKeysSection } from '~/components/settings/LlmKeysSection';
 import { isApiError } from '~/lib/api';
+import { COUNTRIES, flagEmoji } from '~/lib/countries';
 import { useMe, useMeProfile, useUpdateMeProfile } from '~/lib/queries';
 
 export const Route = createFileRoute('/settings')({ component: SettingsPage });
@@ -14,6 +16,7 @@ function SettingsPage() {
   const update = useUpdateMeProfile();
 
   const [displayName, setDisplayName] = useState('');
+  const [countryCode, setCountryCode] = useState('');
   const [handle, setHandle] = useState('');
   const [institution, setInstitution] = useState('');
   const [field, setField] = useState('');
@@ -27,6 +30,7 @@ function SettingsPage() {
   useEffect(() => {
     if (!profile.data) return;
     setDisplayName(profile.data.display_name ?? '');
+    setCountryCode(profile.data.country_code ?? '');
     const p = profile.data.profile;
     setHandle(p.handle ?? '');
     setInstitution(p.institution ?? '');
@@ -37,7 +41,14 @@ function SettingsPage() {
   }, [profile.data]);
 
   if (me.isPending) return null;
-  if (!me.data) throw redirect({ to: '/signin' });
+  if (!me.data)
+    return (
+      <SignInPrompt
+        overline="Account"
+        title="Settings"
+        description="Display name, profile, and per-provider LLM keys live here. Sign in to edit them."
+      />
+    );
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -53,6 +64,8 @@ function SettingsPage() {
       if (bio.trim()) profileFields.bio = bio.trim();
       await update.mutateAsync({
         display_name: displayName.trim() || null,
+        // Empty string clears the country on the server side.
+        country_code: countryCode,
         profile: profileFields,
       });
       setSaved(true);
@@ -142,6 +155,34 @@ function SettingsPage() {
             onChange={setLocation}
             placeholder="Zürich, CH"
           />
+          <div className="field">
+            <label htmlFor="country_code">Country</label>
+            <select
+              id="country_code"
+              value={countryCode}
+              onChange={(e) => setCountryCode(e.target.value)}
+              style={{
+                background: 'var(--bg-raised)',
+                border: '1px solid var(--paper-200)',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px',
+                fontFamily: 'var(--font-sans)',
+                fontSize: 15,
+                color: 'var(--ink-900)',
+              }}
+            >
+              <option value="">— not set —</option>
+              {COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {flagEmoji(c.code)} {c.name}
+                </option>
+              ))}
+            </select>
+            <span className="hint">
+              Public — shown next to every worker your account runs on the Workers page.
+              Leave unset to stay anonymous about location.
+            </span>
+          </div>
           <Field
             id="website"
             label="Website"

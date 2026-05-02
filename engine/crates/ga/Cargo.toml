@@ -21,6 +21,9 @@ bloomfilter = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+# See physics-api/Cargo.toml: rustls 0.23 panics if both crypto backends
+# end up linked. The worker calls install_default(aws-lc-rs) at startup.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures = { workspace = true }
 hyperlocal = "0.9"

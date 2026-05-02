@@ -1,9 +1,10 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { JobProgress } from '~/components/conjecture/JobProgress';
 import { SuggestionCard } from '~/components/conjecture/SuggestionCard';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { isApiError } from '~/lib/api';
 import { API_BASE } from '~/lib/api';
 import {
@@ -26,7 +27,15 @@ function ConjectureJobPage() {
   const [startError, setStartError] = useState<string | null>(null);
 
   if (me.isPending || job.isPending) return null;
-  if (!me.data) throw redirect({ to: '/signin' });
+  if (!me.data)
+    return (
+      <SignInPrompt
+        active="conjecture"
+        overline="Research"
+        title="Conjecture"
+        description="Conjecture runs are private to the user that submitted them. Sign in to view this run."
+      />
+    );
   if (!job.data) {
     return (
       <div className="app">

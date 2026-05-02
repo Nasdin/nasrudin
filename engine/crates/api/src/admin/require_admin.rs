@@ -67,6 +67,7 @@ impl FromRequestParts<Arc<AppState>> for RequireAdmin {
                     plan_cycle_start: None,
                     research_credits: 0,
                     firebase_uid: "system".into(),
+                    country_code: None,
                 };
                 return Ok(RequireAdmin(AdminContext {
                     user,

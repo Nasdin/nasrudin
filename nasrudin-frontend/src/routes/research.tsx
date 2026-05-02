@@ -1,8 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { type FormEvent, useEffect, useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { isApiError } from '~/lib/api';
 import {
   meQueryKey,
@@ -19,7 +20,15 @@ function ResearchPage() {
   const me = useMe();
   const list = useResearchJobs();
   if (me.isPending) return null;
-  if (!me.data) throw redirect({ to: '/signin' });
+  if (!me.data)
+    return (
+      <SignInPrompt
+        active="research"
+        overline="Researcher tier — $19/mo"
+        title="Paid conjectures"
+        description="Hand the system a conjecture you can't prove and a slice of the GA cluster tries to evolve a Lean 4 proof of it. Sign in to start a run."
+      />
+    );
 
   return (
     <div className="app">

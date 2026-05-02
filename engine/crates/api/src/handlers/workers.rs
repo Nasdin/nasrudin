@@ -269,6 +269,7 @@ pub async fn list(
                     "user_id": o.user_id,
                     "display_name": o.display_name,
                     "handle": o.email_local,
+                    "country_code": o.country_code,
                 })
             });
             serde_json::json!({

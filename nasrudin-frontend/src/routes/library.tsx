@@ -1,8 +1,9 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { type CSSProperties, useRef, useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import {
@@ -25,11 +26,13 @@ export const Route = createFileRoute('/library')({
   // Prefetch library theorems + folders in parallel on hover. Both
   // are user-scoped queries that hit small tables; warming both
   // means the library page hydrates without any network round-trip
-  // when the user clicks the nav link.
+  // when the user clicks the nav link. Failures (notably 401 for
+  // logged-out visitors) are swallowed — the component renders a
+  // SignInPrompt instead of erroring the whole route.
   loader: async ({ context }) => {
     await Promise.all([
-      context.queryClient.ensureQueryData(libraryTheoremsOptions()),
-      context.queryClient.ensureQueryData(libraryFoldersOptions()),
+      context.queryClient.ensureQueryData(libraryTheoremsOptions()).catch(() => {}),
+      context.queryClient.ensureQueryData(libraryFoldersOptions()).catch(() => {}),
     ]);
   },
   component: LibraryPage,
@@ -59,7 +62,20 @@ function LibraryPage() {
   });
 
   if (me.isPending) return null;
-  if (!me.data) throw redirect({ to: '/signin' });
+  if (!me.data)
+    return (
+      <SignInPrompt
+        active="library"
+        overline="Your library"
+        title="My library"
+        description={
+          <>
+            Save any theorem from <Link to="/browse">the corpus</Link> with the ★ button. Group
+            saves into folders and attach private notes for paper drafts or lab notebooks.
+          </>
+        }
+      />
+    );
 
   const allFolders = folders.data?.folders ?? [];
   const totalCount = lib.data?.count ?? 0;

@@ -1,6 +1,7 @@
-import { createFileRoute, redirect } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { useCancelResearchJob, useMe, useResearchJob, useResearchJobStream } from '~/lib/queries';
 import type { ResearchJob, ResearchJobEvent } from '~/lib/types';
 
@@ -14,7 +15,15 @@ function ResearchDetailPage() {
   const cancel = useCancelResearchJob();
 
   if (me.isPending) return null;
-  if (!me.data) throw redirect({ to: '/signin' });
+  if (!me.data)
+    return (
+      <SignInPrompt
+        active="research"
+        overline="Paid conjecture"
+        title="Research run"
+        description="Research runs are private to the user that submitted them. Sign in to view this run."
+      />
+    );
 
   return (
     <div className="app">

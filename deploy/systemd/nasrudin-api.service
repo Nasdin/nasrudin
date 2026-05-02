@@ -14,6 +14,12 @@ Environment=LAKE_WORKSPACE_ROOT=/var/lib/nasrudin/lake-cache
 Environment=ROCKS_DB_PATH=/var/lib/nasrudin/rocks
 Environment=ELAN_HOME=/opt/nasrudin/elan
 Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
+# fastembed → ort dynamically loads `libonnxruntime.so.1.21` (Debian
+# trixie's libonnxruntime-dev package). Ubuntu 24.04 doesn't ship that
+# package in apt, so build-release.sh bundles the .so chain from the
+# build container into /opt/nasrudin/lib/. Pinning LD_LIBRARY_PATH here
+# is what lets the dynamic linker find it at exec time.
+Environment=LD_LIBRARY_PATH=/opt/nasrudin/lib
 Environment=CORS_ALLOWED_ORIGIN=https://nasrudin.org
 # Admin panel + trust bypass.
 Environment=TRUSTED_SPOT_CHECK_RATE=50

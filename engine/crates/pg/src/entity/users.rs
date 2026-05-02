@@ -35,6 +35,12 @@ pub struct Model {
     /// NULL = use `TRUSTED_SPOT_CHECK_RATE` env default; 0 = never
     /// spot-check; 1 = always spot-check (effectively untrusted).
     pub spot_check_rate: Option<i32>,
+    /// ISO 3166-1 alpha-2 country code, uppercase (e.g. "US", "SG").
+    /// User-set via `PATCH /api/me/profile`. Null = unset (default for
+    /// new accounts and anonymous workers without a user link). Public —
+    /// surfaced on `/api/workers` next to the worker's owner so the
+    /// Workers page can render a flag.
+    pub country_code: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

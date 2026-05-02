@@ -27,6 +27,7 @@ pub async fn create_firebase_user(
         is_admin: Set(false),
         is_trusted: Set(false),
         spot_check_rate: Set(None),
+        country_code: Set(None),
     };
     model.insert(db).await
 }
@@ -99,6 +100,22 @@ pub async fn update_display_name(
     let model = users::ActiveModel {
         id: Set(id),
         display_name: Set(display_name.map(|s| s.to_owned())),
+        ..Default::default()
+    };
+    model.update(db).await
+}
+
+/// Update a user's ISO-3166-1 alpha-2 country code (uppercase, 2 chars).
+/// `None` clears it. Validation lives at the handler boundary in
+/// `crates/api/src/handlers/me.rs` — we trust the value here.
+pub async fn update_country_code(
+    db: &DatabaseConnection,
+    id: Uuid,
+    country_code: Option<&str>,
+) -> Result<users::Model, DbErr> {
+    let model = users::ActiveModel {
+        id: Set(id),
+        country_code: Set(country_code.map(|s| s.to_owned())),
         ..Default::default()
     };
     model.update(db).await

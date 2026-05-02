@@ -53,7 +53,7 @@ fi
 
 echo "[build] cleaning $OUT_DIR / $TARBALL"
 rm -rf "$OUT_DIR" "$TARBALL"
-mkdir -p "$OUT_DIR"/bin "$OUT_DIR/frontend" "$OUT_DIR/prover" \
+mkdir -p "$OUT_DIR"/bin "$OUT_DIR/frontend" "$OUT_DIR/prover" "$OUT_DIR/lib" \
          "$OUT_DIR/deploy/systemd" "$OUT_DIR/deploy/scripts"
 mkdir -p "$BUILD_CACHE/target" "$BUILD_CACHE/registry"
 
@@ -75,20 +75,42 @@ echo "[build] using CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS_BUILD inside docker"
 # tells the qemu emulator to throttle at the limit instead of swap-thrashing
 # the host. 6g leaves headroom for Docker's own overhead and keeps the
 # host responsive while builds run.
+#
+# Image: rust:1.95-trixie (Debian 13, glibc 2.39). Two reasons:
+#   * matches the Ubuntu 24.04 droplet's glibc 2.39 ABI
+#   * trixie has libonnxruntime-dev in apt, which we use to dynamic-link
+#     ort-sys instead of fighting pyke's prebuilt blob (the prebuilt
+#     intermittently fails to extract under cargo, and even when it works
+#     it requires glibc ≥ 2.38 — which rules out bookworm). Trixie also
+#     ships gcc 14, which compiles librocksdb-sys cleanly.
 docker run --rm --platform linux/amd64 \
   --memory=6g \
   --memory-swap=10g \
   -v "$PWD/engine":/src \
   -v "$PWD/$BUILD_CACHE/target":/cargo-target \
   -v "$PWD/$BUILD_CACHE/registry":/cargo-home \
+  -v "$PWD/$OUT_DIR/lib":/release-lib \
   -e CARGO_TARGET_DIR=/cargo-target \
   -e CARGO_HOME=/cargo-home \
   -e CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS_BUILD" \
+  `# ORT_LIB_LOCATION + ORT_PREFER_DYNAMIC_LINK=1 take ort-sys's "system` \
+  `# library" code path (build/main.rs around line 45): emit -lonnxruntime` \
+  `# (dynamic) and -L /usr/lib/x86_64-linux-gnu, instead of falling through` \
+  `# to the prebuilt-blob download (which is broken under cargo for v2.0.0-rc.12).` \
+  `# Without LIB_LOCATION set, ort-sys falls into the download path even with` \
+  `# PREFER_DYNAMIC_LINK on. With both set + libonnxruntime-dev installed via` \
+  `# apt below, ort-sys links cleanly. We bundle the .so into the release tarball.` \
+  -e ORT_LIB_LOCATION=/usr/lib/x86_64-linux-gnu \
+  -e ORT_PREFER_DYNAMIC_LINK=1 \
   -w /src \
-  rust:1.95-bookworm \
+  rust:1.95-trixie \
   bash -c "set -e
     apt-get update -qq
-    apt-get install -y --no-install-recommends pkg-config libssl-dev clang cmake >/dev/null
+    # libonnxruntime-dev provides /usr/lib/x86_64-linux-gnu/libonnxruntime.so
+    # + headers; with ORT_PREFER_DYNAMIC_LINK=1 above, ort-sys's build
+    # script links our binaries against this .so instead of attempting
+    # to download + extract pyke's prebuilt static blob.
+    apt-get install -y --no-install-recommends pkg-config libssl-dev clang cmake libonnxruntime-dev >/dev/null
     # Drop fingerprints for our local crates so any stale incremental state
     # from a prior killed build (e.g. mid-pg compile) can't poison the run.
     # Workspace deps from /usr/local/cargo/registry are kept — that's the slow part.
@@ -101,6 +123,21 @@ docker run --rm --platform linux/amd64 \
       --bin migrate \
       --bin worker \
       --bin backfill_existing_lean
+    # Stage the .so + version chain into the release tarball, plus
+    # everything libonnxruntime transitively needs that Ubuntu 24.04
+    # noble doesn't ship (no libonnxruntime in noble apt). We grab the
+    # full Trixie set so the droplet has a self-contained ONNX runtime.
+    # ldd /usr/lib/x86_64-linux-gnu/libonnxruntime.so.1.21 lists:
+    # libXNNPACK, libpthreadpool, libonnx, libonnx_proto, libprotobuf.32,
+    # libcpuinfo, libre2, libabsl_*. We bundle all of those (libstdc++/m/c
+    # are system-level on the droplet, no need). provision-native.sh installs
+    # them at /opt/nasrudin/lib/; systemd unit pins LD_LIBRARY_PATH.
+    cd /usr/lib/x86_64-linux-gnu/
+    cp -aP libonnxruntime.so* libonnx.so* libonnx_proto.so* libXNNPACK.so* \
+           libpthreadpool.so* libprotobuf.so* libcpuinfo.so* libre2.so* \
+           libabsl_*.so* /release-lib/ 2>&1 | head -3 || true
+    cp -aP /lib/x86_64-linux-gnu/libabsl_*.so* /release-lib/ 2>/dev/null || true
+    echo '[build] bundled '\$(ls /release-lib/ | wc -l)' onnxruntime + transitive deps'
   "
 
 for bin in physics-api migrate worker backfill_existing_lean; do
