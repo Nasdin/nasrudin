@@ -119,6 +119,53 @@ fn reverse_deps_index_lists_all_dependents() {
 }
 
 #[test]
+fn put_theorem_rejects_self_cycle() {
+    let dir = TempDir::new().unwrap();
+    let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+
+    // T whose proof cites itself via ModusPonens — not the canonical
+    // "this IS the axiom" leaf shape, which is allowed. Should reject.
+    let tid = [9u8, 0, 0, 0, 0, 0, 0, 0];
+    let bad = Theorem {
+        id: tid,
+        statement: Expr::Var("self".into()),
+        canonical: "self".into(),
+        latex: String::new(),
+        proof: ProofTree::ModusPonens {
+            premise: Box::new(ProofTree::Axiom(tid)),
+            implication: Box::new(ProofTree::Axiom(tid)),
+        },
+        depth: 1,
+        complexity: 0,
+        domain: Domain::SpecialRelativity,
+        dimension: None,
+        parents: vec![tid],
+        children: vec![],
+        verified: VerificationStatus::Pending,
+        fitness: FitnessScore::default(),
+        generation: 0,
+        created_at: 0,
+        origin: TheoremOrigin::Axiom,
+    };
+    let err = db.put_theorem(&bad).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(
+        msg.to_lowercase().contains("cycle"),
+        "error must mention cycle, got: {msg}"
+    );
+}
+
+#[test]
+fn put_theorem_accepts_self_axiom_leaf() {
+    // A leaf-axiom theorem (proof is ProofTree::Axiom(self.id)) is
+    // the canonical seed pattern from island.rs. Must NOT be rejected.
+    let dir = TempDir::new().unwrap();
+    let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+    let a = axiom_theorem(7, "A");
+    db.put_theorem(&a).expect("self-axiom-leaf must be accepted");
+}
+
+#[test]
 fn backfill_populates_existing_theorems() {
     let dir = TempDir::new().unwrap();
 

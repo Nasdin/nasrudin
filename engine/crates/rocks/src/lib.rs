@@ -298,6 +298,25 @@ impl TheoremDb {
     ) -> Result<Vec<nasrudin_core::TheoremId>> {
         let mut acc: std::collections::BTreeSet<nasrudin_core::TheoremId> =
             nasrudin_core::collect_axiom_ids(&theorem.proof);
+
+        // A leaf-axiom theorem (proof is exactly `ProofTree::Axiom(self.id)`)
+        // is the canonical "this IS the axiom" pattern from island.rs
+        // seeding — not a cycle, just a self-reference at the leaf.
+        let is_self_axiom_leaf = matches!(
+            &theorem.proof,
+            nasrudin_core::ProofTree::Axiom(id) if *id == theorem.id
+        );
+
+        // Direct self-cycle: proof references self at a non-leaf
+        // position. Forbidden by construction — every Theorem must be
+        // derivable from premises that don't include itself.
+        if !is_self_axiom_leaf && acc.contains(&theorem.id) {
+            anyhow::bail!(
+                "Self-cycle detected: theorem {} cites itself in its own proof",
+                hex::encode(theorem.id)
+            );
+        }
+
         let immediate: Vec<_> = acc.iter().copied().collect();
         for parent_id in &immediate {
             if parent_id == &theorem.id {
@@ -305,6 +324,13 @@ impl TheoremDb {
             }
             if let Some(parent_lineage) = self.get_lineage(parent_id)? {
                 for a in parent_lineage.axiom_ancestors {
+                    if a == theorem.id {
+                        anyhow::bail!(
+                            "Transitive cycle detected: theorem {} appears in its own ancestor closure (via parent {})",
+                            hex::encode(theorem.id),
+                            hex::encode(parent_id),
+                        );
+                    }
                     acc.insert(a);
                 }
             }
