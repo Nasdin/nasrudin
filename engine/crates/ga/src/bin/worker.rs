@@ -601,12 +601,15 @@ async fn main() {
             None
         } else if let Some(uds_path) = elab_uds.as_deref() {
             println!("▶ Connecting to elaborator daemon at {uds_path}");
-            // 30 min connect window: the daemon may still be importing
-            // Mathlib if both units came up together. Per-request
+            // 2-hour connect window: covers the daemon's 90 min cold
+            // boot timeout on a 2 GB box plus restart-and-retry slack.
+            // A genuinely-broken daemon (binary bug, missing oleans)
+            // will systemd-loop fast enough that the worker still hits
+            // its own timeout and falls back to lake build. Per-request
             // timeout matches the in-process path.
             match nasrudin_lean_bridge::PersistentElaborator::from_uds(
                 uds_path,
-                std::time::Duration::from_secs(1800),
+                std::time::Duration::from_secs(7200),
                 std::time::Duration::from_secs(30),
             )
             .await
