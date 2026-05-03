@@ -38,6 +38,19 @@ use nasrudin_rocks::TheoremDb;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+/// Normalize a Lean kernel name to the short form used as `entry.name`
+/// in the catalog. Mirrors `JsonEmitter.theoremToJson` (Lean side):
+///   `t.name.toString.replace "PhysLean." "" |>.replace "." "_" |>.toLower`
+///
+/// `axiom_dependencies` is emitted using the full kernel name (so the
+/// ids stay traceable back to PhysLean), but the catalog's `name` field
+/// is the normalized form. Without this round-trip the parent-filter
+/// in [`import_entries_with_allowed`] would never match a dep against
+/// the catalog allowlist.
+pub fn normalize_dep_name(full: &str) -> String {
+    full.replace("PhysLean.", "").replace('.', "_").to_lowercase()
+}
+
 /// One catalog entry, parsed into the shape `import` needs. Pub for
 /// integration tests that build entries in memory.
 #[derive(Debug, Clone)]
@@ -150,8 +163,9 @@ pub fn import_entries_with_allowed(
         let parents: Vec<TheoremId> = entry
             .axiom_dependencies
             .iter()
+            .map(|n| normalize_dep_name(n))
             .filter(|n| allowed.contains(n.as_str()))
-            .map(|n| axiom_id_from_name(n))
+            .map(|n| axiom_id_from_name(&n))
             .filter(|p| *p != id) // self-cycle guard
             .collect();
         let theorem = Theorem {
@@ -225,8 +239,9 @@ fn visit(
     }
     if let Some(entry) = by_name.get(name) {
         for dep in &entry.axiom_dependencies {
-            if by_name.contains_key(dep) {
-                visit(dep, by_name, visited, on_stack, out)?;
+            let normalized = normalize_dep_name(dep);
+            if by_name.contains_key(&normalized) {
+                visit(&normalized, by_name, visited, on_stack, out)?;
             }
         }
         out.push(entry.clone());
