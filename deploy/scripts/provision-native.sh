@@ -319,16 +319,18 @@ systemctl enable nasrudin-elaborator
 # PID started. For never-running units, also handles the cold-start
 # case via the `||` branch.
 elab_pid=$(systemctl show nasrudin-elaborator -p MainPID --value 2>/dev/null || echo 0)
-if [ "${elab_pid:-0}" -gt 0 ] && [ -e "/proc/${elab_pid}/exe" ]; then
-  # /proc/PID/exe symlinks to the running binary's inode (deleted if
-  # disk file was replaced under it). Compare by inode identity: if
-  # the running binary points to the same file as the on-disk one, the
-  # daemon already runs the latest code.
-  if [ "$(stat -c %i /proc/${elab_pid}/exe 2>/dev/null)" \
-     = "$(stat -c %i /opt/nasrudin/bin/nasrudin-elaborator 2>/dev/null)" ]; then
-    log "nasrudin-elaborator binary unchanged (PID ${elab_pid}); skipping restart to preserve hot Mathlib state"
+if [ "${elab_pid:-0}" -gt 0 ] && [ -r "/proc/${elab_pid}/exe" ]; then
+  # Compare by CONTENT hash, not inode — rsync replaces files (new
+  # inode every deploy) even when bytes are identical, so the inode
+  # check would always restart and cost ~28 min Mathlib re-import.
+  # /proc/PID/exe is readable even after rsync deleted the original
+  # dentry; the kernel keeps the inode alive while it's mmap'd.
+  running_hash=$(sha256sum "/proc/${elab_pid}/exe" 2>/dev/null | awk '{print $1}')
+  disk_hash=$(sha256sum /opt/nasrudin/bin/nasrudin-elaborator 2>/dev/null | awk '{print $1}')
+  if [ -n "$running_hash" ] && [ "$running_hash" = "$disk_hash" ]; then
+    log "nasrudin-elaborator binary content unchanged (PID ${elab_pid}); preserving hot Mathlib state"
   else
-    log "nasrudin-elaborator binary changed (was PID ${elab_pid}); restarting"
+    log "nasrudin-elaborator binary content changed (was PID ${elab_pid}); restarting"
     systemctl restart nasrudin-elaborator
   fi
 else
