@@ -72,6 +72,16 @@ pub struct NewTheorem {
     /// — aggregations group by `user_email` so one user's many workers
     /// roll up into a single row.
     pub user_email: Option<String>,
+    /// Bypass the Pending → Lake-build → Verified state machine and
+    /// land the row directly as `Verified` with `verified_at = NOW()`.
+    /// Used by the PhysLean catalog mirror at boot — those theorems
+    /// arrive pre-proven from upstream, so re-verifying via the lake
+    /// would be wasted compute. `#[serde(default)]` keeps payloads
+    /// already sitting in the RocksDB pg_insert_queue from before this
+    /// field existed deserialisable (default = false → status="Pending"
+    /// as before).
+    #[serde(default)]
+    pub pre_verified: bool,
 }
 
 impl Default for NewTheorem {
@@ -107,6 +117,7 @@ impl Default for NewTheorem {
             worker_trusted: false,
             worker_spot_check_rate: None,
             user_email: None,
+            pre_verified: false,
         }
     }
 }
@@ -128,14 +139,21 @@ pub struct Page<T> {
 /// flagged as `total_capped = true`.
 const TOTAL_CAP: u64 = 10_000;
 
-/// Insert a new pending theorem. Returns the inserted `id`.
+/// Insert a new theorem. Returns the inserted `id`.
 ///
-/// Sets `status = "Pending"`, `created_at = NOW()` (DB default), and leaves
-/// all `verification_*` / `verified_at` columns NULL. A unique-violation on
-/// `canonical_hash` propagates as the underlying SeaORM error so callers can
-/// implement deduplication on top.
+/// By default sets `status = "Pending"`, `created_at = NOW()` (DB default),
+/// and leaves all `verification_*` / `verified_at` columns NULL. When the
+/// payload's `pre_verified` flag is set, lands the row directly as
+/// `Verified` with `verified_at = NOW()` and `verification_tactic =
+/// "imported"` — the PhysLean catalog mirror uses this so pre-proven
+/// upstream theorems skip the Pending → Lake-build → Verified cycle.
+///
+/// A unique-violation on `canonical_hash` propagates as the underlying
+/// SeaORM error so callers can implement deduplication on top.
 pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<Vec<u8>> {
     let id = n.id.clone();
+    let pre_verified = n.pre_verified;
+    let now = chrono::Utc::now().fixed_offset();
 
     let active = theorems::ActiveModel {
         id: Set(n.id),
@@ -163,15 +181,15 @@ pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<
         dimension: Set(n.dimension),
         engine_git_sha: Set(n.engine_git_sha),
         lean_version: Set(n.lean_version),
-        verification_tactic: Set(None),
+        verification_tactic: Set(if pre_verified { Some("imported".into()) } else { None }),
         verification_duration_ms: Set(None),
         verification_path: Set(None),
-        status: Set("Pending".into()),
+        status: Set(if pre_verified { "Verified".into() } else { "Pending".into() }),
         rejected_reason: Set(None),
         contributor_id: Set(n.contributor_id),
         // Let the DB default (NOW()) populate created_at — saves a clock RTT.
         created_at: NotSet,
-        verified_at: Set(None),
+        verified_at: Set(if pre_verified { Some(now) } else { None }),
         worker_verified: Set(n.worker_verified),
         worker_trusted: Set(n.worker_trusted),
         worker_spot_check_rate: Set(n.worker_spot_check_rate),
@@ -491,6 +509,20 @@ async fn count_capped(db: &impl ConnectionTrait, domain: Option<&str>) -> Result
         .await
         .context("count_capped probe")?;
     Ok(ids.len() as u64)
+}
+
+/// Lifetime count of `Verified` rows. Backs the landing/footer
+/// "X theorems" badge — must match what `/browse` actually returns
+/// (which lists `status = 'Verified'`), so don't conflate with the
+/// RocksDB `total_theorems` stat which also counts pending/imported
+/// rows that haven't reached PG yet.
+pub async fn count_verified(db: &impl ConnectionTrait) -> Result<u64> {
+    use sea_orm::PaginatorTrait;
+    theorems::Entity::find()
+        .filter(theorems::Column::Status.eq("Verified"))
+        .count(db)
+        .await
+        .context("count_verified")
 }
 
 /// Count `Verified` theorems with `verified_at >= since`. Backs the

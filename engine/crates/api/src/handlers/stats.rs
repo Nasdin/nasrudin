@@ -19,14 +19,27 @@ const ACTIVE_WINDOW_MIN: i64 = 5;
 
 /// Public landing/workers-page network pulse.
 ///
-/// All counts come from the `theorems` mirror table; the cache TTL means the
-/// lifetime totals + 24h windows are at most 60 s stale. The `last_verified_*`
-/// fields drive the "last verification Ks ago" ticker — clients render the
-/// elapsed time client-side from `last_verified_at`, so even the cached value
-/// stays fresh-feeling between recomputes.
+/// `verified_theorems` comes from the PG `theorems` mirror table (status =
+/// 'Verified') and matches what `/browse` actually paginates over — keep
+/// the two in lockstep so the count we display is the count users can
+/// actually see. `corpus_size` is the RocksDB total which includes
+/// imported PhysLean entries that may not yet have been drained into PG;
+/// it's exposed for transparency but should NOT be used as the public
+/// "X theorems" badge.
+///
+/// All time-window counts (`verified_24h`, etc.) come from the same PG
+/// mirror; the cache TTL means lifetime totals + 24h windows are at most
+/// 60 s stale. The `last_verified_*` fields drive the "last verification
+/// Ks ago" ticker — clients render the elapsed time client-side from
+/// `last_verified_at`, so even the cached value stays fresh-feeling.
 #[derive(Clone, Debug, Serialize)]
 pub struct LandingStats {
     pub verified_theorems: u64,
+    /// RocksDB `total_theorems` — every theorem that ever passed
+    /// `put_theorem`, including imports not yet drained into PG.
+    /// Surfaced so the operator can spot a PG mirror lag (PG count
+    /// trailing the corpus count means the drain queue is backed up).
+    pub corpus_size: u64,
     pub active_workers: u64,
     pub contributors: u64,
     /// `Verified` theorems with `verified_at` in the last 24 hours.
@@ -89,6 +102,7 @@ impl LandingStats {
     pub fn zero() -> Self {
         Self {
             verified_theorems: 0,
+            corpus_size: 0,
             active_workers: 0,
             contributors: 0,
             verified_24h: 0,
@@ -155,18 +169,27 @@ pub async fn landing(State(state): State<Arc<AppState>>) -> Json<LandingStats> {
 }
 
 async fn compute(state: &Arc<AppState>) -> anyhow::Result<LandingStats> {
-    let verified_theorems = state
+    // RocksDB total — exposed as `corpus_size` for transparency. Includes
+    // imported PhysLean entries that may not have been drained into PG
+    // yet (so it can be larger than `verified_theorems`).
+    let corpus_size = state
         .db
         .get_stats()
         .map(|s| s.total_theorems)
         .unwrap_or(0);
 
     let mut stats = LandingStats {
-        verified_theorems,
+        corpus_size,
         ..LandingStats::zero()
     };
 
     if let Some(ref pg) = state.pg {
+        // Lifetime verified count from PG — this is what `/browse`
+        // paginates over, so the public-facing "X theorems" badge stays
+        // in lockstep with what users can actually click into.
+        stats.verified_theorems =
+            nasrudin_pg::query::theorems::count_verified(pg).await?;
+
         stats.active_workers = nasrudin_pg::query::workers::count_active_workers(
             pg,
             chrono::Duration::minutes(ACTIVE_WINDOW_MIN),

@@ -103,8 +103,25 @@ pub fn load_catalog_split(
     axiom_store: &mut AxiomStore,
     db: &TheoremDb,
 ) -> Result<(usize, usize)> {
+    load_catalog_split_hooked(catalog_path, axiom_store, db, |_| {})
+}
+
+/// Hook variant of [`load_catalog_split`]: invokes `on_imported` once
+/// per derived theorem successfully written to RocksDB. The API boot
+/// path uses this to enqueue each imported theorem into
+/// `pg_insert_queue` so the PG mirror catches up — without dragging
+/// `nasrudin-pg` into this crate's dep graph.
+pub fn load_catalog_split_hooked<F>(
+    catalog_path: &Path,
+    axiom_store: &mut AxiomStore,
+    db: &TheoremDb,
+    on_imported: F,
+) -> Result<(usize, usize)>
+where
+    F: FnMut(&Theorem),
+{
     let entries = parse_catalog(catalog_path)?;
-    split_and_load(entries, axiom_store, db)
+    split_and_load_hooked(entries, axiom_store, db, on_imported)
 }
 
 /// Same as [`load_catalog_split`] but takes pre-parsed entries.
@@ -113,6 +130,19 @@ pub fn split_and_load(
     axiom_store: &mut AxiomStore,
     db: &TheoremDb,
 ) -> Result<(usize, usize)> {
+    split_and_load_hooked(entries, axiom_store, db, |_| {})
+}
+
+/// Hook variant of [`split_and_load`]. See [`load_catalog_split_hooked`].
+pub fn split_and_load_hooked<F>(
+    entries: Vec<CatalogEntry>,
+    axiom_store: &mut AxiomStore,
+    db: &TheoremDb,
+    on_imported: F,
+) -> Result<(usize, usize)>
+where
+    F: FnMut(&Theorem),
+{
     // Build the full name set BEFORE partitioning so derived theorems
     // can still reference leaf axioms that get routed to AxiomStore.
     let allowed: HashSet<String> = entries.iter().map(|e| e.name.clone()).collect();
@@ -129,7 +159,7 @@ pub fn split_and_load(
         });
         axioms_registered += 1;
     }
-    let theorems_imported = import_entries_with_allowed(derived, db, &allowed)?;
+    let theorems_imported = import_entries_with_allowed_hooked(derived, db, &allowed, on_imported)?;
     tracing::info!(
         "load_catalog_split: {} axioms registered, {} derived theorems imported",
         axioms_registered,
@@ -156,6 +186,21 @@ pub fn import_entries_with_allowed(
     db: &TheoremDb,
     allowed: &HashSet<String>,
 ) -> Result<usize> {
+    import_entries_with_allowed_hooked(entries, db, allowed, |_| {})
+}
+
+/// Hook variant of [`import_entries_with_allowed`]: invokes `on_imported`
+/// once per theorem successfully written to RocksDB. See
+/// [`load_catalog_split_hooked`] for the use case.
+pub fn import_entries_with_allowed_hooked<F>(
+    entries: Vec<CatalogEntry>,
+    db: &TheoremDb,
+    allowed: &HashSet<String>,
+    mut on_imported: F,
+) -> Result<usize>
+where
+    F: FnMut(&Theorem),
+{
     let ordered = topological_sort(entries)?;
     let mut imported = 0usize;
     for entry in ordered {
@@ -195,7 +240,10 @@ pub fn import_entries_with_allowed(
             },
         };
         match db.put_theorem(&theorem) {
-            Ok(()) => imported += 1,
+            Ok(()) => {
+                on_imported(&theorem);
+                imported += 1;
+            }
             Err(e) => {
                 tracing::warn!(
                     "physlean_import: skipping {} ({}): {e}",

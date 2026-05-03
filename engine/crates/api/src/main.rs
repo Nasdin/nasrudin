@@ -188,14 +188,45 @@ async fn main() -> anyhow::Result<()> {
     // Until `physlean-extract` is re-run with the `axiom_dependencies`
     // emitter, every catalog entry has empty deps and the split
     // collapses to the legacy `load_from_catalog` behaviour.
-    match nasrudin_derive::physlean_import::load_catalog_split(
+    // Mirror each successfully imported PhysLean theorem into
+    // `pg_insert_queue` so the background drain task lands them in PG.
+    // Without this, RocksDB's `total_theorems` and PG's `count_verified`
+    // diverge — the landing/footer count would say "1684 theorems"
+    // while `/browse` (which queries PG) returns nothing because the
+    // catalog imports never reached the PG mirror. The `pre_verified`
+    // flag tells the drain to write `status='Verified'` directly,
+    // skipping the Pending → Lake-build cycle (the catalog ships
+    // pre-proven from upstream). Idempotent on re-boot via the drain's
+    // duplicate-key catch.
+    let mut enqueued_for_pg = 0usize;
+    let mut enqueue_failed = 0usize;
+    let on_imported = |theorem: &nasrudin_core::Theorem| {
+        match physlean_theorem_to_new_theorem(theorem) {
+            Ok(payload_bytes) => match db.enqueue_pg_insert(&theorem.id, &payload_bytes) {
+                Ok(()) => enqueued_for_pg += 1,
+                Err(e) => {
+                    enqueue_failed += 1;
+                    tracing::debug!("pg_insert_queue enqueue failed for imported theorem: {e}");
+                }
+            },
+            Err(e) => {
+                enqueue_failed += 1;
+                tracing::debug!("pg_insert_queue payload build failed: {e}");
+            }
+        }
+    };
+
+    match nasrudin_derive::physlean_import::load_catalog_split_hooked(
         &catalog_path,
         &mut axiom_store,
         &db,
+        on_imported,
     ) {
         Ok((axioms, theorems)) => tracing::info!(
             axioms,
             theorems,
+            enqueued_for_pg,
+            enqueue_failed,
             "load_catalog_split: routed catalog from {}",
             catalog_path.display(),
         ),
@@ -1718,6 +1749,65 @@ fn parse_domain(s: &str) -> Option<Domain> {
         "fluid_dynamics" | "fluiddynamics" => Some(Domain::FluidDynamics),
         _ => None,
     }
+}
+
+/// Build a serialised `nasrudin_pg::query::theorems::NewTheorem` payload
+/// for an imported PhysLean theorem. Used by the boot-path catalog
+/// importer to enqueue each entry into RocksDB's `pg_insert_queue` so
+/// the background drain mirrors the catalog into PG. The `pre_verified`
+/// flag tells `insert_pending` to write `status='Verified'` directly
+/// (these theorems are pre-proven upstream — they don't need a lake
+/// rebuild).
+fn physlean_theorem_to_new_theorem(theorem: &Theorem) -> anyhow::Result<Vec<u8>> {
+    use nasrudin_pg::query::theorems::NewTheorem;
+    let canonical_hash = nasrudin_core::canonical_hash(&theorem.canonical);
+    let parents: Option<Vec<Vec<u8>>> = if theorem.parents.is_empty() {
+        None
+    } else {
+        Some(theorem.parents.iter().map(|p| p.to_vec()).collect())
+    };
+    let nt = NewTheorem {
+        id: theorem.id.to_vec(),
+        canonical_hash,
+        canonical_ac_hash: None,
+        canonical_statement: theorem.canonical.clone(),
+        latex: if theorem.latex.is_empty() { None } else { Some(theorem.latex.clone()) },
+        lean_source: String::new(),
+        domain: format!("{:?}", theorem.domain),
+        axioms_used: Vec::new(),
+        chain_json: serde_json::json!([]),
+        parents,
+        origin_kind: "Imported".to_string(),
+        origin_payload: serde_json::to_value(&theorem.origin).ok(),
+        depth: Some(theorem.depth as i32),
+        complexity: Some(theorem.complexity as i32),
+        generation: Some(theorem.generation as i64),
+        fitness_novelty: None,
+        fitness_compactness: None,
+        fitness_dimensional_correctness: None,
+        fitness_domain_coverage: None,
+        fitness_axiom_efficiency: None,
+        fitness_nasrudin_relevance: None,
+        fitness_depth_score: None,
+        dimension: theorem.dimension.map(|d| vec![
+            d.length as i32,
+            d.mass as i32,
+            d.time as i32,
+            d.current as i32,
+            d.temperature as i32,
+            d.amount as i32,
+            d.luminosity as i32,
+        ]),
+        engine_git_sha: "physlean".to_string(),
+        lean_version: "physlean-import".to_string(),
+        contributor_id: "physlean".to_string(),
+        worker_verified: false,
+        worker_trusted: false,
+        worker_spot_check_rate: None,
+        user_email: None,
+        pre_verified: true,
+    };
+    Ok(serde_json::to_vec(&nt)?)
 }
 
 /// Parse a hex-encoded theorem ID string into a `TheoremId`.

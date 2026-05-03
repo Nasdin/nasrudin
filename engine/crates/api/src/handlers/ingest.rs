@@ -389,6 +389,7 @@ pub async fn ingest_one_theorem(
         worker_trusted: decision.trusted,
         worker_spot_check_rate: Some(decision.spot_check_rate as i32),
         user_email,
+        pre_verified: false,
     };
 
     let id_arr = id_bytes_arr;

@@ -86,7 +86,14 @@ export interface DbStats {
 }
 
 export interface LandingStats {
+  /** PG `count(*) WHERE status = 'Verified'` — the count `/browse` paginates
+   *  over. Use this for any user-facing "X theorems" badge so the count
+   *  stays in lockstep with what users can click into. */
   verified_theorems: number;
+  /** RocksDB `total_theorems` — includes imports not yet drained into PG.
+   *  Larger than `verified_theorems` while the drain catches up. Operator
+   *  diagnostic; don't surface as the public count. */
+  corpus_size: number;
   active_workers: number;
   contributors: number;
   verified_24h: number;
