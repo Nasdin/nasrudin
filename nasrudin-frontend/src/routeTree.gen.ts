@@ -20,6 +20,7 @@ import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as LibraryRouteImport } from './routes/library'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as JobsRouteImport } from './routes/jobs'
+import { Route as DiscoveriesRouteImport } from './routes/discoveries'
 import { Route as ConjectureRouteImport } from './routes/conjecture'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as ApiKeysRouteImport } from './routes/api-keys'
@@ -92,6 +93,11 @@ const LeaderboardRoute = LeaderboardRouteImport.update({
 const JobsRoute = JobsRouteImport.update({
   id: '/jobs',
   path: '/jobs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DiscoveriesRoute = DiscoveriesRouteImport.update({
+  id: '/discoveries',
+  path: '/discoveries',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConjectureRoute = ConjectureRouteImport.update({
@@ -192,6 +198,7 @@ export interface FileRoutesByFullPath {
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
   '/conjecture': typeof ConjectureRouteWithChildren
+  '/discoveries': typeof DiscoveriesRoute
   '/jobs': typeof JobsRoute
   '/leaderboard': typeof LeaderboardRoute
   '/library': typeof LibraryRoute
@@ -222,6 +229,7 @@ export interface FileRoutesByTo {
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
   '/conjecture': typeof ConjectureRouteWithChildren
+  '/discoveries': typeof DiscoveriesRoute
   '/jobs': typeof JobsRoute
   '/leaderboard': typeof LeaderboardRoute
   '/library': typeof LibraryRoute
@@ -254,6 +262,7 @@ export interface FileRoutesById {
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
   '/conjecture': typeof ConjectureRouteWithChildren
+  '/discoveries': typeof DiscoveriesRoute
   '/jobs': typeof JobsRoute
   '/leaderboard': typeof LeaderboardRoute
   '/library': typeof LibraryRoute
@@ -287,6 +296,7 @@ export interface FileRouteTypes {
     | '/api-keys'
     | '/browse'
     | '/conjecture'
+    | '/discoveries'
     | '/jobs'
     | '/leaderboard'
     | '/library'
@@ -317,6 +327,7 @@ export interface FileRouteTypes {
     | '/api-keys'
     | '/browse'
     | '/conjecture'
+    | '/discoveries'
     | '/jobs'
     | '/leaderboard'
     | '/library'
@@ -348,6 +359,7 @@ export interface FileRouteTypes {
     | '/api-keys'
     | '/browse'
     | '/conjecture'
+    | '/discoveries'
     | '/jobs'
     | '/leaderboard'
     | '/library'
@@ -380,6 +392,7 @@ export interface RootRouteChildren {
   ApiKeysRoute: typeof ApiKeysRoute
   BrowseRoute: typeof BrowseRoute
   ConjectureRoute: typeof ConjectureRouteWithChildren
+  DiscoveriesRoute: typeof DiscoveriesRoute
   JobsRoute: typeof JobsRoute
   LeaderboardRoute: typeof LeaderboardRoute
   LibraryRoute: typeof LibraryRoute
@@ -472,6 +485,13 @@ declare module '@tanstack/react-router' {
       path: '/jobs'
       fullPath: '/jobs'
       preLoaderRoute: typeof JobsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/discoveries': {
+      id: '/discoveries'
+      path: '/discoveries'
+      fullPath: '/discoveries'
+      preLoaderRoute: typeof DiscoveriesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/conjecture': {
@@ -677,6 +697,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiKeysRoute: ApiKeysRoute,
   BrowseRoute: BrowseRoute,
   ConjectureRoute: ConjectureRouteWithChildren,
+  DiscoveriesRoute: DiscoveriesRoute,
   JobsRoute: JobsRoute,
   LeaderboardRoute: LeaderboardRoute,
   LibraryRoute: LibraryRoute,
