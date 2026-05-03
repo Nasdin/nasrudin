@@ -285,8 +285,13 @@ systemctl restart nasrudin-api nasrudin-frontend
 # subsequent worker restarts find a hot socket. The worker has
 # `After=nasrudin-elaborator.service` + a 30-min UDS connect retry,
 # so a worker that races ahead of the elaborator's bind just waits.
-systemctl enable --now nasrudin-elaborator
-log "nasrudin-elaborator enabled (Lean+Mathlib import is async; check 'journalctl -fu nasrudin-elaborator')"
+systemctl enable nasrudin-elaborator
+# `enable --now` is a no-op when the unit is already running, which
+# means a redeploy that ships a new /opt/nasrudin/bin/nasrudin-elaborator
+# binary will keep serving from the OLD PID forever. Use restart to
+# force pickup of the fresh binary on every provision.
+systemctl restart nasrudin-elaborator
+log "nasrudin-elaborator (re)started (Lean+Mathlib import is async; check 'journalctl -fu nasrudin-elaborator')"
 # nasrudin-worker is co-located with the api. We enable it but only start it
 # automatically when NASRUDIN_WORKER_KEY is already set in /opt/nasrudin/.env;
 # otherwise the operator runs deploy/scripts/issue_worker_key.py first to mint
