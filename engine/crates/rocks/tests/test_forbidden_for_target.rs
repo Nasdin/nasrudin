@@ -9,7 +9,7 @@ use nasrudin_core::{
     Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremOrigin, VerificationStatus,
 };
 use nasrudin_rocks::TheoremDb;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use tempfile::TempDir;
 
 fn axiom_theorem(id: u8, name: &str) -> Theorem {
@@ -62,6 +62,37 @@ fn derived_theorem(id: u8, name: &str, premise_ids: &[[u8; 8]]) -> Theorem {
         created_at: 0,
         origin: TheoremOrigin::Axiom,
     }
+}
+
+#[test]
+fn forbidden_set_excludes_target_and_descendants() {
+    let dir = TempDir::new().unwrap();
+    let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+
+    // A → B → C linear chain.
+    let a = axiom_theorem(1, "A");
+    let b = derived_theorem(2, "B", &[a.id]);
+    let c = derived_theorem(3, "C", &[b.id]);
+    // D parallel: depends on A but not B or C.
+    let d = derived_theorem(4, "D", &[a.id]);
+    for t in [&a, &b, &c, &d] {
+        db.put_theorem(t).unwrap();
+    }
+
+    // Forbidden when re-deriving A: {A, B, C, D} (everything that cites A).
+    let forbidden_a = db.forbidden_for_target(&a.id).unwrap();
+    let expected_a: HashSet<_> = [a.id, b.id, c.id, d.id].into_iter().collect();
+    assert_eq!(forbidden_a.as_ref(), &expected_a);
+
+    // Forbidden when re-deriving B: {B, C}. A and D still usable.
+    let forbidden_b = db.forbidden_for_target(&b.id).unwrap();
+    let expected_b: HashSet<_> = [b.id, c.id].into_iter().collect();
+    assert_eq!(forbidden_b.as_ref(), &expected_b);
+
+    // Forbidden when re-deriving D (a leaf): just {D}.
+    let forbidden_d = db.forbidden_for_target(&d.id).unwrap();
+    let expected_d: HashSet<_> = [d.id].into_iter().collect();
+    assert_eq!(forbidden_d.as_ref(), &expected_d);
 }
 
 #[test]

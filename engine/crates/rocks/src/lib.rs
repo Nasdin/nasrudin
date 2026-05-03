@@ -723,6 +723,24 @@ impl TheoremDb {
         self.list_by_axiom_limit(axiom_id, 0)
     }
 
+    /// Set of theorem ids that must NOT be used as premises when
+    /// deriving anything that resolves to `target_id`. Returns
+    /// `{target_id} ∪ list_dependents(target_id)`. The result is wrapped
+    /// in `Arc` so the LRU layer (added in a follow-up commit) can hand
+    /// out shared references without copying.
+    pub fn forbidden_for_target(
+        &self,
+        target_id: &TheoremId,
+    ) -> Result<std::sync::Arc<std::collections::HashSet<TheoremId>>> {
+        let mut set: std::collections::HashSet<TheoremId> =
+            std::collections::HashSet::new();
+        set.insert(*target_id);
+        for dep in self.list_dependents(target_id)? {
+            set.insert(dep);
+        }
+        Ok(std::sync::Arc::new(set))
+    }
+
     /// List every theorem whose proof transitively cites `ancestor_id`.
     ///
     /// Prefix-scans `CF_REVERSE_DEPS` on the 8-byte `ancestor_id`. The
