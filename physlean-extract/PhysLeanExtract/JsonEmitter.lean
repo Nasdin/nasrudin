@@ -31,11 +31,16 @@ private def jsonBool (b : Bool) : String :=
   if b then "true" else "false"
 
 /-- Render a theorem entry as JSON. The `expr_ast` field is always
-    populated (the universal translator never fails). -/
+    populated (the universal translator never fails). The
+    `axiom_dependencies` field lists every kernel constant the proof
+    term cites — empty for definitions and for theorems whose
+    proof-walk timed out. -/
 def theoremToJson (t : ExtractedTheorem) (domain : PhysDomain) : String :=
   let shortName := t.name.toString.replace "PhysLean." ""
     |>.replace "." "_"
     |>.toLower
+  let depEntries := t.axiomDependencies.toList.map jsonString
+  let depsStr := ", ".intercalate depEntries
   "{" ++
     "\n    \"name\": " ++ jsonString shortName ++
     ",\n    \"physlean_name\": " ++ jsonString t.name.toString ++
@@ -46,6 +51,7 @@ def theoremToJson (t : ExtractedTheorem) (domain : PhysDomain) : String :=
     ",\n    \"source\": \"physlean\"" ++
     ",\n    \"doc_string\": " ++ jsonOptString t.docString ++
     ",\n    \"expr_ast\": " ++ t.exprAst.compress ++
+    ",\n    \"axiom_dependencies\": [" ++ depsStr ++ "]" ++
     "\n  }"
 
 def typeToJson (t : ExtractedType) : String :=

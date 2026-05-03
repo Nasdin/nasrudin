@@ -33,6 +33,14 @@ structure ExtractedTheorem where
       unknown heads). The Rust AxiomStore tries to deserialise the
       tree; failures fall back to a `Var(name)` placeholder. -/
   exprAst : Lean.Json
+  /-- Names of every kernel constant the proof term cites. Empty for
+      `defnInfo` (definitions don't have proofs in the theorem sense)
+      and for theorems whose proof walk timed out. The Rust loader maps
+      each name through `axiom_id_from_name` to populate the
+      `LineageRecord.axiom_ancestors` field — that's how the
+      acyclicity infra learns this theorem's dependency closure
+      without us shipping the full kernel proof term in JSON. -/
+  axiomDependencies : Array String
   deriving Inhabited
 
 structure ExtractedType where
@@ -242,12 +250,32 @@ def walkTheoremsWithWhitelist (whitelist : List String := []) : MetaM (Array Ext
             (fun ctx => { ctx with maxHeartbeats := 50000 })
             (exprToAst ty)
       catch _ => pure placeholderAst
+    -- Collect every kernel constant cited by `value`. We use Lean's
+    -- built-in `Expr.getUsedConstants` which folds the proof-term tree
+    -- once and returns a `NameSet`. Bounded by per-theorem heartbeats
+    -- (set above) so a pathological proof can't stall the walk.
+    let depsWithBudget (value : Expr) : MetaM (Array String) := do
+      try
+        Core.withCurrHeartbeats <|
+          withTheReader Core.Context
+            (fun ctx => { ctx with maxHeartbeats := 50000 })
+            (do
+              let names := value.getUsedConstantsAsSet
+              let arr := names.toArray.map (·.toString)
+              -- Filter compiler-internal noise (`Eq.refl`, `id`, etc.
+              -- aren't dependency-meaningful; the proof structurally
+              -- relies on the *physics/math* lemmas it cites).
+              let filtered := arr.filter fun n =>
+                !n.startsWith "_" && n != name.toString
+              return filtered)
+      catch _ => pure #[]
     match ci with
     | .thmInfo val =>
       if val.value.hasSorry then continue
       let typeStr ← try ppTypeExpr val.type catch _ => pure (toString val.type)
       let doc ← findDocString? env name
       let ast ← astWithBudget val.type
+      let deps ← depsWithBudget val.value
       results := results.push {
         name := name
         typeSignature := typeStr
@@ -256,6 +284,7 @@ def walkTheoremsWithWhitelist (whitelist : List String := []) : MetaM (Array Ext
         docString := doc
         canReaxiomatize := true
         exprAst := ast
+        axiomDependencies := deps
       }
     | .defnInfo val =>
       let typeStr ← try ppTypeExpr val.type catch _ => pure (toString val.type)
@@ -269,6 +298,7 @@ def walkTheoremsWithWhitelist (whitelist : List String := []) : MetaM (Array Ext
         docString := doc
         canReaxiomatize := true
         exprAst := ast
+        axiomDependencies := #[]
       }
     | _ => pure ()
 
