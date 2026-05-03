@@ -590,8 +590,53 @@ async fn main() {
         || std::env::var("NASRUDIN_NO_PERSISTENT")
             .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
+    // Two ways to talk to the elaborator. UDS mode (preferred on prod)
+    // connects to the long-lived `nasrudin-elaborator.service` daemon
+    // that survives worker OOMs — boot cost is paid once per day, not
+    // once per worker restart. Spawn mode (dev fallback) forks Lean
+    // in-process, paying the 15-min Mathlib import every restart.
+    let elab_uds = std::env::var("NASRUDIN_ELAB_UDS").ok();
     let elaborator: Option<std::sync::Arc<nasrudin_lean_bridge::PersistentElaborator>> =
-        if !no_persistent && prover_root.is_some() {
+        if no_persistent || prover_root.is_none() {
+            None
+        } else if let Some(uds_path) = elab_uds.as_deref() {
+            println!("▶ Connecting to elaborator daemon at {uds_path}");
+            // 30 min connect window: the daemon may still be importing
+            // Mathlib if both units came up together. Per-request
+            // timeout matches the in-process path.
+            match nasrudin_lean_bridge::PersistentElaborator::from_uds(
+                uds_path,
+                std::time::Duration::from_secs(1800),
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            {
+                Ok(handle) => {
+                    // Verify the daemon's Lean is actually alive — a
+                    // fresh socket file does not prove the elaborator
+                    // is responsive. A failed ping flips us to the
+                    // slow path so the GA still produces *something*.
+                    match handle.ping().await {
+                        Ok(()) => {
+                            println!("    ✓ elaborator daemon ready (ping ok)");
+                            Some(std::sync::Arc::new(handle))
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "    ! elaborator daemon ping failed: {e}\n    falling back to lake build (slow path)"
+                            );
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "    ! elaborator daemon connect failed: {e}\n    falling back to lake build (slow path)"
+                    );
+                    None
+                }
+            }
+        } else {
             let cfg = nasrudin_lean_bridge::PersistentElaboratorConfig {
                 cwd: prover_root.clone().unwrap(),
                 ..nasrudin_lean_bridge::PersistentElaboratorConfig::from_env()
@@ -613,12 +658,11 @@ async fn main() {
                     None
                 }
             }
-        } else {
-            if no_persistent {
-                println!("▶ Persistent elaborator DISABLED (lake-only path)");
-            }
-            None
         };
+
+    if no_persistent {
+        println!("▶ Persistent elaborator DISABLED (lake-only path)");
+    }
 
     let config = DiscoveryConfig {
         population_size: pop,

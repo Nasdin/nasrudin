@@ -14,9 +14,14 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
-tokio = { workspace = true, features = ["process", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = ["process", "io-util", "macros", "rt-multi-thread", "sync", "time", "net"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[[bin]]
+name = "nasrudin-elaborator"
+path = "src/bin/elaborator.rs"
 
 [dev-dependencies]
 tempfile = "3"

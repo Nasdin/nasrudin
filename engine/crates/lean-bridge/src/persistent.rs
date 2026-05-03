@@ -39,11 +39,14 @@ impl Default for PersistentElaboratorConfig {
             script_path: PathBuf::from("scripts/nasrudin_server.lean"),
             cwd: PathBuf::from("../prover"),
             // Cold Mathlib load is ~30 s on a beefy box but climbs to
-            // 3–5 min on a 1 vCPU droplet sharing CPU with the API,
-            // Caddy, and Postgres. 600 s gives safe headroom for the
-            // worst real-world boot we've measured; warm reboots still
-            // ack in seconds. Override via NASRUDIN_LEAN_BOOT_TIMEOUT_SECS.
-            boot_timeout: Duration::from_secs(600),
+            // 15–25 min on a 1 vCPU + 2 GB droplet sharing CPU and
+            // memory with the API, Caddy, Postgres, and the GA itself
+            // (Mathlib's deserialised environment is ~1.7 GB resident,
+            // forcing the kernel to page through 6.5 GB of olean
+            // backing). 1800 s covers the worst real-world boot under
+            // memory pressure; warm/detached boots still ack in seconds.
+            // Override via NASRUDIN_LEAN_BOOT_TIMEOUT_SECS.
+            boot_timeout: Duration::from_secs(1800),
             // Per-candidate elaborate is typically <1s but can spike
             // during heavy Mathlib lookups. 30s leaves headroom; the
             // Rust supervisor will surface the timeout cleanly so the
@@ -215,6 +218,104 @@ impl PersistentElaborator {
             next_id: AtomicU64::new(1),
             tx,
             request_timeout: cfg.request_timeout,
+            _supervisor: supervisor,
+        })
+    }
+
+    /// Connect to a long-lived elaborator daemon listening on a UDS at
+    /// `socket_path`. The daemon owns the Lean child and survives worker
+    /// restarts; the client just multiplexes JSON-line traffic.
+    ///
+    /// On a 1 vCPU + 2 GB droplet, the worker can OOM and restart every
+    /// 10–15 min. With `new()` (in-process Lean child) every restart pays
+    /// the full Mathlib boot cost. With `from_uds()` the daemon stays
+    /// hot, and the worker reconnects in <100 ms.
+    ///
+    /// Retries the connect every 500 ms for up to `connect_timeout` —
+    /// systemd may bring the worker up before the elaborator daemon's
+    /// `bind` lands. If the elaborator daemon is mid-Mathlib-boot when we
+    /// try to connect, this gives it room to finish.
+    pub async fn from_uds(
+        socket_path: impl AsRef<std::path::Path>,
+        connect_timeout: Duration,
+        request_timeout: Duration,
+    ) -> Result<Self> {
+        let socket_path = socket_path.as_ref();
+        let stream = {
+            let deadline = tokio::time::Instant::now() + connect_timeout;
+            loop {
+                match tokio::net::UnixStream::connect(socket_path).await {
+                    Ok(s) => break s,
+                    Err(e) => {
+                        if tokio::time::Instant::now() >= deadline {
+                            return Err(anyhow!(
+                                "could not connect to elaborator UDS {} within {:?}: {e}",
+                                socket_path.display(),
+                                connect_timeout,
+                            ));
+                        }
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                }
+            }
+        };
+        let (read_half, write_half) = stream.into_split();
+        let mut reader = BufReader::new(read_half).lines();
+
+        let (tx, mut rx) =
+            mpsc::channel::<(Request, Option<oneshot::Sender<Response>>)>(64);
+        let inflight: Inflight = Arc::new(Mutex::new(HashMap::new()));
+
+        let inflight_r = inflight.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(line)) = reader.next_line().await {
+                let resp: Response = match serde_json::from_str(&line) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("uds elaborator: bad response line: {e}; raw={line}");
+                        continue;
+                    }
+                };
+                if let Some(id) = response_id(&resp) {
+                    let mut g = inflight_r.lock().await;
+                    if let Some(sender) = g.remove(&id) {
+                        let _ = sender.send(resp);
+                    }
+                } else if let Response::Fatal { message } = resp {
+                    tracing::error!("uds elaborator fatal: {message}");
+                    drain_inflight_with_fatal(&inflight_r, &message).await;
+                }
+            }
+        });
+
+        let inflight_w = inflight.clone();
+        let supervisor = tokio::spawn(async move {
+            let mut writer = write_half;
+            while let Some((req, oneshot_tx)) = rx.recv().await {
+                if let (Some(id), Some(sender)) = (request_id(&req), oneshot_tx) {
+                    inflight_w.lock().await.insert(id, sender);
+                }
+                let mut line = match serde_json::to_vec(&req) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::error!("serialise request: {e}");
+                        continue;
+                    }
+                };
+                line.push(b'\n');
+                if writer.write_all(&line).await.is_err() {
+                    break;
+                }
+                if writer.flush().await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok(Self {
+            next_id: AtomicU64::new(1),
+            tx,
+            request_timeout,
             _supervisor: supervisor,
         })
     }

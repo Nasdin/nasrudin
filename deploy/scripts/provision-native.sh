@@ -186,25 +186,50 @@ sudo -u nasrudin env ELAN_HOME="$ELAN_HOME" PATH="$ELAN_HOME/bin:/usr/bin:/bin" 
 # Mathlib import doesn't pay the full disk-read tax. We launch the
 # elaborator script with `< /dev/null` so it sees EOF and exits cleanly
 # right after its boot ack. The wall cost is one cold elaborator boot
-# (~1–5 min on a 1 vCPU box), and the OS page cache that ends up
-# populated holds every .olean the elaborator touches — every
-# subsequent worker (re)start finds those files hot and runs
-# Lean.importModules at memory speed instead of disk speed.
-#
-# We don't fail provision on warm-up failure: if the elaborator can't
-# boot here, it'll fail at worker start with the same error and the
-# operator sees the journal there. Best-effort pre-warm.
-log "pre-warming Lean elaborator (~1–5 min on 1 vCPU; fills OS page cache for faster worker (re)start)..."
-sudo -u nasrudin env \
-  ELAN_HOME="$ELAN_HOME" \
-  PATH="$ELAN_HOME/bin:/usr/bin:/bin" \
-  NASRUDIN_LEAN_BOOT_TIMEOUT_SECS=600 \
-  bash -c "
-    cd $INSTALL/prover
-    timeout 600 lake env lean --run scripts/nasrudin_server.lean < /dev/null > /tmp/elab-warm.log 2>&1 || true
-    echo \"[provision] elaborator warm-up exit code: \$? (tail of /tmp/elab-warm.log:)\"
-    tail -n 10 /tmp/elab-warm.log 2>/dev/null || true
-  "
+# Skip the manual pre-warm step: nasrudin-elaborator.service IS the
+# warm. It boots once at provision time, holds Mathlib in its
+# Environment for the rest of the host's life, and survives every
+# worker restart so the worker reconnects in <100 ms instead of
+# paying the 15-min Mathlib import again. See section 8 for the
+# service install + start.
+
+# ── 6b. Swap (Lean's deserialised Mathlib environment is ~1.7 GB resident
+#         on top of the GA + RocksDB; the 2 GB droplet needs swap headroom
+#         or the elaborator's first boot OOMs). 12 GB is conservative for
+#         what's effectively a one-shot cost — Lean pages cold portions of
+#         Mathlib out once it has them, and steady-state swap use stays
+#         under 1 GB. ────────────────────────────────────────────────────
+SWAPFILE=/swapfile
+DESIRED_SWAP_BYTES=$((12 * 1024 * 1024 * 1024))
+need_swap=1
+if [ -f "$SWAPFILE" ]; then
+  cur=$(stat -c '%s' "$SWAPFILE" 2>/dev/null || echo 0)
+  if [ "$cur" -ge "$DESIRED_SWAP_BYTES" ]; then
+    need_swap=0
+    log "swap already $((cur / 1024 / 1024 / 1024)) GB — leaving alone"
+  fi
+fi
+if [ "$need_swap" -eq 1 ]; then
+  log "configuring 12 GB swapfile at $SWAPFILE (Lean+Mathlib elaborator headroom)..."
+  swapoff "$SWAPFILE" 2>/dev/null || true
+  rm -f "$SWAPFILE"
+  fallocate -l 12G "$SWAPFILE"
+  chmod 600 "$SWAPFILE"
+  mkswap "$SWAPFILE" >/dev/null
+  swapon "$SWAPFILE"
+  if ! grep -q "^$SWAPFILE " /etc/fstab; then
+    echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
+  fi
+  log "swap configured: $(swapon --show=NAME,SIZE,USED --noheadings)"
+fi
+# Lean's Mathlib elaboration is one big sustained allocation; vm.swappiness
+# default of 60 makes the kernel evict useful page cache too aggressively.
+# Lower to 10 — only swap under real pressure, prefer to evict file pages
+# (which Lean has mmap'd anyway).
+sysctl -w vm.swappiness=10 >/dev/null
+if ! grep -q '^vm.swappiness' /etc/sysctl.conf; then
+  echo 'vm.swappiness=10' >> /etc/sysctl.conf
+fi
 
 # ── 7. Caddyfile ──────────────────────────────────────────────────────────
 log "installing /etc/caddy/Caddyfile"
@@ -216,6 +241,7 @@ log "installing systemd units"
 install -m 0644 "$STAGING/deploy/systemd/nasrudin-api.service" /etc/systemd/system/
 install -m 0644 "$STAGING/deploy/systemd/nasrudin-frontend.service" /etc/systemd/system/
 install -m 0644 "$STAGING/deploy/systemd/nasrudin-worker.service" /etc/systemd/system/
+install -m 0644 "$STAGING/deploy/systemd/nasrudin-elaborator.service" /etc/systemd/system/
 install -m 0755 "$STAGING/deploy/scripts/issue_worker_key.py" /opt/nasrudin/bin/issue_worker_key.py
 mkdir -p /var/lib/nasrudin/lake-cache /var/lib/nasrudin/rocks-worker
 chown -R nasrudin:nasrudin /var/lib/nasrudin
@@ -240,6 +266,13 @@ systemctl restart caddy
 systemctl enable --now nasrudin-api
 systemctl enable --now nasrudin-frontend
 systemctl restart nasrudin-api nasrudin-frontend
+# Elaborator daemon: long-lived Lean+Mathlib host. Boot ack takes
+# 5–25 min on a 1 vCPU + 2 GB box (Mathlib import). Start it here so
+# subsequent worker restarts find a hot socket. The worker has
+# `After=nasrudin-elaborator.service` + a 30-min UDS connect retry,
+# so a worker that races ahead of the elaborator's bind just waits.
+systemctl enable --now nasrudin-elaborator
+log "nasrudin-elaborator enabled (Lean+Mathlib import is async; check 'journalctl -fu nasrudin-elaborator')"
 # nasrudin-worker is co-located with the api. We enable it but only start it
 # automatically when NASRUDIN_WORKER_KEY is already set in /opt/nasrudin/.env;
 # otherwise the operator runs deploy/scripts/issue_worker_key.py first to mint
@@ -256,7 +289,7 @@ else
 fi
 
 log "done. service status:"
-systemctl --no-pager --lines=0 status nasrudin-api nasrudin-frontend nasrudin-worker caddy postgresql 2>&1 | head -50 || true
+systemctl --no-pager --lines=0 status nasrudin-api nasrudin-frontend nasrudin-worker nasrudin-elaborator caddy postgresql 2>&1 | head -60 || true
 
 cat <<EOF
 

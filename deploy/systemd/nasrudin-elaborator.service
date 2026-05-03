@@ -1,0 +1,59 @@
+[Unit]
+Description=Nasrudin Lean Elaborator Daemon (long-lived Lean+Mathlib host)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nasrudin
+Group=nasrudin
+WorkingDirectory=/opt/nasrudin
+EnvironmentFile=-/opt/nasrudin/.env
+# Where the elaborator daemon listens. Worker connects here via
+# NASRUDIN_ELAB_UDS. Same /run/nasrudin permission model as
+# /run/nasrudin/api-local.sock — only nasrudin group can connect.
+Environment=NASRUDIN_ELAB_UDS=/run/nasrudin/elab.sock
+# Tell `lake env lean --run` where to find the prover sources and the
+# Lean script that owns the request/response loop. Same env vars as
+# PersistentElaboratorConfig::from_env() reads.
+Environment=NASRUDIN_PROVER_ROOT=/opt/nasrudin/prover
+Environment=NASRUDIN_LEAN_SCRIPT=scripts/nasrudin_server.lean
+Environment=ELAN_HOME=/opt/nasrudin/elan
+Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/var/lib/nasrudin
+Environment=LD_LIBRARY_PATH=/opt/nasrudin/lib
+# 30 minutes for the cold Mathlib import on a 2 GB box that's
+# memory-pressured. Override via .env if the host is beefier.
+Environment=NASRUDIN_LEAN_BOOT_TIMEOUT_SECS=1800
+Environment=RUST_LOG=info
+
+# Make /run/nasrudin/ exist + writable for the elaborator user before
+# we bind the socket. The api service does the same dance.
+RuntimeDirectory=nasrudin
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+
+ExecStart=/opt/nasrudin/bin/nasrudin-elaborator
+
+# The elaborator IS the precious resource: when the worker OOMs we want
+# this process to live so the next worker can attach in <100 ms instead
+# of paying another 15-min Mathlib import. Restart=always covers
+# elaborator-side crashes (Lean child dies, malformed request, …);
+# RestartSec=15 keeps us off a tight crash loop without making clients
+# wait on a long backoff.
+Restart=always
+RestartSec=15
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+# This unit is the heavy memory consumer. Give it the headroom — the
+# worker is capped to 768 MiB so they together fit on a 2 GB + swap
+# box. Hard cap at 1.5 GiB resident; the kernel pages the rest into
+# the 12 GiB swap file the provision script set up.
+MemoryHigh=1200M
+MemoryMax=1500M
+MemorySwapMax=infinity
+
+[Install]
+WantedBy=multi-user.target

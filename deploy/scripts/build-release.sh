@@ -122,6 +122,7 @@ docker run --rm --platform linux/amd64 \
       --bin physics-api \
       --bin migrate \
       --bin worker \
+      --bin nasrudin-elaborator \
       --bin backfill_existing_lean
     # Stage the .so + version chain into the release tarball, plus
     # everything libonnxruntime transitively needs that Ubuntu 24.04
@@ -140,7 +141,7 @@ docker run --rm --platform linux/amd64 \
     echo '[build] bundled '\$(ls /release-lib/ | wc -l)' onnxruntime + transitive deps'
   "
 
-for bin in physics-api migrate worker backfill_existing_lean; do
+for bin in physics-api migrate worker nasrudin-elaborator backfill_existing_lean; do
   src="$BUILD_CACHE/target/release/$bin"
   if [ ! -f "$src" ]; then
     echo "[build] error: expected $src not produced" >&2

@@ -1,7 +1,7 @@
 [Unit]
 Description=Nasrudin Discovery Worker (co-located with API)
-After=network-online.target nasrudin-api.service
-Wants=network-online.target nasrudin-api.service
+After=network-online.target nasrudin-api.service nasrudin-elaborator.service
+Wants=network-online.target nasrudin-api.service nasrudin-elaborator.service
 
 [Service]
 Type=simple
@@ -27,6 +27,10 @@ Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
 # same way the api does. The .so is bundled into /opt/nasrudin/lib/ by
 # build-release.sh; LD_LIBRARY_PATH points the dynamic linker at it.
 Environment=LD_LIBRARY_PATH=/opt/nasrudin/lib
+# Talk to the long-lived elaborator daemon (nasrudin-elaborator.service)
+# instead of forking Lean ourselves. The daemon owns the Mathlib import
+# and survives our restarts; we reconnect in <100 ms.
+Environment=NASRUDIN_ELAB_UDS=/run/nasrudin/elab.sock
 # RUST_LOG=info gives us a sensible default journal stream; tune via .env if
 # the worker gets too chatty.
 Environment=RUST_LOG=info
@@ -58,6 +62,17 @@ RestartSec=30
 LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal
+
+# Cap the worker's memory so a GA leak can't take the elaborator
+# daemon down with it via system-wide OOM. 768 MiB fits the typical
+# resident set (RocksDB block cache + GA chains + heartbeat task)
+# with comfortable headroom; the elaborator daemon then has room to
+# keep Mathlib's environment hot without contention. MemorySwapMax=0
+# means the worker dies on its own page-fault rather than dragging the
+# rest of the system into swap thrash. The elaborator gets the swap.
+MemoryHigh=600M
+MemoryMax=768M
+MemorySwapMax=0
 
 [Install]
 WantedBy=multi-user.target
