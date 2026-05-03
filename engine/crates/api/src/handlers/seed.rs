@@ -350,6 +350,7 @@ pub async fn seed(
             None,
             top,
             q.domain.clone(),
+            nasrudin_pg::query::theorems::ListOptions::default(),
         )
         .await
         {
