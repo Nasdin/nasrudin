@@ -291,12 +291,29 @@ systemctl restart nasrudin-api nasrudin-frontend
 # `After=nasrudin-elaborator.service` + a 30-min UDS connect retry,
 # so a worker that races ahead of the elaborator's bind just waits.
 systemctl enable nasrudin-elaborator
-# `enable --now` is a no-op when the unit is already running, which
-# means a redeploy that ships a new /opt/nasrudin/bin/nasrudin-elaborator
-# binary will keep serving from the OLD PID forever. Use restart to
-# force pickup of the fresh binary on every provision.
-systemctl restart nasrudin-elaborator
-log "nasrudin-elaborator (re)started (Lean+Mathlib import is async; check 'journalctl -fu nasrudin-elaborator')"
+# `enable --now` is a no-op when already running, so a fresh binary
+# wouldn't be picked up — but blindly restarting on every deploy would
+# cost another 25-30 min Mathlib re-import on the 2 GB box. Restart
+# only if the on-disk binary has actually changed since the running
+# PID started. For never-running units, also handles the cold-start
+# case via the `||` branch.
+elab_pid=$(systemctl show nasrudin-elaborator -p MainPID --value 2>/dev/null || echo 0)
+if [ "${elab_pid:-0}" -gt 0 ] && [ -e "/proc/${elab_pid}/exe" ]; then
+  # /proc/PID/exe symlinks to the running binary's inode (deleted if
+  # disk file was replaced under it). Compare by inode identity: if
+  # the running binary points to the same file as the on-disk one, the
+  # daemon already runs the latest code.
+  if [ "$(stat -c %i /proc/${elab_pid}/exe 2>/dev/null)" \
+     = "$(stat -c %i /opt/nasrudin/bin/nasrudin-elaborator 2>/dev/null)" ]; then
+    log "nasrudin-elaborator binary unchanged (PID ${elab_pid}); skipping restart to preserve hot Mathlib state"
+  else
+    log "nasrudin-elaborator binary changed (was PID ${elab_pid}); restarting"
+    systemctl restart nasrudin-elaborator
+  fi
+else
+  log "nasrudin-elaborator not running; starting"
+  systemctl start nasrudin-elaborator
+fi
 # nasrudin-worker is co-located with the api. We enable it but only start it
 # automatically when NASRUDIN_WORKER_KEY is already set in /opt/nasrudin/.env;
 # otherwise the operator runs deploy/scripts/issue_worker_key.py first to mint
