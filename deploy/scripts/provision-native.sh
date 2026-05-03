@@ -187,14 +187,35 @@ sudo -u nasrudin env ELAN_HOME="$ELAN_HOME" PATH="$ELAN_HOME/bin:/usr/bin:/bin" 
 # does nothing for our own modules. Without this build, the elaborator
 # daemon's first `import PhysicsGenerator.LeafImports` fails with
 # "unknown module prefix" and the daemon sits dead with the worker
-# falling back to per-candidate `lake build` (slow path). One-time cost
-# at provision (~1-3 min on 1 vCPU); subsequent provisions are no-ops
-# because lake's content-addressable cache picks up the existing oleans.
-log "building local prover package (PhysicsGenerator.* oleans)..."
-sudo -u nasrudin env ELAN_HOME="$ELAN_HOME" PATH="$ELAN_HOME/bin:/usr/bin:/bin" bash -c "
-  cd $INSTALL/prover
-  lake build PhysicsGenerator.LeafImports PhysicsGenerator.Basic 2>&1 | tail -20
-" || echo '[provision] WARN: local lake build failed; daemon will refuse to boot until fixed'
+# falling back to per-candidate `lake build` (slow path).
+#
+# Skip if the oleans already exist AND are newer than the .lean
+# sources — `lake build` itself can wedge in a sleep loop when the
+# elaborator daemon or worker has the package's mmap'd oleans open
+# elsewhere. A simple mtime check is what we actually want here:
+# rebuild only when we've shipped new sources.
+LEAFOLEAN="$INSTALL/prover/.lake/build/lib/lean/PhysicsGenerator/LeafImports.olean"
+BASICOLEAN="$INSTALL/prover/.lake/build/lib/lean/PhysicsGenerator/Basic.olean"
+LEAFLEAN="$INSTALL/prover/PhysicsGenerator/LeafImports.lean"
+BASICLEAN="$INSTALL/prover/PhysicsGenerator/Basic.lean"
+need_lake_build=0
+for olean_src_pair in "$LEAFOLEAN:$LEAFLEAN" "$BASICOLEAN:$BASICLEAN"; do
+  olean="${olean_src_pair%:*}"
+  src="${olean_src_pair#*:}"
+  if [ ! -f "$olean" ] || [ "$src" -nt "$olean" ]; then
+    need_lake_build=1
+    break
+  fi
+done
+if [ "$need_lake_build" -eq 1 ]; then
+  log "building local prover package (PhysicsGenerator.* oleans)..."
+  sudo -u nasrudin env ELAN_HOME="$ELAN_HOME" PATH="$ELAN_HOME/bin:/usr/bin:/bin" bash -c "
+    cd $INSTALL/prover
+    lake build PhysicsGenerator.LeafImports PhysicsGenerator.Basic 2>&1 | tail -20
+  " || echo '[provision] WARN: local lake build failed; daemon will refuse to boot until fixed'
+else
+  log "PhysicsGenerator.* oleans already up-to-date; skipping lake build"
+fi
 
 # Pre-warm the persistent elaborator so the worker's first-boot cold
 # Mathlib import doesn't pay the full disk-read tax. We launch the
