@@ -22,9 +22,12 @@ Environment=ELAN_HOME=/opt/nasrudin/elan
 Environment=PATH=/opt/nasrudin/elan/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/var/lib/nasrudin
 Environment=LD_LIBRARY_PATH=/opt/nasrudin/lib
-# 30 minutes for the cold Mathlib import on a 2 GB box that's
-# memory-pressured. Override via .env if the host is beefier.
-Environment=NASRUDIN_LEAN_BOOT_TIMEOUT_SECS=1800
+# 90 minutes for the cold Mathlib import on a 2 GB box that's
+# memory-pressured. Lean's deserialised Mathlib environment is ~9 GB
+# virtual / 1.7 GB resident — the kernel pages cold portions through
+# the 12 GB swapfile, but at ~15% CPU efficiency on a 1 vCPU box.
+# Override via .env if the host is beefier (a 4 GB box boots in <2 min).
+Environment=NASRUDIN_LEAN_BOOT_TIMEOUT_SECS=5400
 Environment=RUST_LOG=info
 
 # Make /run/nasrudin/ exist + writable for the elaborator user before

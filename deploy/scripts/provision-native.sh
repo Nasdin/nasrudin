@@ -236,13 +236,18 @@ if [ "$need_swap" -eq 1 ]; then
   fi
   log "swap configured: $(swapon --show=NAME,SIZE,USED --noheadings)"
 fi
-# Lean's Mathlib elaboration is one big sustained allocation; vm.swappiness
-# default of 60 makes the kernel evict useful page cache too aggressively.
-# Lower to 10 — only swap under real pressure, prefer to evict file pages
-# (which Lean has mmap'd anyway).
-sysctl -w vm.swappiness=10 >/dev/null
-if ! grep -q '^vm.swappiness' /etc/sysctl.conf; then
-  echo 'vm.swappiness=10' >> /etc/sysctl.conf
+# Lean's Mathlib elaborator deserialises ~9 GB of working set on a 2 GB
+# box. With low swappiness the kernel evicts olean *file pages* (which
+# Lean immediately re-faults to read more) and refuses to swap *cold*
+# anonymous pages of Mathlib's already-loaded environment. Result:
+# infinite re-import thrash. Bump swappiness so the kernel preferentially
+# pages cold anonymous Mathlib pages out, freeing RAM for fresh olean
+# reads — a one-shot cost during boot, not steady-state.
+sysctl -w vm.swappiness=80 >/dev/null
+if grep -q '^vm.swappiness' /etc/sysctl.conf; then
+  sed -i 's/^vm.swappiness=.*/vm.swappiness=80/' /etc/sysctl.conf
+else
+  echo 'vm.swappiness=80' >> /etc/sysctl.conf
 fi
 
 # ── 7. Caddyfile ──────────────────────────────────────────────────────────
