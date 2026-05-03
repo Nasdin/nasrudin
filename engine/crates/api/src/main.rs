@@ -766,7 +766,7 @@ async fn main() -> anyhow::Result<()> {
             // ±10 % jitter on every tick. With multiple API instances
             // running, fixed-cadence ticks march in lockstep and dogpile
             // PG; randomising the period spreads load evenly.
-            use rand::Rng as _;
+            use rand::RngExt as _;
             loop {
                 let jitter_ms: u64 = rand::rng().random_range(0..12_000);
                 let period =
@@ -793,7 +793,7 @@ async fn main() -> anyhow::Result<()> {
         let pg_for_worker_reaper = pg.clone();
         tokio::spawn(async move {
             // ±10 % jitter — same rationale as the lease reaper above.
-            use rand::Rng as _;
+            use rand::RngExt as _;
             loop {
                 let jitter_ms: u64 = rand::rng().random_range(0..6_000);
                 let period =
@@ -1685,6 +1685,34 @@ async fn run_verification_workers(
                 continue;
             }
 
+            // Mirror Verified rows into PG via the drain queue so the
+            // in-process GA path (NASRUDIN_API_RUN_INPROC_GA=1) doesn't
+            // diverge from the worker-ingest path. Without this, every
+            // theorem the inproc verification loop accepts lands in
+            // RocksDB only and `/browse` (PG-backed) never sees it —
+            // exactly the same class of bug as the PhysLean catalog
+            // importer used to have. Pending/Rejected rows are
+            // intentionally not mirrored: `/browse` filters on
+            // `status='Verified'`, so PG only needs the verified set.
+            if matches!(theorem.verified, VerificationStatus::Verified { .. }) {
+                match inproc_theorem_to_new_theorem(&theorem) {
+                    Ok(payload) => {
+                        if let Err(e) = db.enqueue_pg_insert(&theorem.id, &payload) {
+                            tracing::debug!(
+                                theorem_id = %hex::encode(theorem.id),
+                                "inproc-verify: pg_insert_queue enqueue failed: {e}",
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            theorem_id = %hex::encode(theorem.id),
+                            "inproc-verify: pg payload build failed: {e}",
+                        );
+                    }
+                }
+            }
+
             verified_batch.push(theorem);
         }
 
@@ -1703,28 +1731,74 @@ async fn run_verification_workers(
 
 /// Health check endpoint. Phase 9: includes db/rocks status, reverify queue depth,
 /// and total theorem count for monitoring + the smoke-test contract.
+///
+/// `theorems_total` is the RocksDB corpus count (durable source of
+/// truth). `theorems_verified_pg` is the count `/browse` paginates over
+/// — when the two diverge the operator is looking at PG mirror drift,
+/// usually the `pg_insert_queue` backed up. `pg_queue_depth` quantifies
+/// it directly.
 async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let db = if state.pg.is_some() { "ok" } else { "down" };
-    let queue_depth = state.db.reverify_queue_depth().unwrap_or(usize::MAX);
+    let reverify_queue_depth = state.db.reverify_queue_depth().unwrap_or(usize::MAX);
+    let pg_queue_depth = state.db.pg_insert_queue_depth().unwrap_or(usize::MAX);
     let stats = state.db.get_stats().unwrap_or_default();
+    let theorems_verified_pg = match &state.pg {
+        Some(pg) => nasrudin_pg::query::theorems::count_verified(pg).await.ok(),
+        None => None,
+    };
     Json(serde_json::json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
         "db": db,
         "rocks": "ok",
-        "queue_depth": queue_depth,
+        "queue_depth": reverify_queue_depth,
+        "pg_queue_depth": pg_queue_depth,
         "theorems_total": stats.total_theorems,
+        "theorems_verified_pg": theorems_verified_pg,
     }))
 }
 
 /// Engine statistics.
+///
+/// Returns the RocksDB `DbStats` (authoritative for `total_theorems`,
+/// `total_verified`, `total_axioms`, `max_generation` — RocksDB is the
+/// durable source of truth) plus a `pg_mirror` block surfacing the
+/// PG-side counts that drive the public-facing endpoints. When
+/// `total_verified` (RocksDB) and `pg_mirror.verified` diverge, the
+/// drain queue is backed up — `pg_mirror.queue_depth` quantifies it.
 async fn stats(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    match state.db.get_stats() {
-        Ok(stats) => Json(serde_json::to_value(stats).unwrap_or_default()),
-        Err(e) => Json(serde_json::json!({
-            "error": format!("Failed to get stats: {e}")
-        })),
+    let stats = match state.db.get_stats() {
+        Ok(s) => s,
+        Err(e) => {
+            return Json(serde_json::json!({
+                "error": format!("Failed to get stats: {e}")
+            }));
+        }
+    };
+    let mut out = serde_json::to_value(&stats).unwrap_or_default();
+    let queue_depth = state.db.pg_insert_queue_depth().unwrap_or(usize::MAX);
+
+    let pg_mirror = match &state.pg {
+        Some(pg) => {
+            let verified = nasrudin_pg::query::theorems::count_verified(pg).await.ok();
+            let pending = nasrudin_pg::query::theorems::count_pending(pg).await.ok();
+            serde_json::json!({
+                "available": true,
+                "verified": verified,
+                "pending": pending,
+                "queue_depth": queue_depth,
+                "drift": verified.map(|v| stats.total_verified.saturating_sub(v)),
+            })
+        }
+        None => serde_json::json!({
+            "available": false,
+            "queue_depth": queue_depth,
+        }),
+    };
+    if let Some(map) = out.as_object_mut() {
+        map.insert("pg_mirror".to_string(), pg_mirror);
     }
+    Json(out)
 }
 
 /// GA engine status.
@@ -1803,6 +1877,63 @@ fn physlean_theorem_to_new_theorem(theorem: &Theorem) -> anyhow::Result<Vec<u8>>
         contributor_id: "physlean".to_string(),
         worker_verified: false,
         worker_trusted: false,
+        worker_spot_check_rate: None,
+        user_email: None,
+        pre_verified: true,
+    };
+    Ok(serde_json::to_vec(&nt)?)
+}
+
+/// Build a `NewTheorem` payload for a theorem produced by the
+/// in-process GA verification loop. Same role as
+/// [`physlean_theorem_to_new_theorem`] but tagged with the active
+/// engine version (so PG audit traces can distinguish PhysLean imports
+/// from inproc-GA discoveries).
+fn inproc_theorem_to_new_theorem(theorem: &Theorem) -> anyhow::Result<Vec<u8>> {
+    use nasrudin_pg::query::theorems::NewTheorem;
+    let canonical_hash = nasrudin_core::canonical_hash(&theorem.canonical);
+    let parents: Option<Vec<Vec<u8>>> = if theorem.parents.is_empty() {
+        None
+    } else {
+        Some(theorem.parents.iter().map(|p| p.to_vec()).collect())
+    };
+    let nt = NewTheorem {
+        id: theorem.id.to_vec(),
+        canonical_hash,
+        canonical_ac_hash: None,
+        canonical_statement: theorem.canonical.clone(),
+        latex: if theorem.latex.is_empty() { None } else { Some(theorem.latex.clone()) },
+        lean_source: String::new(),
+        domain: format!("{:?}", theorem.domain),
+        axioms_used: Vec::new(),
+        chain_json: serde_json::json!([]),
+        parents,
+        origin_kind: "Derived".to_string(),
+        origin_payload: serde_json::to_value(&theorem.origin).ok(),
+        depth: Some(theorem.depth as i32),
+        complexity: Some(theorem.complexity as i32),
+        generation: Some(theorem.generation as i64),
+        fitness_novelty: None,
+        fitness_compactness: None,
+        fitness_dimensional_correctness: None,
+        fitness_domain_coverage: None,
+        fitness_axiom_efficiency: None,
+        fitness_nasrudin_relevance: None,
+        fitness_depth_score: None,
+        dimension: theorem.dimension.map(|d| vec![
+            d.length as i32,
+            d.mass as i32,
+            d.time as i32,
+            d.current as i32,
+            d.temperature as i32,
+            d.amount as i32,
+            d.luminosity as i32,
+        ]),
+        engine_git_sha: env!("CARGO_PKG_VERSION").to_string(),
+        lean_version: "lake_build".to_string(),
+        contributor_id: "inproc-ga".to_string(),
+        worker_verified: false,
+        worker_trusted: true,
         worker_spot_check_rate: None,
         user_email: None,
         pre_verified: true,
