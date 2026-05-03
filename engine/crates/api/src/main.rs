@@ -177,9 +177,31 @@ async fn main() -> anyhow::Result<()> {
     let mut axiom_store = AxiomStore::with_corpus(Arc::clone(&corpus_db));
     let catalog_path =
         std::path::Path::new(&prover_root).join("../physlean-extract/output/catalog.json");
-    match axiom_store.load_from_catalog(&catalog_path) {
-        Ok(count) => tracing::info!("Loaded {count} axioms from {} into hot tier", catalog_path.display()),
-        Err(e) => tracing::warn!("Failed to load catalog ({e}): continuing with upstream only"),
+    // Split-load: entries with empty `axiom_dependencies` (kernel-
+    // trusted leaves) → AxiomStore hot tier; entries with non-empty
+    // deps (derived PhysLean theorems) → TheoremDb via
+    // `physlean_import`. The no-cheat audit walks AxiomStore alone, so
+    // a derived headline canonical (e.g. `mass_shell_condition`)
+    // landing in TheoremDb with a proof-tree dep closure no longer
+    // trips the boot panic.
+    //
+    // Until `physlean-extract` is re-run with the `axiom_dependencies`
+    // emitter, every catalog entry has empty deps and the split
+    // collapses to the legacy `load_from_catalog` behaviour.
+    match nasrudin_derive::physlean_import::load_catalog_split(
+        &catalog_path,
+        &mut axiom_store,
+        &db,
+    ) {
+        Ok((axioms, theorems)) => tracing::info!(
+            axioms,
+            theorems,
+            "load_catalog_split: routed catalog from {}",
+            catalog_path.display(),
+        ),
+        Err(e) => tracing::warn!(
+            "Failed to load catalog ({e}): continuing with upstream only"
+        ),
     }
     axiom_store.load_special_relativity_upstream();
     axiom_store.load_electromagnetism_upstream();
