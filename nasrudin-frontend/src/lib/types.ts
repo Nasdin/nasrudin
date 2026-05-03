@@ -63,6 +63,12 @@ export interface Theorem {
   created_at: string;
   /** ISO 8601 timestamp with offset, or `null` while pending. */
   verified_at: string | null;
+  /** Trust decision snapshotted at ingest. Drives the badge's "(server)"
+   *  vs "(worker)" flip for `worker_claim` rows: trusted submitter ⇒
+   *  same badge as `lake_build`. False on legacy rows predating the
+   *  migration — those render as the conservative "Lean-verified
+   *  (worker)" pending state. */
+  worker_trusted: boolean;
 }
 
 /** Response shape of `GET /api/theorems` and `GET /api/theorems/recent`. */

@@ -62,6 +62,7 @@ function TheoremView({ thm }: { thm: Theorem }) {
           <VerificationBadge
             status={thm.status}
             tactic={thm.verification_tactic}
+            submitterTrusted={thm.worker_trusted}
             rejectedReason={thm.rejected_reason}
           />
           <span>· thm:{idHex.slice(0, 8)}</span>

@@ -167,6 +167,7 @@ function BrowserRow({
           <VerificationBadge
             status={t.status}
             tactic={t.verification_tactic}
+            submitterTrusted={t.worker_trusted}
             rejectedReason={t.rejected_reason}
             compact
           />
