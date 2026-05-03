@@ -26,6 +26,13 @@ nasrudin.org {
 	}
 	handle {
 		reverse_proxy 127.0.0.1:3000
+		# index.html (and all SSR routes) must not be cached by browsers
+		# or Cloudflare. Hash-suffixed assets under /assets/* live forever
+		# (handled above), but the HTML that references those hashes has
+		# to refresh on every load — otherwise a tab open through a deploy
+		# tries to dynamic-import old chunk hashes that no longer exist
+		# and trips "Failed to fetch dynamically imported module".
+		header Cache-Control "no-cache, must-revalidate"
 	}
 }
 
