@@ -182,6 +182,20 @@ sudo -u nasrudin env ELAN_HOME="$ELAN_HOME" PATH="$ELAN_HOME/bin:/usr/bin:/bin" 
   lake exe cache get || echo '[provision] WARN: lake cache get failed; first lake build will rebuild Mathlib'
 "
 
+# Build the LOCAL package (PhysicsGenerator.LeafImports / .Basic /
+# .Derived.*). lake exe cache get only fetches Mathlib's .oleans; it
+# does nothing for our own modules. Without this build, the elaborator
+# daemon's first `import PhysicsGenerator.LeafImports` fails with
+# "unknown module prefix" and the daemon sits dead with the worker
+# falling back to per-candidate `lake build` (slow path). One-time cost
+# at provision (~1-3 min on 1 vCPU); subsequent provisions are no-ops
+# because lake's content-addressable cache picks up the existing oleans.
+log "building local prover package (PhysicsGenerator.* oleans)..."
+sudo -u nasrudin env ELAN_HOME="$ELAN_HOME" PATH="$ELAN_HOME/bin:/usr/bin:/bin" bash -c "
+  cd $INSTALL/prover
+  lake build PhysicsGenerator.LeafImports PhysicsGenerator.Basic 2>&1 | tail -20
+" || echo '[provision] WARN: local lake build failed; daemon will refuse to boot until fixed'
+
 # Pre-warm the persistent elaborator so the worker's first-boot cold
 # Mathlib import doesn't pay the full disk-read tax. We launch the
 # elaborator script with `< /dev/null` so it sees EOF and exits cleanly

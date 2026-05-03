@@ -15,7 +15,10 @@
 //! interleaving.
 
 use anyhow::{Context, Result, anyhow};
-use nasrudin_lean_bridge::{PersistentElaboratorConfig, persistent_protocol::Request};
+use nasrudin_lean_bridge::{
+    PersistentElaboratorConfig,
+    persistent_protocol::{Request, Response},
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -120,7 +123,32 @@ async fn main() -> Result<()> {
     if read == 0 {
         return Err(anyhow!("lean closed stdout before boot ack"));
     }
-    tracing::info!(boot_ack = boot_line.trim(), "Lean is hot");
+    let boot_ack_raw = boot_line.trim().to_string();
+    // Critical: the *first* line on stdout is sometimes Lean's compiler
+    // complaining about a missing import (e.g. "unknown module prefix
+    // 'PhysicsGenerator'") rather than the script's own
+    // {"kind":"ok","id":0} ack. Without parsing it we'd happily start
+    // listening on a dead Lean child. Parse strictly and fail loudly so
+    // systemd loops us until the operator sees the journal and fixes
+    // the actual problem (typically: `lake build` the local package
+    // before starting this daemon).
+    let parsed: Response = serde_json::from_str(&boot_ack_raw).map_err(|e| {
+        anyhow!(
+            "boot ack is not valid JSON ({e}); raw line: {boot_ack_raw}\n\
+             this usually means `lake env lean --run` failed to import\n\
+             a module before reaching the script's IO.println — run\n\
+             `cd $NASRUDIN_PROVER_ROOT && lake build` and check stderr."
+        )
+    })?;
+    match parsed {
+        Response::Ok { id: 0 } => {}
+        other => {
+            return Err(anyhow!(
+                "unexpected boot response: {other:?}; raw: {boot_ack_raw}"
+            ));
+        }
+    }
+    tracing::info!(boot_ack = %boot_ack_raw, "Lean is hot");
 
     // Bind UDS. Remove a stale socket file from a previous unclean shutdown.
     if socket_path.exists() {
