@@ -864,6 +864,15 @@ enum PersistentOutcome {
 /// Synchronously call the persistent elaborator from inside a tokio
 /// runtime. The verify path is sync today (mirrors `lake build`); we
 /// reuse the worker's tokio handle to drive the async RPC.
+///
+/// `block_in_place` is required: `Handle::block_on` from inside a tokio
+/// worker thread panics with "Cannot start a runtime from within a
+/// runtime." `block_in_place` lets the multi-thread runtime relocate
+/// the current task's siblings to other workers while we block here.
+/// Was never observed before the elaborator daemon shipped because the
+/// in-process spawn path failed at boot on the 2 GB droplet, so
+/// `call_persistent_elaborate` was never reached — the bug lay dormant
+/// behind a never-firing code path.
 fn call_persistent_elaborate(
     elab: &nasrudin_lean_bridge::PersistentElaborator,
     source: &str,
@@ -877,7 +886,7 @@ fn call_persistent_elaborate(
             };
         }
     };
-    let result = handle.block_on(elab.elaborate(source));
+    let result = tokio::task::block_in_place(|| handle.block_on(elab.elaborate(source)));
     match result {
         Ok(Response::ElaborateOk { .. }) => PersistentOutcome::Verified,
         Ok(Response::ElaborateError { message, .. }) => {
