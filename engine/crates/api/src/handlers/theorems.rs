@@ -210,6 +210,7 @@ pub async fn recent(
 /// `id` must be 16 hex chars. Anything malformed → 400; not found → 404.
 pub async fn by_id(
     State(state): State<Arc<AppState>>,
+    admin: Option<crate::admin::require_admin::RequireAdmin>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let pg = match &state.pg {
@@ -233,7 +234,24 @@ pub async fn by_id(
         }
     };
     match theorems::get_by_id(pg, &id_bytes).await {
-        Ok(Some(t)) => (StatusCode::OK, Json(t)).into_response(),
+        Ok(Some(t)) => {
+            // Defense-in-depth: chain_replay rows are internal staging
+            // (Rust replay accepted, Lean kernel hasn't run). Admin sees
+            // them as-is for diagnostics; everyone else gets a 404 so a
+            // deep link doesn't surface a "verified" pill for a row with
+            // zero kernel backing. Rejected rows DO surface — direct deep
+            // links from audit logs / cascade traces should still resolve.
+            let is_chain_replay = t.status == "Verified"
+                && t.verification_tactic.as_deref() == Some("chain_replay");
+            if is_chain_replay && admin.is_none() {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": "not_found" })),
+                )
+                    .into_response();
+            }
+            (StatusCode::OK, Json(t)).into_response()
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "not_found" })),
