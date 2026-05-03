@@ -119,6 +119,42 @@ fn reverse_deps_index_lists_all_dependents() {
 }
 
 #[test]
+fn forbidden_cache_returns_same_arc_on_warm_lookup() {
+    let dir = TempDir::new().unwrap();
+    let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+
+    let a = axiom_theorem(1, "A");
+    let b = derived_theorem(2, "B", &[a.id]);
+    db.put_theorem(&a).unwrap();
+    db.put_theorem(&b).unwrap();
+
+    let f1 = db.forbidden_for_target(&a.id).unwrap();
+    let f2 = db.forbidden_for_target(&a.id).unwrap();
+    assert!(
+        std::sync::Arc::ptr_eq(&f1, &f2),
+        "cached lookup must return same Arc"
+    );
+}
+
+#[test]
+fn forbidden_cache_invalidates_on_new_dependent() {
+    let dir = TempDir::new().unwrap();
+    let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+
+    let a = axiom_theorem(1, "A");
+    db.put_theorem(&a).unwrap();
+    let f_before = db.forbidden_for_target(&a.id).unwrap();
+    assert_eq!(f_before.len(), 1, "only A itself before B is added");
+
+    // Adding B (which cites A) must invalidate A's cached entry.
+    let b = derived_theorem(2, "B", &[a.id]);
+    db.put_theorem(&b).unwrap();
+    let f_after = db.forbidden_for_target(&a.id).unwrap();
+    assert_eq!(f_after.len(), 2, "A and B after B is added");
+    assert!(f_after.contains(&b.id));
+}
+
+#[test]
 fn transitive_ancestors_chain() {
     let dir = TempDir::new().unwrap();
     let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();

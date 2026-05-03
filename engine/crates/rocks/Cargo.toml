@@ -18,6 +18,10 @@ chrono = { workspace = true, features = ["serde"] }
 rkyv = { workspace = true }
 # Dynamic block-cache sizing — read total system RAM at DB open time.
 sysinfo = { workspace = true }
+# In-process LRU for `forbidden_for_target` lookups — the GA's
+# premise-selection inner loop calls it repeatedly per generation
+# against the same handful of targets.
+lru = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

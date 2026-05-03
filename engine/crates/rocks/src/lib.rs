@@ -15,6 +15,8 @@ pub mod corpus;
 pub use corpus::{CorpusBackend, CorpusDb};
 pub mod tactic_priors;
 pub use tactic_priors::{TacticPriorRecord, TacticPriorsCache, TacticSuccess};
+mod forbidden_cache;
+use forbidden_cache::ForbiddenCache;
 
 /// Column family names used by the theorem database.
 const CF_THEOREMS: &str = "theorems";
@@ -215,6 +217,7 @@ pub struct LineageRecord {
 /// RocksDB-backed theorem database.
 pub struct TheoremDb {
     db: std::sync::Arc<DB>,
+    forbidden_cache: std::sync::Arc<ForbiddenCache>,
 }
 
 impl TheoremDb {
@@ -262,6 +265,7 @@ impl TheoremDb {
 
         Ok(Self {
             db: std::sync::Arc::new(db),
+            forbidden_cache: std::sync::Arc::new(ForbiddenCache::new()),
         })
     }
 
@@ -409,6 +413,12 @@ impl TheoremDb {
         self.db
             .write(batch)
             .context("Failed to write theorem batch")?;
+
+        // Cached forbidden-sets for every ancestor are stale now —
+        // we just added a new dependent edge for each of them.
+        for ancestor_id in &ancestors {
+            self.forbidden_cache.invalidate(ancestor_id);
+        }
 
         // Update stats (separate write — stats are best-effort)
         self.increment_stats(theorem)?;
@@ -725,20 +735,26 @@ impl TheoremDb {
 
     /// Set of theorem ids that must NOT be used as premises when
     /// deriving anything that resolves to `target_id`. Returns
-    /// `{target_id} ∪ list_dependents(target_id)`. The result is wrapped
-    /// in `Arc` so the LRU layer (added in a follow-up commit) can hand
-    /// out shared references without copying.
+    /// `{target_id} ∪ list_dependents(target_id)`. Cached in a 256-entry
+    /// LRU keyed on `target_id`; entries are invalidated whenever
+    /// `put_theorem` writes a new dependent edge for an ancestor (see
+    /// the cache-invalidation block in `put_theorem`).
     pub fn forbidden_for_target(
         &self,
         target_id: &TheoremId,
     ) -> Result<std::sync::Arc<std::collections::HashSet<TheoremId>>> {
+        if let Some(hit) = self.forbidden_cache.get(target_id) {
+            return Ok(hit);
+        }
         let mut set: std::collections::HashSet<TheoremId> =
             std::collections::HashSet::new();
         set.insert(*target_id);
         for dep in self.list_dependents(target_id)? {
             set.insert(dep);
         }
-        Ok(std::sync::Arc::new(set))
+        let arc = std::sync::Arc::new(set);
+        self.forbidden_cache.insert(*target_id, arc.clone());
+        Ok(arc)
     }
 
     /// List every theorem whose proof transitively cites `ancestor_id`.
