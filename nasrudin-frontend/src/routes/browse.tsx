@@ -20,15 +20,16 @@ const PAGE_SIZE = 50;
 /// client and an IntersectionObserver-style hook (driven by the
 /// virtualizer's last visible index) calls `fetchNextPage()` when the
 /// user scrolls within 5 rows of the tail.
-const browseInfiniteOptions = (domain: Domain | null) =>
+const browseInfiniteOptions = (domain: Domain | null, includeRejected: boolean) =>
   infiniteQueryOptions({
-    queryKey: ['theorems', 'list', domain] as const,
+    queryKey: ['theorems', 'list', domain, includeRejected] as const,
     queryFn: ({ pageParam }) => {
       const cursorParam =
         pageParam == null ? '' : `&cursor=${encodeURIComponent(pageParam as string)}`;
+      const rejParam = includeRejected ? '&include_rejected=true' : '';
       const url = domain
-        ? `/api/theorems?domain=${domain}&limit=${PAGE_SIZE}${cursorParam}`
-        : `/api/theorems/recent?limit=${PAGE_SIZE}${cursorParam}`;
+        ? `/api/theorems?domain=${domain}&limit=${PAGE_SIZE}${cursorParam}${rejParam}`
+        : `/api/theorems/recent?limit=${PAGE_SIZE}${cursorParam}${rejParam}`;
       return apiFetch<TheoremListResponse>(url);
     },
     initialPageParam: null as string | null,
@@ -42,17 +43,18 @@ export const Route = createFileRoute('/browse')({
   // the same cache via useInfiniteQuery; subsequent pages stream in as
   // the virtualizer reaches the tail.
   loader: async ({ context }) => {
-    await context.queryClient.ensureInfiniteQueryData(browseInfiniteOptions(null));
+    await context.queryClient.ensureInfiniteQueryData(browseInfiniteOptions(null, false));
   },
   component: BrowsePage,
 });
 
 function BrowsePage() {
   const [domain, setDomain] = useState<Domain | null>(null);
+  const [includeRejected, setIncludeRejected] = useState(false);
   // Live invalidation: any new pending/verified/rejected theorem refreshes the list.
   useDiscoveryFeed();
   const counts = useDomains();
-  const list = useInfiniteQuery(browseInfiniteOptions(domain));
+  const list = useInfiniteQuery(browseInfiniteOptions(domain, includeRejected));
 
   const parentRef = useRef<HTMLDivElement>(null);
   const theorems = list.data?.pages.flatMap((p) => p.theorems) ?? [];
@@ -106,12 +108,32 @@ function BrowsePage() {
           <div className="search-layout">
             <FacetSidebar counts={counts.data ?? {}} active={domain} onChange={setDomain} />
             <div>
-              <div className="search-results-bar">
+              <div
+                className="search-results-bar"
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              >
                 <span>
                   <strong>{theorems.length.toLocaleString()}</strong> loaded
                   {list.hasNextPage ? ` of ${total.toLocaleString()}` : ''}
                   {list.isFetchingNextPage && ' · fetching more…'}
                 </span>
+                <label
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 13,
+                    color: 'var(--ink-600)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={includeRejected}
+                    onChange={(e) => setIncludeRejected(e.target.checked)}
+                  />
+                  Show rejected
+                </label>
               </div>
               {list.isPending && <p style={{ color: 'var(--ink-500)' }}>loading…</p>}
               {!list.isPending && theorems.length > 0 && (
