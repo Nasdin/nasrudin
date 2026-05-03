@@ -45,6 +45,7 @@ function Landing() {
             <Link to="/leaderboard">Contributors</Link>
             <Link to="/api-docs">API</Link>
             <Link to="/pricing">Pricing</Link>
+            <Link to="/sponsor">Donate</Link>
             <span className="nav-sep" aria-hidden />
             <Link to="/signin" className="nav-secondary">
               Sign in

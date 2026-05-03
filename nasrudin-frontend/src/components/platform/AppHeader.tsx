@@ -49,6 +49,9 @@ export function AppHeader({ active }: { active?: string }) {
             <Link to="/pricing" className="app-nav-link">
               Pricing
             </Link>
+            <Link to="/sponsor" className="app-nav-link">
+              Donate
+            </Link>
             <Link to="/api-docs" className="app-nav-link">
               API
             </Link>

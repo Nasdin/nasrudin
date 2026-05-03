@@ -154,42 +154,34 @@ function SponsorPage() {
               <p style={{ color: 'var(--ink-500)', fontSize: 14, lineHeight: 1.5, flex: 1 }}>
                 {t.description}
               </p>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => startSponsor(t.priceKey)}
-              >
-                {t.cta === 'monthly' ? 'Sponsor monthly' : 'Donate'}
-              </button>
+              {t.cta === 'one_time' ? (
+                ONE_TIME_LINK ? (
+                  <a
+                    href={ONE_TIME_LINK}
+                    className="btn btn-primary"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ textAlign: 'center' }}
+                  >
+                    Donate
+                  </a>
+                ) : (
+                  <button type="button" className="btn btn-primary" disabled>
+                    Donate (unavailable)
+                  </button>
+                )
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => startSponsor(t.priceKey)}
+                >
+                  Sponsor monthly
+                </button>
+              )}
             </div>
           ))}
         </div>
-
-        {ONE_TIME_LINK && (
-          <div
-            style={{
-              marginTop: 56,
-              padding: 24,
-              borderTop: '1px solid var(--paper-200)',
-              textAlign: 'center',
-            }}
-          >
-            <p style={{ color: 'var(--ink-700)', fontSize: 16, marginBottom: 12 }}>
-              Prefer a one-time gift?
-            </p>
-            <a
-              href={ONE_TIME_LINK}
-              className="btn btn-secondary"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Name your amount →
-            </a>
-            <p style={{ color: 'var(--ink-500)', fontSize: 13, marginTop: 12 }}>
-              Hosted by Stripe · choose any amount from $5
-            </p>
-          </div>
-        )}
 
         <section style={{ marginTop: 80 }}>
           <span className="overline">Where the money goes</span>

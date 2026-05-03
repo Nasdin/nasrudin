@@ -23,6 +23,7 @@ use stripe::Client;
 use stripe_billing::billing_portal_session::CreateBillingPortalSession;
 use stripe_checkout::checkout_session::{
     CreateCheckoutSession, CreateCheckoutSessionAutomaticTax,
+    CreateCheckoutSessionCustomerUpdate, CreateCheckoutSessionCustomerUpdateAddress,
     CreateCheckoutSessionLineItems, CreateCheckoutSessionSubscriptionData,
 };
 use stripe_core::customer::CreateCustomer;
@@ -137,9 +138,19 @@ impl BillingClient {
             ..Default::default()
         };
         let automatic_tax = CreateCheckoutSessionAutomaticTax::new(true);
+        // Stripe Tax needs a resolvable customer address; ours are
+        // created from email only. Tell Checkout to write the billing
+        // address the user enters back to `customer.address` so the tax
+        // engine can compute it. Without this Stripe rejects the session
+        // with `customer-tax-location-invalid`.
+        let customer_update = CreateCheckoutSessionCustomerUpdate {
+            address: Some(CreateCheckoutSessionCustomerUpdateAddress::Auto),
+            ..Default::default()
+        };
         let session = CreateCheckoutSession::new()
             .mode(CheckoutSessionMode::Subscription)
             .customer(customer_id)
+            .customer_update(customer_update)
             .success_url(self.cfg.checkout_success_url.as_str())
             .cancel_url(self.cfg.checkout_cancel_url.as_str())
             .line_items(line_items)
