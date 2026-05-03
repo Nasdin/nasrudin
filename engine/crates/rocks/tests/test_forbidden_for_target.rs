@@ -156,6 +156,57 @@ fn put_theorem_rejects_self_cycle() {
 }
 
 #[test]
+fn tactic_proof_with_parents_populates_ancestors() {
+    // PhysLean-imported derived theorems land with proof =
+    // ProofTree::TacticProof (opaque kernel proof term) and parents =
+    // the dep list the Lean proof-walk extracted. The reverse-deps
+    // index must still see the dependency edges.
+    let dir = TempDir::new().unwrap();
+    let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+
+    let a = axiom_theorem(1, "A");
+    let b = axiom_theorem(2, "B");
+    db.put_theorem(&a).unwrap();
+    db.put_theorem(&b).unwrap();
+
+    // C is opaque (TacticProof) but explicitly cites A and B via parents.
+    let c_id = [3u8, 0, 0, 0, 0, 0, 0, 0];
+    let c = Theorem {
+        id: c_id,
+        statement: Expr::Var("C".into()),
+        canonical: "C".into(),
+        latex: String::new(),
+        proof: ProofTree::TacticProof {
+            tactic: "physlean".into(),
+            proof_term: vec![],
+        },
+        depth: 1,
+        complexity: 0,
+        domain: Domain::SpecialRelativity,
+        dimension: None,
+        parents: vec![a.id, b.id],
+        children: vec![],
+        verified: VerificationStatus::Pending,
+        fitness: FitnessScore::default(),
+        generation: 0,
+        created_at: 0,
+        origin: TheoremOrigin::Imported {
+            source: "PhysLean::Test.C".into(),
+        },
+    };
+    db.put_theorem(&c).unwrap();
+
+    let lin_c = db.get_lineage(&c.id).unwrap().unwrap();
+    let ancestors: BTreeSet<_> = lin_c.axiom_ancestors.iter().copied().collect();
+    assert!(ancestors.contains(&a.id), "TacticProof child must cite A via parents");
+    assert!(ancestors.contains(&b.id), "TacticProof child must cite B via parents");
+
+    // Reverse-deps must reflect the edges, so re-deriving A excludes C.
+    let forbidden_a = db.forbidden_for_target(&a.id).unwrap();
+    assert!(forbidden_a.contains(&c.id));
+}
+
+#[test]
 fn put_theorem_accepts_self_axiom_leaf() {
     // A leaf-axiom theorem (proof is ProofTree::Axiom(self.id)) is
     // the canonical seed pattern from island.rs. Must NOT be rejected.

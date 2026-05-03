@@ -29,6 +29,7 @@ pub mod error;
 pub mod lean_emitter;
 pub mod lean_verify;
 pub mod no_cheat_audit;
+pub mod physlean_import;
 pub mod postulates_classical;
 pub mod postulates_gr;
 pub mod postulates_quantum;

@@ -299,6 +299,19 @@ impl TheoremDb {
         let mut acc: std::collections::BTreeSet<nasrudin_core::TheoremId> =
             nasrudin_core::collect_axiom_ids(&theorem.proof);
 
+        // Also seed from `theorem.parents`. Two cases this matters:
+        //   1. `ProofTree::TacticProof { ... }` is a kernel-checked leaf
+        //      whose dependencies don't surface in `collect_axiom_ids`
+        //      (it returns empty for that variant). Imported PhysLean
+        //      derived theorems land here — parents carries the
+        //      dep-list the Lean proof-term walk extracted.
+        //   2. Any theorem whose parents the constructor populated
+        //      independently of the proof tree shape (e.g., manually
+        //      built fixtures, future origins).
+        for p in &theorem.parents {
+            acc.insert(*p);
+        }
+
         // A leaf-axiom theorem (proof is exactly `ProofTree::Axiom(self.id)`)
         // is the canonical "this IS the axiom" pattern from island.rs
         // seeding — not a cycle, just a self-reference at the leaf.
