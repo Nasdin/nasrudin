@@ -1,21 +1,75 @@
-import { createFileRoute, Link, Outlet, redirect } from '@tanstack/react-router';
-import { ApiError } from '~/lib/api';
-import { adminFetch } from '~/lib/adminApi';
+import { useQuery } from '@tanstack/react-query';
+import { createFileRoute, Link, Outlet } from '@tanstack/react-router';
 import ImpersonationBanner from '~/components/admin/ImpersonationBanner';
+import { SignInPrompt } from '~/components/platform/SignInPrompt';
+import { ApiError, apiFetch } from '~/lib/api';
+import { useMe } from '~/lib/queries';
 
-export const Route = createFileRoute('/admin')({
-  beforeLoad: async () => {
-    try {
-      await adminFetch<unknown>('/api/admin/users?page=1&page_size=1');
-    } catch (e) {
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-        throw redirect({ to: '/' });
+export const Route = createFileRoute('/admin')({ component: AdminGate });
+
+type AdminAccess = 'admin' | 'not_admin';
+
+/// Probes a cheap admin endpoint to distinguish admin (200) from
+/// not-admin (403). Uses raw `apiFetch` (not `adminFetch`) so we hit
+/// the real user — `adminFetch` threads the impersonation token AND
+/// hard-redirects to `/` on 403, both of which would defeat this gate.
+function useAdminAccess(enabled: boolean) {
+  return useQuery<AdminAccess>({
+    queryKey: ['admin', 'access'],
+    enabled,
+    queryFn: async () => {
+      try {
+        await apiFetch<unknown>('/api/admin/users?page=1&page_size=1');
+        return 'admin';
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 403) return 'not_admin';
+        throw e;
       }
-      throw e;
-    }
-  },
-  component: AdminLayout,
-});
+    },
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+function AdminGate() {
+  const { data: me, isPending: mePending } = useMe();
+  const { data: access, isPending: accessPending } = useAdminAccess(!!me);
+
+  if (mePending) return <p style={{ padding: 24 }}>…</p>;
+
+  if (!me) {
+    return (
+      <SignInPrompt
+        overline="Admin"
+        title="Admin panel"
+        description="Sign in with your admin account to manage users, audit logs, bulk runs, steering, and the corpus."
+      />
+    );
+  }
+
+  if (accessPending) return <p style={{ padding: 24 }}>Checking admin access…</p>;
+
+  if (access !== 'admin') {
+    return (
+      <div className="app">
+        <div className="container-wide" style={{ maxWidth: 720, padding: 64, textAlign: 'center' }}>
+          <span className="overline">Admin</span>
+          <h1>Not authorized</h1>
+          <p style={{ color: 'var(--ink-700)' }}>
+            <strong>{me.email}</strong> doesn't have admin access on this instance.
+          </p>
+          <p style={{ marginTop: 24 }}>
+            <Link to="/" className="btn btn-ghost">
+              Back to home
+            </Link>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return <AdminLayout />;
+}
 
 function AdminLayout() {
   return (

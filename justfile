@@ -7,7 +7,7 @@ default:
 
 # ── Development ──────────────────────────────────────────
 
-# Run the whole stack locally: postgres + migrations + API + frontend (Ctrl+C tears it down)
+# Run the whole stack locally: postgres + migrations + API + frontend + worker (Ctrl+C tears it down)
 up:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -17,6 +17,7 @@ up:
       cp .env.example .env
     fi
     set -a; . .env; set +a
+    API_PORT="${API_PORT:-3001}"
     echo "[up] starting postgres..."
     docker compose up -d postgres
     echo "[up] waiting for postgres..."
@@ -28,10 +29,37 @@ up:
     done
     echo "[up] running migrations..."
     (cd engine && cargo run --quiet --bin migrate -- up)
-    echo "[up] launching api + frontend (Ctrl+C to stop both)"
+    # Mint a local worker bearer key on first boot. The worker authenticates
+    # POST /api/workers/heartbeat with `nsk_worker_…`; without one the
+    # dashboard shows the worker "Inactive" forever (see worker.rs L174-178).
+    if ! grep -q '^NASRUDIN_WORKER_KEY=' .env; then
+      echo "[up] minting local worker key..."
+      key=$(cd engine && cargo run --release --quiet --bin issue_worker_key -- local-dev-worker | tail -n 1)
+      printf 'NASRUDIN_WORKER_KEY=%s\n' "$key" >> .env
+      export NASRUDIN_WORKER_KEY="$key"
+    fi
+    echo "[up] building worker binary..."
+    (cd engine && cargo build --release --quiet -p nasrudin-ga --bin worker)
+    echo "[up] launching api + frontend + worker (Ctrl+C to stop all)"
     trap 'kill 0 2>/dev/null || true; docker compose stop postgres >/dev/null 2>&1 || true; exit 0' INT TERM
     (cd engine && PROVER_ROOT=../prover RUST_LOG="${RUST_LOG:-info}" cargo run --release --bin physics-api 2>&1 | sed -u 's/^/[api] /') &
     (cd nasrudin-frontend && pnpm dev 2>&1 | sed -u 's/^/[web] /') &
+    # Worker hydrates its corpus from /api/seed at boot — wait for the
+    # API to be healthy before spawning it, otherwise the first hydrate
+    # request crashes the worker process.
+    echo "[up] waiting for api on :${API_PORT}..."
+    for i in $(seq 1 180); do
+      if curl -fsS "http://localhost:${API_PORT}/api/health" >/dev/null 2>&1; then
+        echo "[up] api is healthy"
+        break
+      fi
+      sleep 1
+    done
+    (cd engine && PATH="$HOME/.elan/bin:$PATH" \
+      NASRUDIN_API_URL="http://localhost:${API_PORT}" \
+      NASRUDIN_WORKER_ID="local-dev-worker" \
+      ./target/release/worker --domain sr --verify ../prover 2>&1 \
+      | sed -u 's/^/[worker] /') &
     wait
 
 # Start frontend dev server

@@ -4,7 +4,7 @@
 //! to produce two offspring.
 
 use nasrudin_core::Expr;
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 /// Perform subtree crossover on two expression trees.
 ///

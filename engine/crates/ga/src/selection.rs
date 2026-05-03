@@ -3,7 +3,7 @@
 //! Implements non-dominated sorting (Pareto ranking) and crowding distance
 //! assignment for maintaining a diverse set of high-quality solutions.
 
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 use crate::individual::Individual;
 

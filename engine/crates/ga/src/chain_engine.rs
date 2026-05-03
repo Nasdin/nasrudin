@@ -21,8 +21,7 @@ use crate::chain_ga::{
 use crate::target::TargetSpec;
 use nasrudin_core::Expr;
 use nasrudin_derive::{AxiomStore, Chain, RuleStep};
-use rand::Rng;
-use rand::seq::IteratorRandom;
+use rand::{Rng, RngExt};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;

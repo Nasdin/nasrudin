@@ -165,7 +165,7 @@ async fn record_one(
     reward: f64,
     weight: f64,
 ) -> Result<(), DbErr> {
-    use rand::Rng;
+    use rand::RngExt;
     if weight < 1.0 {
         let mut rng = rand::rng();
         if !rng.random_bool(weight.clamp(0.0, 1.0)) {

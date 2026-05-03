@@ -41,7 +41,15 @@ function clientChunkSplit(): Plugin {
 export default defineConfig({
   plugins: [
     tsconfigPaths(),
-    tanstackRouter({ target: 'react', autoCodeSplitting: true }),
+    // `addHmr: false` works around a router-plugin 1.167.31 bug where the
+    // code-splitter emits duplicate `const hot = import.meta.hot` bindings,
+    // causing Babel to throw "Duplicate declaration 'hot'" on every route.
+    // Trade-off: route file edits trigger a full reload instead of HMR.
+    tanstackRouter({
+      target: 'react',
+      autoCodeSplitting: true,
+      codeSplittingOptions: { addHmr: false },
+    }),
     tanstackStart({
       server: { entry: './ssr.tsx' },
       client: { entry: './client.tsx' },

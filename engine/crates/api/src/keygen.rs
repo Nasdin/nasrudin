@@ -1,7 +1,7 @@
 //! Generate `nsk_<kind>_<base32-secret>` keys.
 
 use data_encoding::BASE32_NOPAD;
-use rand::RngCore;
+use rand::Rng;
 
 pub struct GeneratedKey {
     /// Full key as the user sees it. Only returned to the client once.

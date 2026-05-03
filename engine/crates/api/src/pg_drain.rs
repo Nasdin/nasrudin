@@ -71,18 +71,23 @@ async fn drain_once(rocks: &Arc<TheoremDb>, pg: &DatabaseConnection) -> Result<(
         return Ok(());
     }
 
-    // Insert all rows in a single transaction. If any one row fails on
-    // a unique-constraint violation (duplicate canonical_hash from a
-    // re-enqueue after a prior partial-flush crash), we ack it anyway
-    // since the row is already in PG. Other failures retry next tick.
-    let txn = pg.begin().await?;
+    // Per-row transactions: postgres aborts the whole transaction on
+    // the first error, so a single duplicate-canonical_hash insert
+    // would poison every subsequent insert in the batch with
+    // "current transaction is aborted, commands ignored". Each row
+    // gets its own txn so a failure rolls back only that row.
     let mut acked = Vec::new();
     let mut requeue = Vec::new();
     for (id, nt) in decoded {
+        let txn = pg.begin().await?;
         match theorems::insert_pending(&txn, nt).await {
-            Ok(_) => acked.push(id),
+            Ok(_) => {
+                txn.commit().await?;
+                acked.push(id);
+            }
             Err(e) => {
-                let msg = format!("{e}");
+                txn.rollback().await.ok();
+                let msg = format!("{e:#}");
                 // Duplicate key = already in PG, ack it.
                 if msg.contains("duplicate key") || msg.contains("unique constraint") {
                     acked.push(id);
@@ -96,7 +101,6 @@ async fn drain_once(rocks: &Arc<TheoremDb>, pg: &DatabaseConnection) -> Result<(
             }
         }
     }
-    txn.commit().await?;
 
     for id in &acked {
         rocks.ack_pg_insert(id).ok();

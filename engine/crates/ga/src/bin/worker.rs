@@ -531,9 +531,8 @@ async fn main() {
             None
         } else {
             let n = std::cmp::max(rejected_canonicals.len() * 4, 4096);
-            // `bloomfilter::Bloom::new_for_fp_rate` returns the Bloom
-            // directly (no Result) in the version this workspace uses.
-            let mut b = bloomfilter::Bloom::new_for_fp_rate(n, 0.001);
+            let mut b = bloomfilter::Bloom::new_for_fp_rate(n, 0.001)
+                .expect("bloom params are valid");
             for h in rejected_canonicals.iter() {
                 b.set(h.as_slice());
             }

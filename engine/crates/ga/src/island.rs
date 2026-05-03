@@ -9,7 +9,7 @@ use nasrudin_core::{
 };
 use nasrudin_derive::{AxiomStore, domain_variable_dimensions, infer_dimension};
 use nasrudin_rocks::TheoremDb;
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 use crate::config::GaConfig;
 use crate::crossover::subtree_crossover;
@@ -170,7 +170,7 @@ impl Island {
                 store.by_domain_excluding(&Domain::PureMath, forbidden);
             let need = target.saturating_sub(self.population.len());
             let math_sample: Vec<nasrudin_derive::Axiom> =
-                math_pool.into_iter().choose_multiple(rng, need);
+                math_pool.into_iter().sample(rng, need);
             for axiom in math_sample {
                 if self.population.len() >= target {
                     break;

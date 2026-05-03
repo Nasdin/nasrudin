@@ -2,7 +2,7 @@
 
 use crate::clustering::features::{signature_distance, ClusterFeatures, MINHASH_SIG_LEN};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 const MAX_ITERS: usize = 20;
 

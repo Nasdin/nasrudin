@@ -6,8 +6,8 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use anyhow::{Context, Result};
-use rand::TryRngCore;
-use rand::rngs::OsRng;
+use rand::TryRng;
+use rand::rngs::SysRng;
 
 /// Wire-format ciphertext + nonce.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,7 +19,7 @@ pub fn encrypt(plaintext: &str, key_bytes: &[u8; 32]) -> Result<EncryptedKey> {
     let key: &Key<Aes256Gcm> = key_bytes.into();
     let cipher = Aes256Gcm::new(key);
     let mut nonce = [0u8; NONCE_LEN];
-    OsRng
+    SysRng
         .try_fill_bytes(&mut nonce)
         .map_err(|e| anyhow::anyhow!("rng: {e}"))?;
     let ct = cipher

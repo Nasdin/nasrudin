@@ -26,7 +26,7 @@ serde_json = { version = "1.0", features = ["unbounded_depth"] }
 schemars = { version = "1", features = ["preserve_order"] }
 
 # Async runtime
-tokio = { version = "1.49", features = ["full"] }
+tokio = { version = "1.52", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["time", "sync"] }
 
 # Error handling
@@ -38,20 +38,20 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Resource detection (for worker auto-sizing)
-num_cpus = "1.16"
+num_cpus = "1.17"
 sysinfo = "0.38"
 
 # Hashing & encoding
-blake3 = "1.5"
+blake3 = "1.8"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 hex = "0.4"
 data-encoding = "2"
-bloomfilter = "1"
+bloomfilter = "3"
 base64 = "0.22"
 
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
-axum-extra = { version = "0.10", features = ["typed-header"] }
+axum-extra = { version = "0.12", features = ["typed-header"] }
 tower-sessions = { version = "0.15", features = ["memory-store"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "compression-br"] }
@@ -79,9 +79,9 @@ sea-orm-migration = { version = "2.0.0-rc.38", features = [
 ] }
 
 # Common types
-uuid = { version = "1.20", features = ["v4", "v5", "serde"] }
+uuid = { version = "1.23", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-rand = "0.9"
+rand = "0.10"
 
 # Env
 dotenvy = "0.15"

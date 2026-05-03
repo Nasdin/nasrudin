@@ -17,8 +17,8 @@
 
 use nasrudin_core::{BinOp, Expr, PhysConst, UnOp};
 use nasrudin_derive::AxiomStore;
-use rand::Rng;
 use rand::seq::IteratorRandom;
+use rand::{Rng, RngExt};
 
 /// Which mutation operator to apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
