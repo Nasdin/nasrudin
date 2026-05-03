@@ -64,15 +64,16 @@ StandardOutput=journal
 StandardError=journal
 
 # Cap the worker's memory so a GA leak can't take the elaborator
-# daemon down with it via system-wide OOM. 768 MiB fits the typical
-# resident set (RocksDB block cache + GA chains + heartbeat task)
-# with comfortable headroom; the elaborator daemon then has room to
-# keep Mathlib's environment hot without contention. MemorySwapMax=0
-# means the worker dies on its own page-fault rather than dragging the
-# rest of the system into swap thrash. The elaborator gets the swap.
-MemoryHigh=600M
-MemoryMax=768M
-MemorySwapMax=0
+# daemon down with it via system-wide OOM, but leave room for the
+# corpus block cache (~150 M) + GA population + elaborate-path
+# request/response buffers. 600 M was empirically too tight: the
+# worker pegged at 599.5 M with 492 K available and made zero forward
+# progress for 12+ minutes (cgroup-throttled). 900 M high / 1.1 G max
+# leaves real headroom; 1 G swap absorbs transient spikes from large
+# elaborate payloads without dragging the host into thrash.
+MemoryHigh=900M
+MemoryMax=1100M
+MemorySwapMax=1G
 
 [Install]
 WantedBy=multi-user.target
