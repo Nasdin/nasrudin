@@ -1,5 +1,4 @@
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
-import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import { defineConfig, type Plugin } from 'vite';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
@@ -41,15 +40,12 @@ function clientChunkSplit(): Plugin {
 export default defineConfig({
   plugins: [
     tsconfigPaths(),
-    // `addHmr: false` works around a router-plugin 1.167.31 bug where the
-    // code-splitter emits duplicate `const hot = import.meta.hot` bindings,
-    // causing Babel to throw "Duplicate declaration 'hot'" on every route.
-    // Trade-off: route file edits trigger a full reload instead of HMR.
-    tanstackRouter({
-      target: 'react',
-      autoCodeSplitting: true,
-      codeSplittingOptions: { addHmr: false },
-    }),
+    // `tanstackStart` already runs the router generator + per-environment
+    // code splitter internally (see start-plugin-core/vite/start-router-plugin).
+    // Adding a standalone `tanstackRouter()` here makes two generators
+    // race on routeTree.gen.ts ("File ... was modified by another process
+    // during processing") and emits duplicate `const hot = import.meta.hot`
+    // bindings on every route ("Duplicate declaration 'hot'").
     tanstackStart({
       server: { entry: './ssr.tsx' },
       client: { entry: './client.tsx' },
