@@ -73,3 +73,47 @@ fn test_names_list() {
     assert!(names.iter().any(|n| n == "mass_shell_condition"));
     assert!(names.iter().any(|n| n == "c_positive"));
 }
+
+#[test]
+fn iter_excluding_skips_forbidden_axioms() {
+    use nasrudin_core::axiom_id_from_name;
+    use std::collections::HashSet;
+
+    let mut store = AxiomStore::new();
+    store.load_special_relativity_upstream();
+
+    let forbidden_name = "rest_frame_psq_zero";
+    let forbidden_id = axiom_id_from_name(forbidden_name);
+    let mut forbidden = HashSet::new();
+    forbidden.insert(forbidden_id);
+
+    let names: Vec<String> = store
+        .iter_excluding(&forbidden)
+        .map(|a| a.name)
+        .collect();
+    assert!(
+        !names.iter().any(|n| n == forbidden_name),
+        "{forbidden_name} must be filtered out"
+    );
+    assert!(names.iter().any(|n| n == "minkowski_invariant_def"));
+}
+
+#[test]
+fn by_domain_excluding_respects_forbidden_set() {
+    use nasrudin_core::axiom_id_from_name;
+    use std::collections::HashSet;
+
+    let mut store = AxiomStore::new();
+    store.load_special_relativity_upstream();
+
+    let forbidden_name = "four_momentum_time_component";
+    let mut forbidden = HashSet::new();
+    forbidden.insert(axiom_id_from_name(forbidden_name));
+
+    let names: Vec<String> = store
+        .by_domain_excluding(&Domain::SpecialRelativity, &forbidden)
+        .into_iter()
+        .map(|a| a.name)
+        .collect();
+    assert!(!names.iter().any(|n| n == forbidden_name));
+}

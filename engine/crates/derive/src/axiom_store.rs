@@ -360,6 +360,36 @@ impl AxiomStore {
         }
     }
 
+    /// Like [`iter`] but skips any axiom whose synthetic id (derived
+    /// from its name via [`nasrudin_core::axiom_id_from_name`]) is in
+    /// `forbidden`. Used by the GA and chain engine to filter premises
+    /// during a derivation that targets a specific theorem — the
+    /// forbidden set comes from `TheoremDb::forbidden_for_target`.
+    pub fn iter_excluding<'a>(
+        &'a self,
+        forbidden: &'a std::collections::HashSet<nasrudin_core::TheoremId>,
+    ) -> Box<dyn Iterator<Item = Axiom> + 'a> {
+        Box::new(self.iter().filter(move |axiom| {
+            !forbidden.contains(&nasrudin_core::axiom_id_from_name(&axiom.name))
+        }))
+    }
+
+    /// Like [`by_domain`] but excludes axioms whose synthetic id is in
+    /// `forbidden`. See [`iter_excluding`] for the id-derivation
+    /// semantics.
+    pub fn by_domain_excluding(
+        &self,
+        domain: &nasrudin_core::Domain,
+        forbidden: &std::collections::HashSet<nasrudin_core::TheoremId>,
+    ) -> Vec<Axiom> {
+        self.by_domain(domain)
+            .into_iter()
+            .filter(|axiom| {
+                !forbidden.contains(&nasrudin_core::axiom_id_from_name(&axiom.name))
+            })
+            .collect()
+    }
+
     /// Get every axiom name (hot ∪ cold). Returns owned `Vec<String>`
     /// — the previous `Vec<&str>` shape doesn't survive the cold tier.
     pub fn names(&self) -> Vec<String> {
