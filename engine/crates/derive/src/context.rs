@@ -1,6 +1,8 @@
 //! Derivation context: tracks known facts, assumptions, and proof steps.
 
-use nasrudin_core::Expr;
+use nasrudin_core::{Expr, TheoremId};
+use std::collections::HashSet;
+use std::sync::Arc;
 
 /// A single step in a derivation.
 #[derive(Debug, Clone)]
@@ -24,6 +26,11 @@ pub struct DerivationContext {
     steps: Vec<DerivationStep>,
     /// The current working expression.
     current: Option<Expr>,
+    /// Theorem ids that strategies must NOT use as premises during this
+    /// derivation. Populated by `DerivationEngine::derive_for_target`
+    /// from the store's reverse-deps index. Empty for derivations that
+    /// don't have an in-store target (legacy `derive_by_strategy`).
+    forbidden_axioms: Arc<HashSet<TheoremId>>,
 }
 
 impl DerivationContext {
@@ -33,7 +40,20 @@ impl DerivationContext {
             assumptions: Vec::new(),
             steps: Vec::new(),
             current: None,
+            forbidden_axioms: Arc::new(HashSet::new()),
         }
+    }
+
+    /// Replace the forbidden-axioms set. Called by
+    /// `DerivationEngine::derive_for_target` before strategy execution.
+    pub fn set_forbidden_axioms(&mut self, forbidden: Arc<HashSet<TheoremId>>) {
+        self.forbidden_axioms = forbidden;
+    }
+
+    /// Theorem ids that strategies must NOT pull as premises. See the
+    /// field docstring for population semantics.
+    pub fn forbidden_axioms(&self) -> &Arc<HashSet<TheoremId>> {
+        &self.forbidden_axioms
     }
 
     /// Add a known fact (axiom or previously derived).

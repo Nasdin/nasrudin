@@ -87,6 +87,43 @@ impl DerivationEngine {
         Ok((result, ctx))
     }
 
+    /// Build a `DerivationContext` pre-populated with the forbidden-
+    /// axiom set for `target_id`. Strategies that respect
+    /// `ctx.forbidden_axioms()` (via the GA / chain engine) refuse to
+    /// use any theorem that transitively cites the target as a premise.
+    /// Suitable for any code path that knows the in-store id of the
+    /// theorem being targeted.
+    pub fn context_for_target(
+        &self,
+        target_id: &nasrudin_core::TheoremId,
+        db: &nasrudin_rocks::TheoremDb,
+    ) -> Result<DerivationContext, DeriveError> {
+        let forbidden = db
+            .forbidden_for_target(target_id)
+            .map_err(|e| DeriveError::StoreError {
+                reason: format!("forbidden_for_target: {e}"),
+            })?;
+        let mut ctx = DerivationContext::new();
+        ctx.set_forbidden_axioms(forbidden);
+        Ok(ctx)
+    }
+
+    /// Run `strategy` targeted at a specific in-store theorem id. The
+    /// returned context's forbidden-axiom set is
+    /// `db.forbidden_for_target(target_id)`. Strategies that filter
+    /// premises through `ctx.forbidden_axioms()` refuse to use the
+    /// target or any theorem transitively citing it.
+    pub fn derive_for_target(
+        &self,
+        target_id: &nasrudin_core::TheoremId,
+        strategy: &dyn DerivationStrategy,
+        db: &nasrudin_rocks::TheoremDb,
+    ) -> Result<(Expr, DerivationContext), DeriveError> {
+        let mut ctx = self.context_for_target(target_id, db)?;
+        let result = strategy.execute(&self.store, &mut ctx)?;
+        Ok((result, ctx))
+    }
+
     /// Derive E = mc² from SR axioms.
     pub fn derive_rest_energy(&self) -> Result<DerivationResult, DeriveError> {
         let strategy = DeriveRestEnergy;

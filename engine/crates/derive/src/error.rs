@@ -32,4 +32,8 @@ pub enum DeriveError {
     /// IO error during Lean file operations.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// Underlying theorem-store query failed.
+    #[error("theorem-store error: {reason}")]
+    StoreError { reason: String },
 }
