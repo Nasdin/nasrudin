@@ -46,7 +46,7 @@ impl ForbiddenCache {
         self.inner.lock().unwrap().pop(target);
     }
 
-    #[cfg(test)]
+    #[doc(hidden)]
     pub fn invalidate_all_for_test(&self) {
         self.inner.lock().unwrap().clear();
     }

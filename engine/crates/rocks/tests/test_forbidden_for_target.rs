@@ -119,6 +119,48 @@ fn reverse_deps_index_lists_all_dependents() {
 }
 
 #[test]
+fn backfill_populates_existing_theorems() {
+    let dir = TempDir::new().unwrap();
+
+    // Phase 1: write theorems WITH the new lineage logic, then wipe lineage
+    // and reverse-deps to simulate a pre-migration db state.
+    {
+        let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+        let mut a = axiom_theorem(1, "A");
+        a.depth = 0;
+        let mut b = derived_theorem(2, "B", &[a.id]);
+        b.depth = 1;
+        let mut c = derived_theorem(3, "C", &[b.id]);
+        c.depth = 2;
+        db.put_theorem(&a).unwrap();
+        db.put_theorem(&b).unwrap();
+        db.put_theorem(&c).unwrap();
+        db.clear_lineage_for_test().unwrap();
+    }
+
+    // Phase 2: reopen, run backfill, verify both indexes restored.
+    {
+        let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+        let count = db.backfill_lineage_and_reverse_deps().unwrap();
+        assert_eq!(count, 3, "backfill processed all 3 theorems");
+
+        let a_id = [1u8, 0, 0, 0, 0, 0, 0, 0];
+        let mut deps_a = db.list_dependents(&a_id).unwrap();
+        deps_a.sort();
+        let mut expected = vec![[2u8, 0, 0, 0, 0, 0, 0, 0], [3u8, 0, 0, 0, 0, 0, 0, 0]];
+        expected.sort();
+        assert_eq!(deps_a, expected);
+
+        // Idempotent: second run produces same state, returns same count.
+        let count2 = db.backfill_lineage_and_reverse_deps().unwrap();
+        assert_eq!(count2, 3);
+        let mut deps_a2 = db.list_dependents(&a_id).unwrap();
+        deps_a2.sort();
+        assert_eq!(deps_a2, expected);
+    }
+}
+
+#[test]
 fn forbidden_cache_returns_same_arc_on_warm_lookup() {
     let dir = TempDir::new().unwrap();
     let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();

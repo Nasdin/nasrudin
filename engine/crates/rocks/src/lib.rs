@@ -733,6 +733,129 @@ impl TheoremDb {
         self.list_by_axiom_limit(axiom_id, 0)
     }
 
+    /// Recompute and persist `LineageRecord.axiom_ancestors` and
+    /// `CF_REVERSE_DEPS` for every theorem already in `CF_THEOREMS`.
+    ///
+    /// Walks theorems in ascending depth order (via `CF_BY_DEPTH`) so a
+    /// parent's lineage is always populated before its child's
+    /// `compute_transitive_ancestors` call needs it. Each theorem's
+    /// reverse-deps rows are wiped before re-write, making the operation
+    /// idempotent — running this on an already-migrated db produces
+    /// identical state.
+    ///
+    /// Returns the count of theorems processed.
+    pub fn backfill_lineage_and_reverse_deps(&self) -> Result<usize> {
+        // 1. Collect (depth, id) pairs from CF_BY_DEPTH so we process
+        //    theorems in topological order. Iterating CF_THEOREMS
+        //    directly would give hash-keyed (random) order.
+        let cf_depth = self
+            .db
+            .cf_handle(CF_BY_DEPTH)
+            .context("Missing by_depth CF")?;
+        let mut ordered: Vec<TheoremId> = Vec::new();
+        for item in self.db.iterator_cf(&cf_depth, IteratorMode::Start) {
+            let (_, value) = item.context("Failed to iterate by_depth")?;
+            if value.len() < 8 {
+                continue;
+            }
+            let mut id = [0u8; 8];
+            id.copy_from_slice(&value[..8]);
+            ordered.push(id);
+        }
+
+        let cf_lineage = self
+            .db
+            .cf_handle(CF_LINEAGE)
+            .context("Missing lineage CF")?;
+        let cf_reverse = self
+            .db
+            .cf_handle(CF_REVERSE_DEPS)
+            .context("Missing reverse_deps CF")?;
+
+        let mut processed = 0usize;
+        for tid in &ordered {
+            let theorem = match self.get_theorem(tid)? {
+                Some(t) => t,
+                None => continue,
+            };
+
+            // Wipe any stale reverse-deps rows pointing AT this theorem.
+            // We don't know the previous ancestor set so we scan the
+            // whole CF for entries whose suffix matches `tid`. This is
+            // O(N²) in the migration path but only runs once.
+            let mut victims: Vec<Vec<u8>> = Vec::new();
+            for item in self.db.iterator_cf(&cf_reverse, IteratorMode::Start) {
+                let (key, _) = item.context("Failed to scan reverse_deps")?;
+                if key.len() == 16 && &key[8..16] == tid.as_slice() {
+                    victims.push(key.to_vec());
+                }
+            }
+            let mut batch = WriteBatch::default();
+            for k in victims {
+                batch.delete_cf(&cf_reverse, &k);
+            }
+
+            // Recompute ancestors with parents already migrated.
+            let ancestors = self.compute_transitive_ancestors(&theorem)?;
+            let lineage = LineageRecord {
+                theorem_id: theorem.id,
+                parents: theorem.parents.clone(),
+                children: theorem.children.clone(),
+                axiom_ancestors: ancestors.clone(),
+            };
+            let lineage_value =
+                serde_json::to_vec(&lineage).context("Failed to serialize lineage")?;
+            batch.put_cf(&cf_lineage, theorem.id, &lineage_value);
+
+            for ancestor_id in &ancestors {
+                let mut key = [0u8; 16];
+                key[..8].copy_from_slice(ancestor_id);
+                key[8..].copy_from_slice(&theorem.id);
+                batch.put_cf(&cf_reverse, key, &[] as &[u8]);
+            }
+
+            self.db
+                .write(batch)
+                .context("Failed to write backfill batch")?;
+            for ancestor_id in &ancestors {
+                self.forbidden_cache.invalidate(ancestor_id);
+            }
+            processed += 1;
+        }
+
+        tracing::info!(
+            "backfill_lineage_and_reverse_deps: processed {} theorems",
+            processed
+        );
+        Ok(processed)
+    }
+
+    /// Test-only: wipe `CF_LINEAGE` and `CF_REVERSE_DEPS` to simulate
+    /// a pre-migration database state. Production code must never call
+    /// this — there is no recovery path if the process exits before the
+    /// backfill completes.
+    #[doc(hidden)]
+    pub fn clear_lineage_for_test(&self) -> Result<()> {
+        for cf_name in [CF_LINEAGE, CF_REVERSE_DEPS] {
+            let cf = self
+                .db
+                .cf_handle(cf_name)
+                .context(format!("Missing {cf_name} CF"))?;
+            let keys: Vec<Vec<u8>> = self
+                .db
+                .iterator_cf(&cf, IteratorMode::Start)
+                .filter_map(|item| item.ok().map(|(k, _)| k.to_vec()))
+                .collect();
+            for k in keys {
+                self.db
+                    .delete_cf(&cf, &k)
+                    .context("Failed to clear test row")?;
+            }
+        }
+        self.forbidden_cache.invalidate_all_for_test();
+        Ok(())
+    }
+
     /// Set of theorem ids that must NOT be used as premises when
     /// deriving anything that resolves to `target_id`. Returns
     /// `{target_id} ∪ list_dependents(target_id)`. Cached in a 256-entry
