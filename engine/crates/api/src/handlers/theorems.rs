@@ -36,7 +36,11 @@ const RECENT_TTL: Duration = Duration::from_secs(30);
 /// and a small handful of (limit, domain) combos covers >99 % of traffic.
 const RECENT_MAX_ENTRIES: usize = 64;
 
-type RecentKey = (u64, Option<String>);
+/// Cache key for the `/api/theorems/recent` response. The trailing two
+/// bools track the `include_rejected` and `include_internal` query flags
+/// so admin- and toggle-driven variants of the response don't share cache
+/// entries with the public default.
+type RecentKey = (u64, Option<String>, bool, bool);
 
 /// Per-(limit, domain) cached response body. `Arc<String>` so cache hits
 /// avoid both PG and re-serialisation.
@@ -75,11 +79,21 @@ impl TheoremsRecentCache {
 }
 
 /// Query params shared by `list` and `recent`. `recent` ignores `cursor`.
+///
+/// `include_rejected` surfaces `status = 'Rejected'` rows (off by default —
+/// most viewers don't want failed candidates in their feed). `include_internal`
+/// surfaces `verification_tactic = 'chain_replay'` rows (no Lean kernel has
+/// touched them yet) and is honored only when the request authenticates as
+/// admin via `RequireAdmin`; otherwise silently ignored.
 #[derive(Deserialize)]
 pub struct ListQuery {
     pub limit: Option<u64>,
     pub cursor: Option<String>,
     pub domain: Option<String>,
+    #[serde(default)]
+    pub include_rejected: bool,
+    #[serde(default)]
+    pub include_internal: bool,
 }
 
 /// `GET /api/theorems` — cursor-paginated `Verified` list, newest-first.
@@ -89,6 +103,7 @@ pub struct ListQuery {
 /// is `true` so the UI can render "10,000+" without lying.
 pub async fn list(
     State(state): State<Arc<AppState>>,
+    admin: Option<crate::admin::require_admin::RequireAdmin>,
     Query(q): Query<ListQuery>,
 ) -> impl IntoResponse {
     let pg = match &state.pg {
@@ -102,7 +117,13 @@ pub async fn list(
         }
     };
     let limit = q.limit.unwrap_or(50).min(500);
-    match theorems::list_verified(pg, q.cursor, limit, q.domain).await {
+    let opts = nasrudin_pg::query::theorems::ListOptions {
+        include_rejected: q.include_rejected,
+        // Honored only for admins so a crafted query string can't leak
+        // chain_replay (no-Lean-kernel) rows to the public.
+        include_internal: q.include_internal && admin.is_some(),
+    };
+    match theorems::list_verified(pg, q.cursor, limit, q.domain, opts).await {
         Ok(page) => (
             StatusCode::OK,
             Json(serde_json::json!({
@@ -123,13 +144,16 @@ pub async fn list(
 
 /// `GET /api/theorems/recent` — same query shape as `list` but the cursor
 /// param is dropped before the DB call so it always returns the newest page.
-/// 30 s TTL cache keyed on `(limit, domain)`.
+/// 30 s TTL cache keyed on `(limit, domain, include_rejected, include_internal)`.
 pub async fn recent(
     State(state): State<Arc<AppState>>,
+    admin: Option<crate::admin::require_admin::RequireAdmin>,
     Query(q): Query<ListQuery>,
 ) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(50).min(500);
-    let cache_key: RecentKey = (limit, q.domain.clone());
+    let include_rejected = q.include_rejected;
+    let include_internal = q.include_internal && admin.is_some();
+    let cache_key: RecentKey = (limit, q.domain.clone(), include_rejected, include_internal);
 
     if let Some(body) = state.theorems_recent_cache.get_fresh(&cache_key).await {
         return (
@@ -148,7 +172,11 @@ pub async fn recent(
             .into_response();
     };
 
-    match theorems::list_verified(pg, None, limit, q.domain).await {
+    let opts = nasrudin_pg::query::theorems::ListOptions {
+        include_rejected,
+        include_internal,
+    };
+    match theorems::list_verified(pg, None, limit, q.domain, opts).await {
         Ok(page) => {
             let payload = serde_json::json!({
                 "theorems": page.items,

@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, OptionalFromRequestParts};
 use axum::http::{StatusCode, header, request::Parts};
 use serde_json::json;
 
@@ -115,5 +115,22 @@ impl FromRequestParts<Arc<AppState>> for RequireAdmin {
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": "admin_required" })),
         ))
+    }
+}
+
+/// Lets handlers accept `Option<RequireAdmin>` to express "elevate behavior
+/// when the caller is admin, otherwise serve the public default." Any
+/// rejection from the underlying extractor (no session, bad token, not
+/// admin) collapses to `None` instead of failing the request.
+impl OptionalFromRequestParts<Arc<AppState>> for RequireAdmin {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        Ok(<Self as FromRequestParts<Arc<AppState>>>::from_request_parts(parts, state)
+            .await
+            .ok())
     }
 }

@@ -170,9 +170,15 @@ async fn list_with_cursor_returns_in_order_and_paginates() {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
-    let page1 = nasrudin_pg::query::theorems::list_verified(&db, None, 3, None)
-        .await
-        .unwrap();
+    let page1 = nasrudin_pg::query::theorems::list_verified(
+        &db,
+        None,
+        3,
+        None,
+        nasrudin_pg::query::theorems::ListOptions::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(page1.items.len(), 3);
     assert!(page1.next_cursor.is_some(), "must have next cursor");
     assert_eq!(page1.total, 5);
@@ -183,9 +189,15 @@ async fn list_with_cursor_returns_in_order_and_paginates() {
     assert_eq!(page1.items[1].canonical_statement, "theorem_3: E_3 = m_3*c^2");
     assert_eq!(page1.items[2].canonical_statement, "theorem_2: E_2 = m_2*c^2");
 
-    let page2 = nasrudin_pg::query::theorems::list_verified(&db, page1.next_cursor, 3, None)
-        .await
-        .unwrap();
+    let page2 = nasrudin_pg::query::theorems::list_verified(
+        &db,
+        page1.next_cursor,
+        3,
+        None,
+        nasrudin_pg::query::theorems::ListOptions::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(page2.items.len(), 2);
     assert!(page2.next_cursor.is_none(), "no more pages");
     assert_eq!(page2.items[0].canonical_statement, "theorem_1: E_1 = m_1*c^2");
