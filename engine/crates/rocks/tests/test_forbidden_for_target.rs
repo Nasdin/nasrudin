@@ -65,6 +65,29 @@ fn derived_theorem(id: u8, name: &str, premise_ids: &[[u8; 8]]) -> Theorem {
 }
 
 #[test]
+fn reverse_deps_index_lists_all_dependents() {
+    let dir = TempDir::new().unwrap();
+    let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+
+    let a = axiom_theorem(1, "A");
+    let b = derived_theorem(2, "B", &[a.id]);
+    let c = derived_theorem(3, "C", &[b.id]);
+    db.put_theorem(&a).unwrap();
+    db.put_theorem(&b).unwrap();
+    db.put_theorem(&c).unwrap();
+
+    // A's dependents: B (direct) and C (transitive via B).
+    let mut deps = db.list_dependents(&a.id).unwrap();
+    deps.sort();
+    let mut expected = vec![b.id, c.id];
+    expected.sort();
+    assert_eq!(deps, expected);
+
+    // C is a leaf (no theorem cites it): no dependents.
+    assert!(db.list_dependents(&c.id).unwrap().is_empty());
+}
+
+#[test]
 fn transitive_ancestors_chain() {
     let dir = TempDir::new().unwrap();
     let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();

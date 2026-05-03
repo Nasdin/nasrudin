@@ -69,6 +69,14 @@ const CF_BY_VERIFIED_AT: &str = "by_verified_at";
 /// Keys are `[priority_u8, enqueued_at_be_u64, theorem_id_8]`. A
 /// forward iter from `[0u8]` yields highest-priority oldest first.
 const CF_LAKE_PROMOTION_QUEUE: &str = "lake_promotion_queue";
+/// Reverse-dependency index for derivation acyclicity. For every
+/// theorem T whose proof transitively cites ancestor A, we write
+/// key `A_id (8) || T_id (8)` with empty value. A `prefix_iterator_cf`
+/// keyed on `A_id` yields every T that depends on A — used by
+/// `forbidden_for_target` to filter the premise set when re-deriving A
+/// (or anything in A's class). Fixed-width keys mean no separator
+/// byte and no value payload — the cheapest possible edge index.
+const CF_REVERSE_DEPS: &str = "reverse_deps";
 
 const ALL_CFS: &[&str] = &[
     CF_THEOREMS,
@@ -89,6 +97,7 @@ const ALL_CFS: &[&str] = &[
     CF_CORPUS_AXIOM,
     CF_CORPUS_DOMAIN,
     CF_CORPUS_META,
+    CF_REVERSE_DEPS,
 ];
 
 /// Compute the RocksDB block-cache budget in bytes.
@@ -321,20 +330,35 @@ impl TheoremDb {
             serde_json::to_vec(&theorem.proof).context("Failed to serialize proof")?;
         batch.put_cf(&cf_proofs, theorem.id, &proof_value);
 
-        // Lineage record
+        // Lineage record (transitive ancestor closure)
         let cf_lineage = self
             .db
             .cf_handle(CF_LINEAGE)
             .context("Missing lineage CF")?;
+        let ancestors = self.compute_transitive_ancestors(theorem)?;
         let lineage = LineageRecord {
             theorem_id: theorem.id,
             parents: theorem.parents.clone(),
             children: theorem.children.clone(),
-            axiom_ancestors: self.compute_transitive_ancestors(theorem)?,
+            axiom_ancestors: ancestors.clone(),
         };
         let lineage_value =
             serde_json::to_vec(&lineage).context("Failed to serialize lineage")?;
         batch.put_cf(&cf_lineage, theorem.id, &lineage_value);
+
+        // Reverse-deps index — one row per (ancestor, theorem) edge so
+        // `forbidden_for_target` can answer "what depends on X?" with a
+        // single prefix scan instead of walking every proof tree.
+        let cf_reverse = self
+            .db
+            .cf_handle(CF_REVERSE_DEPS)
+            .context("Missing reverse_deps CF")?;
+        for ancestor_id in &ancestors {
+            let mut key = [0u8; 16];
+            key[..8].copy_from_slice(ancestor_id);
+            key[8..].copy_from_slice(&theorem.id);
+            batch.put_cf(&cf_reverse, key, &[] as &[u8]);
+        }
 
         // Domain index
         let cf_domain = self
@@ -697,6 +721,31 @@ impl TheoremDb {
     /// List all theorem IDs derived from a given parent/axiom.
     pub fn list_by_axiom(&self, axiom_id: &TheoremId) -> Result<Vec<TheoremId>> {
         self.list_by_axiom_limit(axiom_id, 0)
+    }
+
+    /// List every theorem whose proof transitively cites `ancestor_id`.
+    ///
+    /// Prefix-scans `CF_REVERSE_DEPS` on the 8-byte `ancestor_id`. The
+    /// values are ignored; the dependent id is the second half of the
+    /// 16-byte key. Returns deterministic order (RocksDB iterator order
+    /// over the lex-sorted dependent ids).
+    pub fn list_dependents(&self, ancestor_id: &TheoremId) -> Result<Vec<TheoremId>> {
+        let cf = self
+            .db
+            .cf_handle(CF_REVERSE_DEPS)
+            .context("Missing reverse_deps CF")?;
+        let mut out = Vec::new();
+        let iter = self.db.prefix_iterator_cf(&cf, ancestor_id);
+        for item in iter {
+            let (key, _) = item.context("Failed to iterate reverse_deps")?;
+            if key.len() != 16 || !key.starts_with(ancestor_id) {
+                break;
+            }
+            let mut dep = [0u8; 8];
+            dep.copy_from_slice(&key[8..16]);
+            out.push(dep);
+        }
+        Ok(out)
     }
 
     /// Prefix search on the LaTeX index, up to `limit` results (0 = unlimited).
