@@ -3365,6 +3365,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "hex",
+ "lru",
  "nasrudin-core",
  "rkyv 0.8.16",
  "rocksdb",
