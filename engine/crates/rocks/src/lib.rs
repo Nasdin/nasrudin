@@ -266,6 +266,40 @@ impl TheoremDb {
 
     // ── Theorem CRUD ──────────────────────────────────────────────────
 
+    /// Compute the transitive axiom-ancestor closure for a theorem.
+    ///
+    /// Walks `theorem.proof` to collect the immediate `Axiom(id)` leaves,
+    /// then unions in the cached `axiom_ancestors` of each leaf already
+    /// stored in `CF_LINEAGE`. Result is deterministic (`BTreeSet`-sorted
+    /// before collection) and includes every axiom transitively used by
+    /// the proof. Self-references at the proof root (an axiom seed
+    /// theorem whose proof is `ProofTree::Axiom(self.id)`) are stripped.
+    ///
+    /// Builds bottom-up: every parent's own ancestors must already be
+    /// stored in CF_LINEAGE. The backfill task is responsible for
+    /// populating in topological order; on the live write path,
+    /// `put_theorem` orders writes such that parents land first.
+    fn compute_transitive_ancestors(
+        &self,
+        theorem: &nasrudin_core::Theorem,
+    ) -> Result<Vec<nasrudin_core::TheoremId>> {
+        let mut acc: std::collections::BTreeSet<nasrudin_core::TheoremId> =
+            nasrudin_core::collect_axiom_ids(&theorem.proof);
+        let immediate: Vec<_> = acc.iter().copied().collect();
+        for parent_id in &immediate {
+            if parent_id == &theorem.id {
+                continue;
+            }
+            if let Some(parent_lineage) = self.get_lineage(parent_id)? {
+                for a in parent_lineage.axiom_ancestors {
+                    acc.insert(a);
+                }
+            }
+        }
+        acc.remove(&theorem.id);
+        Ok(acc.into_iter().collect())
+    }
+
     /// Store a theorem and update all secondary indexes + stats atomically.
     pub fn put_theorem(&self, theorem: &Theorem) -> Result<()> {
         let mut batch = WriteBatch::default();
@@ -296,7 +330,7 @@ impl TheoremDb {
             theorem_id: theorem.id,
             parents: theorem.parents.clone(),
             children: theorem.children.clone(),
-            axiom_ancestors: vec![],
+            axiom_ancestors: self.compute_transitive_ancestors(theorem)?,
         };
         let lineage_value =
             serde_json::to_vec(&lineage).context("Failed to serialize lineage")?;
