@@ -380,21 +380,53 @@ fn decode_cursor(c: &str) -> Result<(chrono::DateTime<chrono::FixedOffset>, Vec<
     Ok((dt_utc.fixed_offset(), id))
 }
 
+/// Listing filters applied by [`list_verified`]. Defaults are conservative
+/// for public endpoints: hide `chain_replay` rows (no Lean kernel has touched
+/// them) and `Rejected` rows. Callers that want to surface those (admin
+/// views, internal exporters) flip the relevant flag explicitly.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListOptions {
+    /// Include rows where `verification_tactic = 'chain_replay'`. Default false.
+    pub include_internal: bool,
+    /// Include rows where `status = 'Rejected'` alongside `Verified`. Default false.
+    pub include_rejected: bool,
+}
+
 /// List `Verified` theorems newest-first with cursor pagination.
 ///
 /// Ordering is `(verified_at DESC, id DESC)` — both terms matter so rows that
 /// happen to share a microsecond timestamp still have a deterministic order
 /// for the cursor's `<` filter.
 ///
-/// `total` is COUNT(*) over the same WHERE clause, capped at [`TOTAL_CAP`];
-/// when the true count exceeds the cap, `total_capped = true`.
+/// `total` is COUNT(*) over the public-default predicate (Verified, not
+/// chain_replay), capped at [`TOTAL_CAP`]; when the true count exceeds the
+/// cap, `total_capped = true`. The total intentionally does NOT track
+/// `opts.include_rejected` — the headline number on `/browse` should reflect
+/// the corpus, not the audit-mode toggle state.
 pub async fn list_verified(
     db: &impl ConnectionTrait,
     cursor: Option<String>,
     limit: u64,
     domain: Option<String>,
+    opts: ListOptions,
 ) -> Result<Page<theorems::Model>> {
-    let mut q = theorems::Entity::find().filter(theorems::Column::Status.eq("Verified"));
+    let mut q = theorems::Entity::find();
+    if opts.include_rejected {
+        q = q.filter(
+            theorems::Column::Status
+                .eq("Verified")
+                .or(theorems::Column::Status.eq("Rejected")),
+        );
+    } else {
+        q = q.filter(theorems::Column::Status.eq("Verified"));
+    }
+    if !opts.include_internal {
+        q = q.filter(
+            theorems::Column::VerificationTactic
+                .ne("chain_replay")
+                .or(theorems::Column::VerificationTactic.is_null()),
+        );
+    }
     if let Some(d) = domain.as_ref() {
         q = q.filter(theorems::Column::Domain.eq(d.clone()));
     }
