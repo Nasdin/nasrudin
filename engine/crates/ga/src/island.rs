@@ -123,6 +123,23 @@ impl Island {
     /// `PureMath` islands skip phase 2 (they're already on the math
     /// side) and just fill from their own domain.
     pub fn seed_from_axioms(&mut self, store: &AxiomStore, rng: &mut impl Rng) {
+        let empty: std::collections::HashSet<nasrudin_core::TheoremId> =
+            std::collections::HashSet::new();
+        self.seed_from_axioms_excluding(store, rng, &empty);
+    }
+
+    /// Like [`seed_from_axioms`] but skips any axiom whose synthetic
+    /// id (derived from its `name` via
+    /// [`nasrudin_core::axiom_id_from_name`]) is in `forbidden`. Used
+    /// by target-driven runs to exclude the target itself + every
+    /// theorem that transitively cites it (the set returned by
+    /// `TheoremDb::forbidden_for_target`).
+    pub fn seed_from_axioms_excluding(
+        &mut self,
+        store: &AxiomStore,
+        rng: &mut impl Rng,
+        forbidden: &std::collections::HashSet<nasrudin_core::TheoremId>,
+    ) {
         let domain = self.population.domain.clone();
         let target = self.config.population_size;
 
@@ -132,9 +149,7 @@ impl Island {
         } else {
             (target * 7) / 10
         };
-        // by_domain now returns owned Vec<Axiom> (the cold tier
-        // decodes fresh from RocksDB).
-        let axioms = store.by_domain(&domain);
+        let axioms = store.by_domain_excluding(&domain, forbidden);
         for axiom in axioms {
             if self.population.len() >= domain_target {
                 break;
@@ -145,16 +160,15 @@ impl Island {
         // Phase 2 — math substrate cross-pollination for physics islands.
         // Pulls from PureMath (the algebraic identities the GA needs to
         // recombine with physics postulates). Routed through
-        // `by_domain(PureMath)` instead of `iter().filter(...)` so we
-        // do one cold-tier range scan instead of a full O(N) iter.
+        // `by_domain_excluding(PureMath, forbidden)` so the forbidden
+        // filter applies symmetrically to math substrate too — a target
+        // whose ancestors include a math identity must still exclude
+        // that identity from the seed.
         if !matches!(domain, Domain::PureMath) {
             use rand::seq::IteratorRandom;
             let math_pool: Vec<nasrudin_derive::Axiom> =
-                store.by_domain(&Domain::PureMath);
+                store.by_domain_excluding(&Domain::PureMath, forbidden);
             let need = target.saturating_sub(self.population.len());
-            // Cap math substrate at population capacity remaining; chosen
-            // uniformly at random (so each generation re-sampling
-            // surfaces different lemmas as starting individuals).
             let math_sample: Vec<nasrudin_derive::Axiom> =
                 math_pool.into_iter().choose_multiple(rng, need);
             for axiom in math_sample {

@@ -81,8 +81,25 @@ pub fn mutate_with_store(
     domain_hint: Option<&nasrudin_core::Domain>,
     rng: &mut impl Rng,
 ) -> Expr {
+    let empty: std::collections::HashSet<nasrudin_core::TheoremId> =
+        std::collections::HashSet::new();
+    mutate_with_store_excluding(expr, store, domain_hint, &empty, rng)
+}
+
+/// Like [`mutate_with_store`] but skips any axiom whose synthetic id
+/// (derived from its `name` via [`nasrudin_core::axiom_id_from_name`])
+/// is in `forbidden`. Used by target-driven evolution to keep the
+/// target itself + every theorem that transitively cites it out of the
+/// AxiomInjection pool.
+pub fn mutate_with_store_excluding(
+    expr: &Expr,
+    store: Option<&AxiomStore>,
+    domain_hint: Option<&nasrudin_core::Domain>,
+    forbidden: &std::collections::HashSet<nasrudin_core::TheoremId>,
+    rng: &mut impl Rng,
+) -> Expr {
     let op = ALL_MUTATIONS[rng.random_range(0..ALL_MUTATIONS.len())];
-    apply_mutation_with_store(expr, op, store, domain_hint, rng)
+    apply_mutation_with_store_excluding(expr, op, store, domain_hint, forbidden, rng)
 }
 
 /// Apply a specific mutation operator.
@@ -99,10 +116,28 @@ pub fn apply_mutation_with_store(
     domain_hint: Option<&nasrudin_core::Domain>,
     rng: &mut impl Rng,
 ) -> Expr {
+    let empty: std::collections::HashSet<nasrudin_core::TheoremId> =
+        std::collections::HashSet::new();
+    apply_mutation_with_store_excluding(expr, op, store, domain_hint, &empty, rng)
+}
+
+/// Like [`apply_mutation_with_store`] but threads a forbidden-axiom
+/// filter into AxiomInjection. Other operators ignore both `store` and
+/// `forbidden`.
+pub fn apply_mutation_with_store_excluding(
+    expr: &Expr,
+    op: MutationOp,
+    store: Option<&AxiomStore>,
+    domain_hint: Option<&nasrudin_core::Domain>,
+    forbidden: &std::collections::HashSet<nasrudin_core::TheoremId>,
+    rng: &mut impl Rng,
+) -> Expr {
     match op {
         MutationOp::VarSwap => var_swap(expr, rng),
         MutationOp::OpSwap => op_swap(expr, rng),
-        MutationOp::AxiomInjection => axiom_injection_with_store(expr, store, domain_hint, rng),
+        MutationOp::AxiomInjection => {
+            axiom_injection_with_store(expr, store, domain_hint, forbidden, rng)
+        }
         MutationOp::Simplify => simplify(expr),
         MutationOp::UnaryWrap => unary_wrap(expr, rng),
         MutationOp::UnaryUnwrap => unary_unwrap(expr),
@@ -197,11 +232,12 @@ fn axiom_injection_with_store(
     expr: &Expr,
     store: Option<&AxiomStore>,
     domain_hint: Option<&nasrudin_core::Domain>,
+    forbidden: &std::collections::HashSet<nasrudin_core::TheoremId>,
     rng: &mut impl Rng,
 ) -> Expr {
     if let Some(store) = store
         && store.len() > 0
-        && let Some(fragment) = sample_axiom_fragment(store, domain_hint, rng)
+        && let Some(fragment) = sample_axiom_fragment(store, domain_hint, forbidden, rng)
     {
         return replace_random_leaf(expr, &fragment, rng);
     }
@@ -223,6 +259,7 @@ fn axiom_injection_with_store(
 fn sample_axiom_fragment(
     store: &AxiomStore,
     domain_hint: Option<&nasrudin_core::Domain>,
+    forbidden: &std::collections::HashSet<nasrudin_core::TheoremId>,
     rng: &mut impl Rng,
 ) -> Option<Expr> {
     // 70/30 split: domain-matched preferred, full store fallback for
@@ -230,14 +267,18 @@ fn sample_axiom_fragment(
     let prefer_domain = domain_hint.is_some() && rng.random_bool(0.7);
     let chosen: Option<nasrudin_derive::Axiom> = if prefer_domain {
         let dom = domain_hint.unwrap();
-        let domain_set = store.by_domain(dom);
+        let domain_set = if forbidden.is_empty() {
+            store.by_domain(dom)
+        } else {
+            store.by_domain_excluding(dom, forbidden)
+        };
         if domain_set.is_empty() {
-            sample_any_axiom(store, rng)
+            sample_any_axiom(store, forbidden, rng)
         } else {
             domain_set.into_iter().choose(rng)
         }
     } else {
-        sample_any_axiom(store, rng)
+        sample_any_axiom(store, forbidden, rng)
     };
     let axiom = chosen?;
     Some(extract_meaningful_fragment(&axiom.statement, rng))
@@ -252,20 +293,36 @@ fn sample_axiom_fragment(
 ///    look up via the bloom-filtered RocksDB CF.
 ///
 /// Falls back gracefully when one tier is empty.
-fn sample_any_axiom(store: &AxiomStore, rng: &mut impl Rng) -> Option<nasrudin_derive::Axiom> {
+fn sample_any_axiom(
+    store: &AxiomStore,
+    forbidden: &std::collections::HashSet<nasrudin_core::TheoremId>,
+    rng: &mut impl Rng,
+) -> Option<nasrudin_derive::Axiom> {
     let cold_names = store.cold_names();
     let hot_keys: Vec<String> = store.iter_hot_names();
     let total = hot_keys.len() + cold_names.len();
     if total == 0 {
         return None;
     }
-    let pick = rng.random_range(0..total);
-    let name = if pick < hot_keys.len() {
-        &hot_keys[pick]
-    } else {
-        &cold_names[pick - hot_keys.len()]
-    };
-    store.get(name)
+    // Up to 8 retries on a forbidden hit before giving up. With ~tens
+    // of forbidden ids out of 195 k axioms, the probability of 8 hits
+    // in a row is vanishing — we don't want a rare worst case where
+    // every name we try is forbidden to spin forever.
+    for _ in 0..8 {
+        let pick = rng.random_range(0..total);
+        let name = if pick < hot_keys.len() {
+            &hot_keys[pick]
+        } else {
+            &cold_names[pick - hot_keys.len()]
+        };
+        if !forbidden.is_empty()
+            && forbidden.contains(&nasrudin_core::axiom_id_from_name(name))
+        {
+            continue;
+        }
+        return store.get(name);
+    }
+    None
 }
 
 /// Pick a meaningful sub-expression from a propositional axiom.
