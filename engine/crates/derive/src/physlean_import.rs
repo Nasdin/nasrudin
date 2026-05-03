@@ -28,9 +28,10 @@
 //! Imported leaf, it falls through to PhysLean's source rather than
 //! re-checking from scratch.
 
+use crate::axiom_store::AxiomStore;
 use anyhow::{Context, Result};
 use nasrudin_core::{
-    axiom_id_from_name, Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremId,
+    axiom_id_from_name, Axiom, Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremId,
     TheoremOrigin, VerificationStatus,
 };
 use nasrudin_rocks::TheoremDb;
@@ -64,16 +65,84 @@ pub fn import_catalog_to_theorem_db(
     import_entries(entries, db)
 }
 
+/// Boot-time loader that splits catalog entries by `axiom_dependencies`
+/// presence:
+///
+/// - **Empty deps** (kernel-trusted leaves: `defnInfo`, Mathlib base
+///   lemmas the extractor couldn't trace) → registered as `Axiom` in
+///   the AxiomStore hot tier. The no-cheat audit walks this tier and
+///   blocks any headline canonical that sneaks in here.
+/// - **Non-empty deps** (PhysLean-derived theorems with a known
+///   dependency closure) → routed through [`import_entries`] into the
+///   TheoremDb. These bypass the audit because they carry a proof
+///   (the `parents`-list dependency closure), and the acyclicity infra
+///   tracks them properly via `LineageRecord` + `CF_REVERSE_DEPS`.
+///
+/// Returns `(axioms_registered, theorems_imported)`.
+///
+/// **Note on the current catalog:** until `physlean-extract` is
+/// re-run with the `axiom_dependencies` change in place, every entry
+/// has empty deps and lands in AxiomStore — same behaviour as the
+/// legacy `load_from_catalog`. Re-running `just refresh-corpus` flips
+/// the split automatically.
+pub fn load_catalog_split(
+    catalog_path: &Path,
+    axiom_store: &mut AxiomStore,
+    db: &TheoremDb,
+) -> Result<(usize, usize)> {
+    let entries = parse_catalog(catalog_path)?;
+    split_and_load(entries, axiom_store, db)
+}
+
+/// Same as [`load_catalog_split`] but takes pre-parsed entries.
+pub fn split_and_load(
+    entries: Vec<CatalogEntry>,
+    axiom_store: &mut AxiomStore,
+    db: &TheoremDb,
+) -> Result<(usize, usize)> {
+    // Build the full name set BEFORE partitioning so derived theorems
+    // can still reference leaf axioms that get routed to AxiomStore.
+    let allowed: HashSet<String> = entries.iter().map(|e| e.name.clone()).collect();
+    let (derived, leaves): (Vec<_>, Vec<_>) = entries
+        .into_iter()
+        .partition(|e| !e.axiom_dependencies.is_empty());
+    let mut axioms_registered = 0usize;
+    for entry in leaves {
+        axiom_store.register(Axiom {
+            name: entry.name.clone(),
+            domain: entry.domain.clone(),
+            statement: entry.statement.clone(),
+            description: entry.doc_string.clone(),
+        });
+        axioms_registered += 1;
+    }
+    let theorems_imported = import_entries_with_allowed(derived, db, &allowed)?;
+    tracing::info!(
+        "load_catalog_split: {} axioms registered, {} derived theorems imported",
+        axioms_registered,
+        theorems_imported,
+    );
+    Ok((axioms_registered, theorems_imported))
+}
+
 /// Same as [`import_catalog_to_theorem_db`] but takes pre-parsed
 /// entries (used by tests that don't want to round-trip through the
 /// JSON format).
 pub fn import_entries(entries: Vec<CatalogEntry>, db: &TheoremDb) -> Result<usize> {
-    // Build the set of catalog names up front so we can filter each
-    // entry's deps to in-catalog ones. External Mathlib refs and
-    // kernel primitives are intentionally dropped — we don't model
-    // them in the TheoremDb, the kernel is the source of truth there.
     let catalog_names: HashSet<String> =
         entries.iter().map(|e| e.name.clone()).collect();
+    import_entries_with_allowed(entries, db, &catalog_names)
+}
+
+/// Variant of [`import_entries`] that uses an explicit set of "known"
+/// names when filtering each entry's dependencies. Used by
+/// [`split_and_load`] so a derived theorem in this batch can still
+/// reference leaf axioms that were partitioned to AxiomStore.
+pub fn import_entries_with_allowed(
+    entries: Vec<CatalogEntry>,
+    db: &TheoremDb,
+    allowed: &HashSet<String>,
+) -> Result<usize> {
     let ordered = topological_sort(entries)?;
     let mut imported = 0usize;
     for entry in ordered {
@@ -81,7 +150,7 @@ pub fn import_entries(entries: Vec<CatalogEntry>, db: &TheoremDb) -> Result<usiz
         let parents: Vec<TheoremId> = entry
             .axiom_dependencies
             .iter()
-            .filter(|n| catalog_names.contains(n.as_str()))
+            .filter(|n| allowed.contains(n.as_str()))
             .map(|n| axiom_id_from_name(n))
             .filter(|p| *p != id) // self-cycle guard
             .collect();

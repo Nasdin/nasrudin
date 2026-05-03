@@ -4,7 +4,8 @@
 //! the explicit `parents` list.
 
 use nasrudin_core::{axiom_id_from_name, Domain, Expr};
-use nasrudin_derive::physlean_import::{import_entries, CatalogEntry};
+use nasrudin_derive::physlean_import::{import_entries, split_and_load, CatalogEntry};
+use nasrudin_derive::AxiomStore;
 use nasrudin_rocks::TheoremDb;
 use tempfile::TempDir;
 
@@ -82,6 +83,36 @@ fn import_skips_external_deps() {
         "external deps must not become parent theorems; got {:?}",
         lin.axiom_ancestors,
     );
+}
+
+#[test]
+fn split_and_load_routes_by_deps_presence() {
+    let dir = TempDir::new().unwrap();
+    let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
+    let mut store = AxiomStore::new();
+
+    // Two leaves (no deps) and one derived theorem (cites both leaves).
+    let entries = vec![
+        entry("postulate_one", &[]),
+        entry("postulate_two", &[]),
+        entry("derived_thm", &["postulate_one", "postulate_two"]),
+    ];
+    let (axioms, theorems) = split_and_load(entries, &mut store, &db).unwrap();
+    assert_eq!(axioms, 2, "two leaves go to AxiomStore");
+    assert_eq!(theorems, 1, "one derived theorem goes to TheoremDb");
+
+    // Leaves are reachable via AxiomStore.
+    assert!(store.get("postulate_one").is_some());
+    assert!(store.get("postulate_two").is_some());
+    // The derived theorem is NOT in AxiomStore (audit-safe).
+    assert!(store.get("derived_thm").is_none());
+    // The derived theorem IS in TheoremDb with both leaves as ancestors.
+    let derived_id = axiom_id_from_name("derived_thm");
+    let lin = db.get_lineage(&derived_id).unwrap().unwrap();
+    let ancestors: std::collections::HashSet<_> =
+        lin.axiom_ancestors.iter().copied().collect();
+    assert!(ancestors.contains(&axiom_id_from_name("postulate_one")));
+    assert!(ancestors.contains(&axiom_id_from_name("postulate_two")));
 }
 
 #[test]
