@@ -242,4 +242,3 @@ function BrowserRow({
     </>
   );
 }
-

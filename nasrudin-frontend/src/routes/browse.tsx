@@ -75,14 +75,16 @@ function BrowsePage() {
   const virtualItems = virtualizer.getVirtualItems();
   const lastVirtualIndex = virtualItems[virtualItems.length - 1]?.index ?? 0;
   useEffect(() => {
-    if (
-      lastVirtualIndex >= theorems.length - 5 &&
-      list.hasNextPage &&
-      !list.isFetchingNextPage
-    ) {
+    if (lastVirtualIndex >= theorems.length - 5 && list.hasNextPage && !list.isFetchingNextPage) {
       list.fetchNextPage();
     }
-  }, [lastVirtualIndex, theorems.length, list.hasNextPage, list.isFetchingNextPage, list.fetchNextPage]);
+  }, [
+    lastVirtualIndex,
+    theorems.length,
+    list.hasNextPage,
+    list.isFetchingNextPage,
+    list.fetchNextPage,
+  ]);
 
   return (
     <div className="app">
