@@ -610,7 +610,14 @@ async fn main() {
             match nasrudin_lean_bridge::PersistentElaborator::from_uds(
                 uds_path,
                 std::time::Duration::from_secs(7200),
-                std::time::Duration::from_secs(30),
+                // 180s per-request: on a 2 GB box the daemon's
+                // working set is mostly in swap when idle. The first
+                // request after a long quiet period can take 30-90s
+                // as the kernel faults in lemma pages from /swapfile.
+                // Steady-state requests after that land in <500 ms.
+                // 30 s was too tight: a cold-page ping fell back to
+                // lake build for the rest of the worker's lifetime.
+                std::time::Duration::from_secs(180),
             )
             .await
             {
