@@ -10,7 +10,7 @@
 //!     (`GRADIENT_API_KEY`), not in the per-user `user_llm_keys` table.
 //!     The cluster steerer uses it for an internal control-loop call
 //!     and there is no per-user attribution.
-//!  2. **Default model is Kimi K2.5** (`kimi-k2.5`), not GPT. K2.5 is
+//!  2. **Default model is Kimi K2.6** (`kimi-k2.6`), not GPT. K2.6 is
 //!     a reasoning model that emits a `reasoning_content` chain of
 //!     thought before producing the actual `content`, so callers must
 //!     give it a generous `max_tokens` budget (≥4096) when asking for
@@ -34,11 +34,13 @@ const DEFAULT_BASE_URL: &str = "https://inference.do-ai.run";
 // daemon doesn't hard-reject anything not listed here, so adding a
 // model here is purely about giving operators a sane default.
 //
-// Kimi K2.5 is a reasoning model: it spends tokens on
+// Kimi K2.6 is a reasoning model: it spends tokens on
 // `reasoning_content` before producing the actual `content` field, so
 // callers should give it a generous `max_tokens` budget (≥4096) when
-// asking for structured JSON output.
+// asking for structured JSON output. K2.5 stays in the supported list
+// as a graceful-degrade fallback while operators migrate.
 const SUPPORTED: &[&str] = &[
+    "kimi-k2.6",
     "kimi-k2.5",
     "llama3.3-70b-instruct",
     "anthropic-claude-4.6-sonnet",
@@ -185,7 +187,7 @@ impl LlmProvider for GradientProvider {
             ResponseFormat::Free => None,
             ResponseFormat::Json { .. } => Some(serde_json::json!({"type": "json_object"})),
             ResponseFormat::JsonSchema { name, schema } => {
-                // OpenAI-compatible strict structured outputs. Kimi K2.5
+                // OpenAI-compatible strict structured outputs. Kimi K2.6
                 // and gpt-4o-class models support this; older / smaller
                 // models may 400 with "unknown response_format" — caller
                 // is responsible for falling back to plain `Json` mode.
@@ -288,6 +290,9 @@ mod tests {
     #[test]
     fn supports_kimi_k2() {
         let p = GradientProvider::new("test".into());
+        assert!(p.supported_models().contains(&"kimi-k2.6"));
+        // K2.5 stays during migration so deployments mid-upgrade
+        // don't hard-fail.
         assert!(p.supported_models().contains(&"kimi-k2.5"));
     }
 

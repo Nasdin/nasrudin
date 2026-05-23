@@ -536,7 +536,7 @@ async fn last_known_good(
 ///
 /// Schema-mode behaviour. The caller starts in **strict json_schema
 /// mode**: every request includes the full `SteeringConfig` JSON
-/// Schema with `strict: true`, and Kimi K2.5 / Gradient enforce the
+/// Schema with `strict: true`, and Kimi K2.6 / Gradient enforce the
 /// shape via constrained decoding. Missing required fields, wrong
 /// types, and out-of-enum values become impossible at the token
 /// level. If Gradient ever returns a 400 (e.g. a future model on the
@@ -583,13 +583,14 @@ impl LlmCaller for GradientCaller {
         user: &str,
     ) -> Result<(String, Option<i32>, Option<i32>), CycleError> {
         use nasrudin_llm::{CompletionRequest, LlmProvider, ResponseFormat};
-        // Kimi K2.5 (and other reasoning models on Gradient) burn
+        // Kimi K2.6 (and other reasoning models on Gradient) burn
         // tokens on `reasoning_content` before producing the actual
-        // SteeringConfig JSON in `content`. 8192 is a generous
+        // SteeringConfig JSON in `content`. 16384 is a generous
         // ceiling that keeps a SteeringConfig (~1500 token JSON) +
-        // a long chain-of-thought comfortably below the wall. If the
-        // model truncates anyway, the parse will fail and the cycle
-        // falls back to last-known-good — see parse_and_validate.
+        // K2.6's longer agentic chain-of-thought comfortably below
+        // the wall. If the model truncates anyway, the parse will
+        // fail and the cycle falls back to last-known-good — see
+        // parse_and_validate.
         let response_format = if self
             .strict_failed
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -610,7 +611,7 @@ impl LlmCaller for GradientCaller {
             model: self.model.clone(),
             system_prompt: system.to_owned(),
             user_prompt: user.to_owned(),
-            max_tokens: 8192,
+            max_tokens: 16384,
             temperature: 0.4,
             stop_sequences: vec![],
             response_format: response_format.clone(),
@@ -642,7 +643,7 @@ impl LlmCaller for GradientCaller {
                         model: self.model.clone(),
                         system_prompt: system.to_owned(),
                         user_prompt: user.to_owned(),
-                        max_tokens: 8192,
+                        max_tokens: 16384,
                         temperature: 0.4,
                         stop_sequences: vec![],
                         response_format: ResponseFormat::Json {

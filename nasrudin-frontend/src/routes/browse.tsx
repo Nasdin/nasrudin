@@ -65,7 +65,11 @@ function BrowsePage() {
   const virtualizer = useVirtualizer({
     count: theorems.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 120, // Estimated height of each ResultCard
+    // Imported-from-PhysLean rows render with: theorem name + qualified
+    // path + statement preview + id + meta + contributor. That's 6 lines
+    // of text plus padding; the original 120 only fit the GA-discovered
+    // cards.
+    estimateSize: () => 160,
     overscan: 5,
   });
 

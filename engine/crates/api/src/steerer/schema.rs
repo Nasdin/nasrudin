@@ -91,6 +91,36 @@ pub struct SteeringConfig {
     /// Free-form rationale (≤500 chars). Stored for the next cycle
     /// to read; never affects worker behaviour.
     pub rationale: String,
+    /// LLM-curated physics-shape atoms per domain. Each domain maps to
+    /// a list of stable atom names with selection weights; the GA's
+    /// `random_physics_compound` sampler uses these (plus the
+    /// hardcoded baseline of 8 SR/EM compounds) when present. Unknown
+    /// atom names are silently dropped worker-side, so adding new
+    /// atoms is forward-safe: the schema accepts them now; older
+    /// workers ignore them; newer workers light them up the moment
+    /// they ship. Empty/missing → uniform fallback to the baseline
+    /// pool.
+    ///
+    /// Why this lever: progress.md iter 23-24 found that
+    /// `append_productive_suffix` synthesises productive `X² = Y²`
+    /// targets only when the random atoms include physics-shape
+    /// compounds. The hardcoded 8-atom pool covers SR; EM, QM, GR each
+    /// need their own. Letting the LLM (Kimi K2.6) propose the atom
+    /// roster per domain replaces an engineer-tuned constant with a
+    /// dynamic, history-aware curriculum.
+    #[serde(default)]
+    pub atom_pool: HashMap<String, Vec<AtomWeight>>,
+}
+
+/// One LLM-proposed atom for `random_physics_compound`. The `name`
+/// is a stable handle the worker maps to an `Expr` tree; the
+/// `weight` biases sampling within the pool. Weights are
+/// normalised worker-side so the LLM doesn't need to keep them
+/// summing to a constant.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct AtomWeight {
+    pub name: String,
+    pub weight: f32,
 }
 
 /// Fitness shaping weights. The cluster's effective fitness is a
@@ -236,6 +266,8 @@ pub enum SteeringValidationError {
     RationaleTooLong,
     #[error("lessons_learned exceeds 4000 chars")]
     LessonsTooLong,
+    #[error("atom_pool weights must be finite and in [0.0, 4.0]")]
+    BadAtomWeight,
 }
 
 impl SteeringConfig {
@@ -318,6 +350,13 @@ impl SteeringConfig {
         if self.lessons_learned.chars().count() > 4000 {
             return Err(SteeringValidationError::LessonsTooLong);
         }
+        for atoms in self.atom_pool.values() {
+            for a in atoms {
+                if !a.weight.is_finite() || !(0.0..=4.0).contains(&a.weight) {
+                    return Err(SteeringValidationError::BadAtomWeight);
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -352,6 +391,7 @@ pub fn default_config() -> SteeringConfig {
         extension: serde_json::Value::Null,
         lessons_learned: String::new(),
         rationale: "default cold-start config".into(),
+        atom_pool: HashMap::new(),
     }
 }
 
@@ -548,6 +588,63 @@ mod tests {
             .remove("lessons_learned");
         let parsed: SteeringConfig = serde_json::from_value(value).unwrap();
         assert!(parsed.lessons_learned.is_empty());
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn atom_pool_round_trip() {
+        let mut c = default_config();
+        c.atom_pool.insert(
+            "special_relativity".into(),
+            vec![
+                AtomWeight { name: "m_c_sq".into(), weight: 1.5 },
+                AtomWeight { name: "e_sq".into(), weight: 1.0 },
+            ],
+        );
+        c.atom_pool.insert(
+            "quantum_mechanics".into(),
+            vec![AtomWeight { name: "hbar_omega".into(), weight: 2.0 }],
+        );
+        let json = serde_json::to_string(&c).unwrap();
+        let parsed: SteeringConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.atom_pool.len(), 2);
+        assert_eq!(parsed.atom_pool["special_relativity"].len(), 2);
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn atom_pool_weight_above_four_rejected() {
+        let mut c = default_config();
+        c.atom_pool.insert(
+            "sr".into(),
+            vec![AtomWeight { name: "x".into(), weight: 5.0 }],
+        );
+        assert!(matches!(
+            c.validate(),
+            Err(SteeringValidationError::BadAtomWeight)
+        ));
+    }
+
+    #[test]
+    fn atom_pool_nan_weight_rejected() {
+        let mut c = default_config();
+        c.atom_pool.insert(
+            "sr".into(),
+            vec![AtomWeight { name: "x".into(), weight: f32::NAN }],
+        );
+        assert!(matches!(
+            c.validate(),
+            Err(SteeringValidationError::BadAtomWeight)
+        ));
+    }
+
+    #[test]
+    fn atom_pool_missing_field_deserialises_to_empty() {
+        let cfg = default_config();
+        let mut value = serde_json::to_value(&cfg).unwrap();
+        value.as_object_mut().unwrap().remove("atom_pool");
+        let parsed: SteeringConfig = serde_json::from_value(value).unwrap();
+        assert!(parsed.atom_pool.is_empty());
         parsed.validate().unwrap();
     }
 }

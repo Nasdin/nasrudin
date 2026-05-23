@@ -10,7 +10,7 @@ Named after [Nasrudin](https://en.wikipedia.org/wiki/Nasreddin), the wise fool o
 Mathematical Axioms (Mathlib full corpus) + Physics Postulates (~43)
         |
         v
-[ LLM Steerer (Kimi K2.5) ]  <-- emits SteeringConfig every 10 min:
+[ LLM Steerer (Kimi K2.6) ]  <-- emits SteeringConfig every 10 min:
         |                         domain weights, mutation knobs,
         |                         per-cluster directives, target proposals
         v
@@ -101,7 +101,7 @@ A naïve genetic algorithm running across thousands of volunteer workers is unfo
                     v             v
             ┌────────────────────────────┐
             │  DigitalOcean Gradient     │
-            │  Kimi K2.5 (kimi-k2.5)
+            │  Kimi K2.6 (kimi-k2.6)
             │  POST /v1/chat/completions │
             └────────────┬───────────────┘
                          │
@@ -266,7 +266,7 @@ just clean           # Remove all build artifacts
 | **Math Rendering** | KaTeX | 0.16 |
 | **Graph Canvas** | React Flow | 12 |
 | **LLM Integration** | MCP (Model Context Protocol) | -- |
-| **Cluster Steerer** | Kimi K2.5 via DigitalOcean Gradient | `kimi-k2.5` |
+| **Cluster Steerer** | Kimi K2.6 via DigitalOcean Gradient | `kimi-k2.6` |
 
 ## The GA Engine
 

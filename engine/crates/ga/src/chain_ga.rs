@@ -92,6 +92,25 @@ pub fn mutate_chain_weighted_with_suffix_bias(
     priors: Option<&std::collections::HashMap<String, f32>>,
     suffix_bias: f32,
 ) {
+    mutate_chain_full(chain, store, rng, priors, suffix_bias, None)
+}
+
+/// Full-knob mutation entry point. Accepts an optional LLM-supplied
+/// `atom_pool` (per-domain physics-shape compound weights) used by
+/// `append_productive_suffix` for target synthesis. When `None`, the
+/// hardcoded baseline pool is sampled uniformly — identical behaviour
+/// to the legacy `mutate_chain_weighted_with_suffix_bias`. Worker code
+/// extracts `atom_pool` from the cluster steering response and passes
+/// it through here on every mutate call so the LLM's per-domain
+/// curriculum reaches the suffix mechanism without a code change.
+pub fn mutate_chain_full(
+    chain: &mut Chain,
+    store: &AxiomStore,
+    rng: &mut impl Rng,
+    priors: Option<&std::collections::HashMap<String, f32>>,
+    suffix_bias: f32,
+    atom_pool: Option<&[(String, f32)]>,
+) {
     if chain.is_empty() {
         insert_random(chain, store, rng);
         return;
@@ -104,7 +123,7 @@ pub fn mutate_chain_weighted_with_suffix_bias(
         2 => swap_adjacent(chain, rng),
         3 => mutate_axiom_name(chain, store, rng),
         4 => mutate_param(chain, store, rng),
-        _ => append_productive_suffix(chain, store, rng),
+        _ => append_productive_suffix_with_pool(chain, store, rng, atom_pool),
     }
 }
 
@@ -176,7 +195,23 @@ pub fn weighted_pick_for_test(weights: &[f32; 6], rng: &mut impl Rng) -> u8 {
 ///
 /// No-op if the chain already ends with `TakePositiveRoot` (we don't
 /// stack roots). No-op if the chain has no facts to pull atoms from.
+/// Thin wrapper kept for the existing tests + any callers that don't
+/// have an atom pool to pass. Forwards to the full variant with
+/// `atom_pool=None`, which falls back to the hardcoded baseline.
+#[allow(dead_code)]
 fn append_productive_suffix(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
+    append_productive_suffix_with_pool(chain, store, rng, None);
+}
+
+/// Variant of [`append_productive_suffix`] that consumes an LLM-curated
+/// physics-shape atom pool (per-domain compound weights). When `None`,
+/// behaves identically to the legacy uniform-baseline sampler.
+fn append_productive_suffix_with_pool(
+    chain: &mut Chain,
+    store: &AxiomStore,
+    rng: &mut impl Rng,
+    atom_pool: Option<&[(String, f32)]>,
+) {
     if matches!(chain.0.last(), Some(RuleStep::TakePositiveRoot)) {
         return;
     }
@@ -187,15 +222,16 @@ fn append_productive_suffix(chain: &mut Chain, store: &AxiomStore, rng: &mut imp
 
     // **Iter 24 enrichment:** sample X and Y from a hybrid pool:
     // 60 % chance of fact-side atom (LHS or RHS of an existing fact —
-    // always derivable), 40 % chance of physics-shape compound (from
-    // the same library used by `random_atom_expr`). The compounds
-    // give the suffix mutation access to expressions like `m · c²`,
-    // `m² · c²`, `c · p0` that don't appear directly as fact atoms
-    // but ARE the building blocks for cross-axiom theorems like
-    // `E² = (m·c²)²`. Without this hybrid, the suffix can only
-    // synthesise targets that are already direct consequences of
-    // single facts (e.g. squaring `c·p0 = E` → `(c·p0)² = E²` →
-    // take-root → `c·p0 = E` — a cycle).
+    // always derivable), 40 % chance of physics-shape compound. The
+    // compound pool is the LLM-curated `atom_pool` when present,
+    // hardcoded 8-atom baseline otherwise. The compounds give the
+    // suffix mutation access to expressions like `m · c²`, `m² · c²`,
+    // `c · p0` that don't appear directly as fact atoms but ARE the
+    // building blocks for cross-axiom theorems like `E² = (m·c²)²`.
+    // Without this hybrid, the suffix can only synthesise targets
+    // that are already direct consequences of single facts (e.g.
+    // squaring `c·p0 = E` → `(c·p0)² = E²` → take-root → `c·p0 = E`
+    // — a cycle).
     let pool: Vec<&Expr> = facts
         .iter()
         .flat_map(|(_, expr)| {
@@ -209,13 +245,19 @@ fn append_productive_suffix(chain: &mut Chain, store: &AxiomStore, rng: &mut imp
     if pool.is_empty() {
         return;
     }
+    // `random_physics_compound_weighted` returns `Option<Expr>` so that
+    // it can signal "pool is non-empty but all weights ≤ 0" without
+    // panicking; here we fall back to the hardcoded baseline in that
+    // edge case so the suffix mechanism always synthesises *something*.
     let x: Expr = if rng.random_bool(0.4) {
-        random_physics_compound(rng)
+        random_physics_compound_weighted(rng, atom_pool)
+            .unwrap_or_else(|| random_physics_compound(rng))
     } else {
         (*pool.iter().choose(rng).unwrap()).clone()
     };
     let y: Expr = if rng.random_bool(0.4) {
-        random_physics_compound(rng)
+        random_physics_compound_weighted(rng, atom_pool)
+            .unwrap_or_else(|| random_physics_compound(rng))
     } else {
         (*pool.iter().choose(rng).unwrap()).clone()
     };
@@ -603,8 +645,72 @@ fn random_atom_expr(rng: &mut impl Rng, depth: u32) -> Expr {
     }
 }
 
-/// Pre-built physics-shape compound atoms.
+/// Pre-built physics-shape compound atoms, by stable name.
 ///
+/// The names are the contract with the cluster steerer: when the LLM
+/// emits an `atom_pool` per domain, it references atoms by these
+/// strings. Workers map name → `Expr` here. Unknown names from a
+/// newer steerer are silently dropped (forward-compat), so adding a
+/// new atom is a single-line change.
+pub const PHYSICS_ATOM_NAMES: &[&str] = &[
+    "m_c_sq",
+    "c_p0",
+    "p0_sq",
+    "m_sq_c_sq",
+    "e_sq",
+    "p0_sq_minus_psq",
+    "m_c",
+    "c_sq",
+];
+
+fn physics_atom_by_name(name: &str) -> Option<Expr> {
+    let two = Expr::Lit(2, 1);
+    let m = Expr::Var("m".into());
+    let p0 = Expr::Var("p0".into());
+    let c = Expr::Const(PhysConst::SpeedOfLight);
+    let e = Expr::Var("E".into());
+    let psq = Expr::Var("psq".into());
+    Some(match name {
+        "m_c_sq" => Expr::BinOp(
+            BinOp::Mul,
+            Box::new(m.clone()),
+            Box::new(Expr::BinOp(
+                BinOp::Pow,
+                Box::new(c.clone()),
+                Box::new(two.clone()),
+            )),
+        ),
+        "c_p0" => Expr::BinOp(BinOp::Mul, Box::new(c.clone()), Box::new(p0.clone())),
+        "p0_sq" => Expr::BinOp(BinOp::Pow, Box::new(p0.clone()), Box::new(two.clone())),
+        "m_sq_c_sq" => Expr::BinOp(
+            BinOp::Mul,
+            Box::new(Expr::BinOp(
+                BinOp::Pow,
+                Box::new(m.clone()),
+                Box::new(two.clone()),
+            )),
+            Box::new(Expr::BinOp(
+                BinOp::Pow,
+                Box::new(c.clone()),
+                Box::new(two.clone()),
+            )),
+        ),
+        "e_sq" => Expr::BinOp(BinOp::Pow, Box::new(e), Box::new(two.clone())),
+        "p0_sq_minus_psq" => Expr::BinOp(
+            BinOp::Sub,
+            Box::new(Expr::BinOp(
+                BinOp::Pow,
+                Box::new(p0.clone()),
+                Box::new(two.clone()),
+            )),
+            Box::new(psq),
+        ),
+        "m_c" => Expr::BinOp(BinOp::Mul, Box::new(m), Box::new(c.clone())),
+        "c_sq" => Expr::BinOp(BinOp::Pow, Box::new(c), Box::new(two)),
+        _ => return None,
+    })
+}
+
 /// Generic compounds that appear in many SR/EM derivations. Including
 /// these in the atom pool dramatically increases the chance that
 /// random target synthesis produces an `X² = Y²` target whose
@@ -612,45 +718,59 @@ fn random_atom_expr(rng: &mut impl Rng, depth: u32) -> Expr {
 /// E.g., for `E = m·c²`, the GA needs to sample target
 /// `E² = (m·c²)²`; with `m·c²` in the compound pool that probability
 /// is O(1/N), instead of O((1/atoms)^depth) for raw atom sampling.
+///
+/// `weights` is an optional override mapping atom name → relative
+/// selection weight, supplied by the LLM steerer per domain. When
+/// `None` (cold start, no steering, or steerer disabled), the eight
+/// baseline atoms are sampled uniformly. Unknown atom names are
+/// silently dropped so newer steerer schemas can ship before all
+/// workers update.
 fn random_physics_compound(rng: &mut impl Rng) -> Expr {
-    let two = Expr::Lit(2, 1);
-    let m = Expr::Var("m".into());
-    let p0 = Expr::Var("p0".into());
-    let c = Expr::Const(PhysConst::SpeedOfLight);
-    let e = Expr::Var("E".into());
-    let psq = Expr::Var("psq".into());
+    random_physics_compound_weighted(rng, None)
+        .expect("baseline pool always has ≥1 known atom")
+}
 
-    let pick = rng.random_range(0..8u8);
-    match pick {
-        // m · c²
-        0 => Expr::BinOp(
-            BinOp::Mul,
-            Box::new(m.clone()),
-            Box::new(Expr::BinOp(BinOp::Pow, Box::new(c.clone()), Box::new(two.clone()))),
-        ),
-        // c · p0
-        1 => Expr::BinOp(BinOp::Mul, Box::new(c.clone()), Box::new(p0.clone())),
-        // p0²
-        2 => Expr::BinOp(BinOp::Pow, Box::new(p0.clone()), Box::new(two.clone())),
-        // m² · c²
-        3 => Expr::BinOp(
-            BinOp::Mul,
-            Box::new(Expr::BinOp(BinOp::Pow, Box::new(m.clone()), Box::new(two.clone()))),
-            Box::new(Expr::BinOp(BinOp::Pow, Box::new(c.clone()), Box::new(two.clone()))),
-        ),
-        // E²
-        4 => Expr::BinOp(BinOp::Pow, Box::new(e.clone()), Box::new(two.clone())),
-        // p0² − psq
-        5 => Expr::BinOp(
-            BinOp::Sub,
-            Box::new(Expr::BinOp(BinOp::Pow, Box::new(p0.clone()), Box::new(two.clone()))),
-            Box::new(psq.clone()),
-        ),
-        // m · c
-        6 => Expr::BinOp(BinOp::Mul, Box::new(m.clone()), Box::new(c.clone())),
-        // c²
-        _ => Expr::BinOp(BinOp::Pow, Box::new(c), Box::new(two)),
+/// Weighted variant of `random_physics_compound`. Exposed pub(crate)
+/// so the chain engine can plumb the LLM's atom_pool through without
+/// re-exposing the internal `Expr` builders.
+pub fn random_physics_compound_weighted(
+    rng: &mut impl Rng,
+    weights: Option<&[(String, f32)]>,
+) -> Option<Expr> {
+    // Build the (name, weight) pool. If the LLM emitted weights, drop
+    // entries the worker doesn't recognise so an old worker against a
+    // newer steerer schema doesn't panic. If nothing recognisable is
+    // left (or no weights at all), fall through to uniform over the
+    // baseline.
+    let mut pool: Vec<(&str, f32)> = Vec::with_capacity(PHYSICS_ATOM_NAMES.len());
+    if let Some(ws) = weights {
+        for (name, w) in ws {
+            if w.is_finite() && *w > 0.0 && physics_atom_by_name(name).is_some() {
+                pool.push((name.as_str(), *w));
+            }
+        }
     }
+    if pool.is_empty() {
+        // Uniform baseline.
+        for &n in PHYSICS_ATOM_NAMES {
+            pool.push((n, 1.0));
+        }
+    }
+    // Linear weighted-pick — pool is ≤16 entries in practice, no need
+    // for cumulative arrays or alias tables.
+    let total: f32 = pool.iter().map(|(_, w)| *w).sum();
+    if total <= 0.0 {
+        return None;
+    }
+    let mut r: f32 = rng.random_range(0.0..total);
+    for (name, w) in &pool {
+        if r < *w {
+            return physics_atom_by_name(name);
+        }
+        r -= *w;
+    }
+    // Floating-point slop fallback.
+    physics_atom_by_name(pool.last().expect("non-empty").0)
 }
 
 fn random_step(store: &AxiomStore, facts: &[(String, Expr)], rng: &mut impl Rng) -> RuleStep {
@@ -1128,11 +1248,85 @@ pub fn splice_chains(a: &Chain, b: &Chain, rng: &mut impl Rng) -> (Chain, Chain)
 mod tests {
     use super::*;
     use nasrudin_derive::{AxiomStore, Chain, DerivationContext, DerivationStrategy};
+    use rand::SeedableRng;
 
     fn upstream_store() -> AxiomStore {
         let mut s = AxiomStore::new();
         s.load_special_relativity_upstream();
         s
+    }
+
+    #[test]
+    fn physics_atom_names_all_resolve() {
+        // The PHYSICS_ATOM_NAMES table is the public contract with the
+        // LLM steerer; every entry must map to a real Expr.
+        for name in PHYSICS_ATOM_NAMES {
+            assert!(
+                physics_atom_by_name(name).is_some(),
+                "atom {name} listed in registry but physics_atom_by_name returns None"
+            );
+        }
+    }
+
+    #[test]
+    fn random_physics_compound_baseline_is_uniform_over_known_atoms() {
+        // Without an atom_pool override, every sample must come from
+        // the eight baseline compounds (no panics, no None).
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        for _ in 0..256 {
+            let _ = random_physics_compound(&mut rng);
+        }
+        // Same expectation when explicit weights are empty.
+        let empty: Vec<(String, f32)> = vec![];
+        for _ in 0..32 {
+            assert!(random_physics_compound_weighted(&mut rng, Some(&empty)).is_some());
+        }
+    }
+
+    #[test]
+    fn random_physics_compound_weighted_respects_pool() {
+        // With a single positive weight, every sample is that atom.
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        let pool = vec![("m_c_sq".to_string(), 1.0)];
+        let target = physics_atom_by_name("m_c_sq").unwrap();
+        for _ in 0..32 {
+            let got = random_physics_compound_weighted(&mut rng, Some(&pool)).unwrap();
+            assert_eq!(got, target);
+        }
+    }
+
+    #[test]
+    fn random_physics_compound_weighted_drops_unknown_names() {
+        // Mix in an unrecognised name (forward-compat: a newer steerer
+        // emits an atom the worker doesn't know yet). The sampler must
+        // silently drop it and not panic.
+        let mut rng = rand::rngs::StdRng::seed_from_u64(13);
+        let pool = vec![
+            ("future_atom_workers_dont_know".to_string(), 5.0),
+            ("c_sq".to_string(), 1.0),
+        ];
+        let target = physics_atom_by_name("c_sq").unwrap();
+        for _ in 0..32 {
+            // Only c_sq survives the filter, so every sample is c_sq.
+            assert_eq!(
+                random_physics_compound_weighted(&mut rng, Some(&pool)).unwrap(),
+                target
+            );
+        }
+    }
+
+    #[test]
+    fn random_physics_compound_weighted_all_unknown_falls_back_to_baseline() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(99);
+        let pool = vec![
+            ("future_a".to_string(), 1.0),
+            ("future_b".to_string(), 1.0),
+        ];
+        // No known atom in the LLM pool → fall through to uniform
+        // baseline, which always produces a known compound.
+        for _ in 0..32 {
+            assert!(random_physics_compound_weighted(&mut rng, Some(&pool)).is_some());
+        }
     }
 
     #[test]

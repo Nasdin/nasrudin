@@ -15,6 +15,11 @@ import { memo } from 'react';
 /// - **Lean-verified (worker)** (blue): `tactic=worker_claim` with
 ///   `submitterTrusted=false`. Worker lake-built locally; server lake
 ///   confirmation is queued. Tooltip notes "pending server verification".
+/// - **Imported (Mathlib/PhysLean)** (terracotta): `tactic=imported`.
+///   The theorem comes from an upstream formalisation that Lean already
+///   accepted; we do not re-build it server-side and there is no proof
+///   we can copy verbatim, but the statement is part of a known-good
+///   library.
 /// - **Pending** (grey): `status=Pending` OR a leaked chain_replay row.
 /// - **Rejected** / **Cascaded** (red): `status=Rejected`. Cascade is
 ///   detected via `rejectedReason` prefix `ancestor_rejected:`.
@@ -86,6 +91,15 @@ function styleOf(s: Props): BadgeStyle {
       fg: 'var(--blue-700, #1d4ed8)',
       dot: 'var(--blue-500, #3b82f6)',
       hint: 'Worker lake-built locally; server lake confirmation pending.',
+    };
+  }
+  if (s.tactic === 'imported') {
+    return {
+      label: 'Imported · upstream-verified',
+      bg: 'var(--terracotta-50, #fef2f0)',
+      fg: 'var(--terracotta-800, #7a2e1a)',
+      dot: 'var(--terracotta-500, #d97559)',
+      hint: 'Imported from Mathlib / PhysLean — accepted by Lean upstream.',
     };
   }
   // Defense-in-depth fallback for chain_replay or unknown tactic.

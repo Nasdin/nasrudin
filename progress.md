@@ -17,25 +17,46 @@ modern physics theorems via combinatorics + compute + GA.
 ---
 
 ## Iteration log
-- Iteration counter: `24`
+- Iteration counter: `25`
 - Iter 23 result: 2/12 verified, 20 unique executable.
   Gen 0: chain ending `RearrangeEquation{(c·p0)²=E²} + TakePositiveRoot`
   → conclusion `c·p0 = E`. **Productive-suffix shape now survives selection
   and verifies.** But suffix sampled X, Y from fact atoms only — never
   picked compound atoms — so it can only "cycle" axioms via squaring.
-- Iter 24 (this iter): wired the **physics-shape compound pool** into
+- Iter 24: wired the **physics-shape compound pool** into
   `append_productive_suffix` with 40 % probability per atom. Now the
   suffix can sample `X = E, Y = m·c²` and synthesize target
-  `E² = (m·c²)²` — the exact shape needed for E=mc². Discovery
-  re-running with `--max-lake 15` (~75 min budget).
+  `E² = (m·c²)²` — the exact shape needed for E=mc². But pool was
+  hardcoded 8 SR atoms — EM/QM/GR domains got SR atoms by accident.
+- Iter 25 (2026-05-24): **architectural** — made the suffix pool
+  LLM-curated per domain.
+  - Schema: `SteeringConfig.atom_pool: HashMap<domain, Vec<{name,weight}>>`
+    (engine/crates/api/src/steerer/schema.rs). Validation bounds
+    weights to [0, 4]; unknown names accepted at the schema layer.
+  - Worker: `apply_steering_knobs_for_domain(cfg, steering, domain_key)`
+    extracts the per-domain slice into `DiscoveryConfig.atom_pool`.
+  - GA: `random_physics_compound_weighted(rng, pool)` does
+    weighted-pick over named atoms (PHYSICS_ATOM_NAMES = the 8 SR
+    baseline + any new names a future steerer schema ships). Unknown
+    names from a newer steerer are silently dropped (forward-compat).
+  - Prompt: `SYSTEM_PROMPT` + `SCHEMA_HINT` updated so Kimi K2.6 knows
+    it can emit `atom_pool` per domain + target_id stable handles in
+    `soft_targets`. Steerer model bumped K2.5 → K2.6 across daemon
+    defaults and README.
+  - 16 new unit tests (chain_ga + schema + steering_knobs); full
+    workspace compiles clean in release.
 - Next consolidation due at iteration: `30`
-- Last iteration: 2026-04-28 — iter 21: Phase 7.1 (EM upstream axioms)
-  + 7.2 (hand-proof PhotonEnergyMomentum.lean, lake build in flight).
+- Last iteration: 2026-05-24 — iter 25, end-to-end LLM atom-pool
+  curriculum + frontend honesty pass (no fake "GA arrived at E=mc²
+  cycle 4211" anymore; `/discoveries` now reads `/api/featured` for
+  real status). Detail page renders Lean-name as heading for imported
+  rows; browse cards stopped showing garbled s-expressions.
 - Next consolidation due at iteration: `30`
 
 ## Active phase
-Phase 6.5.11 — physics-shape compound atom pool, iter 23. All other
-planned phases (0–8) done.
+Phase 6.5.12 — LLM-curated per-domain atom pool + Kimi K2.6 upgrade
+(iter 25). All other planned phases (0–8) done. Phase 9 (frontend
+audit + honest discoveries page) folded into iter 25.
 
 **Iter 23 hypothesis:** the search-space gap is dominated by the
 probability of sampling a derivable `X² = Y²` target. With `m·c²`,

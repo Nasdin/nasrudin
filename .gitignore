@@ -55,3 +55,7 @@ physlean-extract/output/math_corpus_full.json
 physlean-extract/output/math_corpus.json
 physlean-extract/output/catalog.json
 backups/
+
+# Playwright MCP scratch + per-session UX audit screenshots
+.playwright-mcp/
+audit-*.png

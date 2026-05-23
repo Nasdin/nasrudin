@@ -20,10 +20,29 @@ the outcomes of your last 10 cycles, then emit a SteeringConfig JSON \
 that biases the GA exploration of thousands of workers. Output ONLY \
 valid JSON matching the schema. Honor the scope: in scope B (paid \
 jobs running) set hard_targets=[] and mutation_knobs=null; in scope C \
-you have full authority. When you observe a cluster making productive \
-use of `append_productive_suffix` or `mutate_axiom_name`, bias \
-`mutation_priors` toward those operators (default uniform 1.0). \
-Keep rationale ≤500 chars.";
+you have full authority.\n\n\
+The GA discovers theorems by chaining axioms and mutating the chain. \
+You have three load-bearing levers:\n\
+  1. `mutation_priors` — bias which mutation operators run more often. \
+     Boost `append_productive_suffix` when chains are reaching novel \
+     equations; boost `mutate_axiom_name` when chains are stagnating.\n\
+  2. `soft_targets` — name a physics result you want the explorer fleet \
+     to chase. Set `target_id` to the stable handle of a known target \
+     (e.g. `sr_rest_energy`, `qm_schrodinger`, `em_gauss_law`, \
+     `newton_second`, `gr_einstein_field_equation`) and workers wire \
+     it into their fitness via ladder-progress scoring. Use this as \
+     your curriculum: propose one target per domain, watch outcomes, \
+     advance via `target_status_updates` when verified.\n\
+  3. `atom_pool` — per-domain physics-shape compounds used by \
+     `append_productive_suffix` to synthesise candidate target \
+     equations. Without atoms the suffix can only cycle axioms; with \
+     domain-appropriate compounds it can synthesise productive \
+     `X² = Y²` targets. Recognised atom names: `m_c_sq`, `c_p0`, \
+     `p0_sq`, `m_sq_c_sq`, `e_sq`, `p0_sq_minus_psq`, `m_c`, `c_sq` \
+     (SR baseline); workers fall back to the baseline when you don't \
+     emit a pool.\n\n\
+Keep rationale ≤500 chars; rewrite `lessons_learned` each cycle as a \
+rolling indefinite-horizon memory of what works.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveJobSummary {
@@ -53,7 +72,23 @@ const SCHEMA_HINT: &str = r#"{
     "novelty": <0..1>, "dimensional_elegance": <0..1>,
     "chain_length_penalty": <0..1>, "target_proximity": <0..1>
   } -- must sum to 1.0,
-  "soft_targets": [ { "latex": "...", "domain": "...", "weight": <0..1> } ],
+  "soft_targets": [
+    { "latex": "E = m c^2",
+      "domain": "special_relativity",
+      "weight": <0..1>,
+      "target_id": "sr_rest_energy"  -- stable handle; when set to a known
+                                        spec name the worker wires it into
+                                        ladder-progress fitness automatically.
+                                        Known IDs: sr_rest_energy,
+                                        qm_schrodinger, qm_planck_einstein,
+                                        qm_de_broglie, qm_free_particle_dispersion,
+                                        qm_harmonic_oscillator,
+                                        thermo_boltzmann_entropy, thermo_carnot,
+                                        newton_second, em_gauss_law,
+                                        gr_einstein_field_equation,
+                                        gr_schwarzschild_radius
+    }, ...
+  ],
   "hard_targets": [ ... ] -- empty in B,
   "mutation_knobs": { "rate": <0.05..0.30>, "suffix_bias": <0..1>,
                       "population_size": <32..512>, "elitism_fraction": <0..0.2> }
@@ -63,6 +98,18 @@ const SCHEMA_HINT: &str = r#"{
                                    "swap_adjacent", "mutate_axiom_name",
                                    "mutate_param", "append_productive_suffix"];
                         unknown keys ignored; missing → uniform 1.0,
+  "atom_pool": {
+    "<domain>": [ { "name": "m_c_sq", "weight": <0..4> }, ... ]
+  }                          -- per-domain physics-shape compounds for
+                                `append_productive_suffix` to draw from.
+                                Recognised SR atoms (workers may ignore
+                                unknowns, so adding new names is forward-safe):
+                                m_c_sq, c_p0, p0_sq, m_sq_c_sq, e_sq,
+                                p0_sq_minus_psq, m_c, c_sq. Empty/missing →
+                                uniform fallback to hardcoded 8-atom baseline.
+                                Use this to give EM/QM/GR domains their own
+                                physics-shape pool so the suffix mechanism
+                                can synthesise non-SR productive targets,
   "cluster_directives": [
     { "island_domain": "...",
       "centroid_skeleton_hash": <u64>,    -- copy from cluster_summaries above,

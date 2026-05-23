@@ -21,7 +21,30 @@ use serde_json::Value;
 ///
 /// Returns `true` if any field was applied — useful for logging the
 /// effective config at chunk boundaries.
+///
+/// `domain_key` (e.g. `"special_relativity"`, `"electromagnetism"`)
+/// scopes the per-domain LLM levers — currently the `atom_pool`. Pass
+/// the empty string to skip the per-domain extraction (legacy callers
+/// without a domain context).
 pub fn apply_steering_knobs(cfg: &mut DiscoveryConfig, steering: &Value) -> bool {
+    apply_steering_knobs_for_domain(cfg, steering, "")
+}
+
+/// Domain-aware variant of [`apply_steering_knobs`]. Threads through
+/// the LLM-curated `atom_pool[domain]` so the GA's
+/// `append_productive_suffix` mutation operator gets the right
+/// physics-shape compounds for the island it's running on (SR atoms
+/// for SR work, EM atoms for EM work, etc.).
+///
+/// `domain_key` must match the key the LLM emits under
+/// `config.atom_pool` — typically the steerer's snake-case domain
+/// name (e.g. `"special_relativity"`). Unknown keys silently
+/// resolve to `None`, falling the GA back to its hardcoded baseline.
+pub fn apply_steering_knobs_for_domain(
+    cfg: &mut DiscoveryConfig,
+    steering: &Value,
+    domain_key: &str,
+) -> bool {
     let mut applied = false;
 
     // mutation_knobs (population-level): nested object. Missing/null
@@ -70,6 +93,38 @@ pub fn apply_steering_knobs(cfg: &mut DiscoveryConfig, steering: &Value) -> bool
         if !h.is_empty() {
             cfg.mutation_priors = Some(h);
             applied = true;
+        }
+    }
+
+    // atom_pool is per-domain. The LLM emits a top-level
+    // `{ "<domain>": [{name, weight}, ...] }` map and the worker
+    // extracts only the slice for the island it's running on. Empty
+    // / missing → leave cfg.atom_pool as None so the GA falls back
+    // to its hardcoded baseline. Unknown atom names survive the
+    // extraction (no validation here) — chain_ga drops them at the
+    // sampler so forward-compat is preserved.
+    if !domain_key.is_empty() {
+        let pool_for_domain = steering
+            .get("config")
+            .and_then(|c| c.get("atom_pool"))
+            .and_then(|p| p.as_object())
+            .and_then(|m| m.get(domain_key))
+            .and_then(|v| v.as_array());
+        if let Some(arr) = pool_for_domain {
+            let mut pool: Vec<(String, f32)> = Vec::with_capacity(arr.len());
+            for entry in arr {
+                let Some(name) = entry.get("name").and_then(Value::as_str) else { continue };
+                let Some(w) = entry.get("weight").and_then(Value::as_f64) else { continue };
+                if !w.is_finite() { continue; }
+                let w_c = w.clamp(0.0, 4.0) as f32;
+                if w_c > 0.0 {
+                    pool.push((name.to_string(), w_c));
+                }
+            }
+            if !pool.is_empty() {
+                cfg.atom_pool = Some(pool);
+                applied = true;
+            }
         }
     }
 
@@ -203,5 +258,81 @@ mod tests {
         apply_steering_knobs(&mut cfg, &s);
         let priors = cfg.mutation_priors.as_ref().unwrap();
         assert!((priors.get("insert_random").copied().unwrap_or(0.0) - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn atom_pool_extracted_for_matching_domain() {
+        let mut cfg = base();
+        let s = serde_json::json!({
+            "config": {
+                "atom_pool": {
+                    "special_relativity": [
+                        { "name": "m_c_sq", "weight": 2.0 },
+                        { "name": "e_sq", "weight": 1.5 }
+                    ],
+                    "electromagnetism": [
+                        { "name": "future_em_atom", "weight": 1.0 }
+                    ]
+                }
+            }
+        });
+        assert!(apply_steering_knobs_for_domain(&mut cfg, &s, "special_relativity"));
+        let pool = cfg.atom_pool.as_ref().expect("pool should be set");
+        assert_eq!(pool.len(), 2);
+        assert_eq!(pool[0].0, "m_c_sq");
+        assert!((pool[0].1 - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn atom_pool_no_matching_domain_leaves_field_unchanged() {
+        let mut cfg = base();
+        cfg.atom_pool = None;
+        let s = serde_json::json!({
+            "config": {
+                "atom_pool": {
+                    "special_relativity": [ { "name": "m_c_sq", "weight": 1.0 } ]
+                }
+            }
+        });
+        apply_steering_knobs_for_domain(&mut cfg, &s, "thermodynamics");
+        assert!(cfg.atom_pool.is_none());
+    }
+
+    #[test]
+    fn atom_pool_legacy_caller_skips_extraction() {
+        let mut cfg = base();
+        let s = serde_json::json!({
+            "config": {
+                "atom_pool": {
+                    "special_relativity": [ { "name": "m_c_sq", "weight": 1.0 } ]
+                }
+            }
+        });
+        // Empty domain key → atom_pool extraction skipped. Existing
+        // call sites that don't pass a domain continue to work
+        // unchanged (no atom_pool overrides applied).
+        apply_steering_knobs(&mut cfg, &s);
+        assert!(cfg.atom_pool.is_none());
+    }
+
+    #[test]
+    fn atom_pool_clamps_out_of_range_weight() {
+        let mut cfg = base();
+        let s = serde_json::json!({
+            "config": {
+                "atom_pool": {
+                    "sr": [
+                        { "name": "x", "weight": 99.0 },
+                        { "name": "y", "weight": -1.0 }
+                    ]
+                }
+            }
+        });
+        apply_steering_knobs_for_domain(&mut cfg, &s, "sr");
+        let pool = cfg.atom_pool.as_ref().expect("clamped to 4.0; included");
+        // weight=99 → clamps to 4.0 (kept); weight=-1 → clamps to 0 (dropped).
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool[0].0, "x");
+        assert!((pool[0].1 - 4.0).abs() < 1e-6);
     }
 }

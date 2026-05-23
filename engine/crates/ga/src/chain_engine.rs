@@ -250,6 +250,14 @@ pub struct DiscoveryConfig {
     /// Empty → cluster-aware path is skipped and the GA runs in legacy
     /// uniform mode.
     pub cluster_assignments: Vec<u32>,
+    /// LLM-curated physics-shape atom pool for this discovery run.
+    /// Workers extract `steering.atom_pool[domain]` from the cluster
+    /// steerer's response and set this; the GA's
+    /// `append_productive_suffix` mutation operator reads it on every
+    /// invocation so domain-specific compounds (e.g. EM `Eph`, `pph`;
+    /// QM `hbar_omega`) feed target synthesis. `None` falls back to
+    /// the hardcoded 8-atom SR baseline (uniform).
+    pub atom_pool: Option<Vec<(String, f32)>>,
 }
 
 /// Per-cluster knob multiplier. Default is identity (1.0× rate, 1.0×
@@ -352,6 +360,7 @@ impl Default for DiscoveryConfig {
             collect_final_population: false,
             cluster_multipliers: std::collections::HashMap::new(),
             cluster_assignments: vec![],
+            atom_pool: None,
         }
     }
 }
@@ -540,22 +549,25 @@ pub fn run_discovery_from_population(
             // otherwise. Clamped to [0.05, 0.30] inside the helper.
             let c1_rate = local_mutation_rate_for_cluster(config, p1_cluster);
             let c2_rate = local_mutation_rate_for_cluster(config, p2_cluster);
+            let atom_pool_ref = config.atom_pool.as_deref();
             if rng.random_bool(c1_rate) {
-                crate::chain_ga::mutate_chain_weighted_with_suffix_bias(
+                crate::chain_ga::mutate_chain_full(
                     &mut c1,
                     store,
                     rng,
                     config.mutation_priors.as_ref(),
                     config.suffix_bias,
+                    atom_pool_ref,
                 );
             }
             if rng.random_bool(c2_rate) {
-                crate::chain_ga::mutate_chain_weighted_with_suffix_bias(
+                crate::chain_ga::mutate_chain_full(
                     &mut c2,
                     store,
                     rng,
                     config.mutation_priors.as_ref(),
                     config.suffix_bias,
+                    atom_pool_ref,
                 );
             }
             for (child, child_cluster) in [(c1, p1_cluster), (c2, p2_cluster)] {
@@ -1001,6 +1013,7 @@ mod tests {
             collect_final_population: false,
             cluster_multipliers: std::collections::HashMap::new(),
             cluster_assignments: vec![],
+            atom_pool: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -1037,6 +1050,7 @@ mod tests {
             collect_final_population: false,
             cluster_multipliers: std::collections::HashMap::new(),
             cluster_assignments: vec![],
+            atom_pool: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);

@@ -717,6 +717,7 @@ async fn main() {
         // global rates until directives land.
         cluster_multipliers: std::collections::HashMap::new(),
         cluster_assignments: vec![],
+        atom_pool: None,
     };
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
@@ -993,11 +994,34 @@ async fn main() {
         // Apply LLM mutation knobs from the latest steering snapshot.
         // No-op when steering is absent or `mutation_knobs=null`
         // (mode B / steerer disabled / first chunk before re-sync).
+        // The domain key threads through so the LLM's per-domain
+        // `atom_pool` reaches `append_productive_suffix`; map the
+        // worker's short domain flag (`sr`, `em`, `qm`, `gr`) to the
+        // steerer's snake-case key.
+        let domain_key = match domain.as_str() {
+            "sr" => "special_relativity",
+            "em" => "electromagnetism",
+            "qm" => "quantum_mechanics",
+            "gr" => "general_relativity",
+            "cm" => "classical_mechanics",
+            "thermo" => "thermodynamics",
+            other => other,
+        };
         if let Some(ref s) = last_steering {
-            if nasrudin_ga::steering_knobs::apply_steering_knobs(&mut chunk_config, s) {
+            if nasrudin_ga::steering_knobs::apply_steering_knobs_for_domain(
+                &mut chunk_config,
+                s,
+                domain_key,
+            ) {
                 tracing::debug!(
                     rate = chunk_config.mutation_rate,
                     pop = chunk_config.population_size,
+                    atom_pool_size = chunk_config
+                        .atom_pool
+                        .as_ref()
+                        .map(|p| p.len())
+                        .unwrap_or(0),
+                    domain = domain_key,
                     "chunk config patched from steering"
                 );
             }
@@ -1844,6 +1868,7 @@ async fn run_seed_driven_chunk(
             collect_final_population: false,
             cluster_multipliers: std::collections::HashMap::new(),
             cluster_assignments: vec![],
+        atom_pool: None,
         };
         let report = run_discovery(&filtered, &chunk_config, rng);
         total_attempted += report.total_candidates as u64;
