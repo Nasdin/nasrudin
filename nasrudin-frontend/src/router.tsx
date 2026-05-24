@@ -44,20 +44,8 @@ export function createRouter() {
     // to any to bypass the type-level check.
     dehydrate: (() => ({ queryClientState: dehydrate(queryClient) })) as any,
     // biome-ignore lint/suspicious/noExplicitAny: see dehydrate above.
-    // Defensive: hydrate may throw on partial/empty payloads (e.g.
-    // routes without a loader serialize an empty cache state). A throw
-    // here aborts React mount entirely — page becomes a frozen SSR
-    // snapshot with no interactivity. Swallow + warn so /search,
-    // /search/concept, /pricing etc. (routes with no prefetched data)
-    // still mount cleanly.
-    hydrate: ((data: { queryClientState?: ReturnType<typeof dehydrate> }) => {
-      try {
-        if (data?.queryClientState) {
-          hydrate(queryClient, data.queryClientState);
-        }
-      } catch (e) {
-        if (typeof console !== 'undefined') console.warn('queryClient hydrate failed:', e);
-      }
+    hydrate: ((data: { queryClientState: ReturnType<typeof dehydrate> }) => {
+      hydrate(queryClient, data.queryClientState);
     }) as any,
     defaultErrorComponent: ({ error }) => (
       <div style={{ padding: '64px', textAlign: 'center' }}>
