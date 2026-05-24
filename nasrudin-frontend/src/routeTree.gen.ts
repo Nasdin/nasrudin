@@ -27,6 +27,9 @@ import { Route as ApiKeysRouteImport } from './routes/api-keys'
 import { Route as ApiDocsRouteImport } from './routes/api-docs'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SearchIndexRouteImport } from './routes/search.index'
+import { Route as ResearchIndexRouteImport } from './routes/research.index'
+import { Route as ConjectureIndexRouteImport } from './routes/conjecture.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as TheoremIdRouteImport } from './routes/theorem.$id'
 import { Route as SearchConceptRouteImport } from './routes/search.concept'
@@ -130,6 +133,21 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SearchIndexRoute = SearchIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SearchRoute,
+} as any)
+const ResearchIndexRoute = ResearchIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ResearchRoute,
+} as any)
+const ConjectureIndexRoute = ConjectureIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ConjectureRoute,
+} as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -221,6 +239,9 @@ export interface FileRoutesByFullPath {
   '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
   '/admin/': typeof AdminIndexRoute
+  '/conjecture/': typeof ConjectureIndexRoute
+  '/research/': typeof ResearchIndexRoute
+  '/search/': typeof SearchIndexRoute
   '/admin/users/$id': typeof AdminUsersIdRoute
 }
 export interface FileRoutesByTo {
@@ -228,15 +249,12 @@ export interface FileRoutesByTo {
   '/api-docs': typeof ApiDocsRoute
   '/api-keys': typeof ApiKeysRoute
   '/browse': typeof BrowseRoute
-  '/conjecture': typeof ConjectureRouteWithChildren
   '/discoveries': typeof DiscoveriesRoute
   '/jobs': typeof JobsRoute
   '/leaderboard': typeof LeaderboardRoute
   '/library': typeof LibraryRoute
   '/pricing': typeof PricingRoute
   '/profile': typeof ProfileRoute
-  '/research': typeof ResearchRouteWithChildren
-  '/search': typeof SearchRouteWithChildren
   '/settings': typeof SettingsRoute
   '/signin': typeof SigninRoute
   '/sponsor': typeof SponsorRoute
@@ -252,6 +270,9 @@ export interface FileRoutesByTo {
   '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
   '/admin': typeof AdminIndexRoute
+  '/conjecture': typeof ConjectureIndexRoute
+  '/research': typeof ResearchIndexRoute
+  '/search': typeof SearchIndexRoute
   '/admin/users/$id': typeof AdminUsersIdRoute
 }
 export interface FileRoutesById {
@@ -285,6 +306,9 @@ export interface FileRoutesById {
   '/search/concept': typeof SearchConceptRoute
   '/theorem/$id': typeof TheoremIdRoute
   '/admin/': typeof AdminIndexRoute
+  '/conjecture/': typeof ConjectureIndexRoute
+  '/research/': typeof ResearchIndexRoute
+  '/search/': typeof SearchIndexRoute
   '/admin/users/$id': typeof AdminUsersIdRoute
 }
 export interface FileRouteTypes {
@@ -319,6 +343,9 @@ export interface FileRouteTypes {
     | '/search/concept'
     | '/theorem/$id'
     | '/admin/'
+    | '/conjecture/'
+    | '/research/'
+    | '/search/'
     | '/admin/users/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -326,15 +353,12 @@ export interface FileRouteTypes {
     | '/api-docs'
     | '/api-keys'
     | '/browse'
-    | '/conjecture'
     | '/discoveries'
     | '/jobs'
     | '/leaderboard'
     | '/library'
     | '/pricing'
     | '/profile'
-    | '/research'
-    | '/search'
     | '/settings'
     | '/signin'
     | '/sponsor'
@@ -350,6 +374,9 @@ export interface FileRouteTypes {
     | '/search/concept'
     | '/theorem/$id'
     | '/admin'
+    | '/conjecture'
+    | '/research'
+    | '/search'
     | '/admin/users/$id'
   id:
     | '__root__'
@@ -382,6 +409,9 @@ export interface FileRouteTypes {
     | '/search/concept'
     | '/theorem/$id'
     | '/admin/'
+    | '/conjecture/'
+    | '/research/'
+    | '/search/'
     | '/admin/users/$id'
   fileRoutesById: FileRoutesById
 }
@@ -536,6 +566,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/search/': {
+      id: '/search/'
+      path: '/'
+      fullPath: '/search/'
+      preLoaderRoute: typeof SearchIndexRouteImport
+      parentRoute: typeof SearchRoute
+    }
+    '/research/': {
+      id: '/research/'
+      path: '/'
+      fullPath: '/research/'
+      preLoaderRoute: typeof ResearchIndexRouteImport
+      parentRoute: typeof ResearchRoute
+    }
+    '/conjecture/': {
+      id: '/conjecture/'
+      path: '/'
+      fullPath: '/conjecture/'
+      preLoaderRoute: typeof ConjectureIndexRouteImport
+      parentRoute: typeof ConjectureRoute
+    }
     '/admin/': {
       id: '/admin/'
       path: '/'
@@ -657,10 +708,12 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface ConjectureRouteChildren {
   ConjectureIdRoute: typeof ConjectureIdRoute
+  ConjectureIndexRoute: typeof ConjectureIndexRoute
 }
 
 const ConjectureRouteChildren: ConjectureRouteChildren = {
   ConjectureIdRoute: ConjectureIdRoute,
+  ConjectureIndexRoute: ConjectureIndexRoute,
 }
 
 const ConjectureRouteWithChildren = ConjectureRoute._addFileChildren(
@@ -669,10 +722,12 @@ const ConjectureRouteWithChildren = ConjectureRoute._addFileChildren(
 
 interface ResearchRouteChildren {
   ResearchIdRoute: typeof ResearchIdRoute
+  ResearchIndexRoute: typeof ResearchIndexRoute
 }
 
 const ResearchRouteChildren: ResearchRouteChildren = {
   ResearchIdRoute: ResearchIdRoute,
+  ResearchIndexRoute: ResearchIndexRoute,
 }
 
 const ResearchRouteWithChildren = ResearchRoute._addFileChildren(
@@ -681,10 +736,12 @@ const ResearchRouteWithChildren = ResearchRoute._addFileChildren(
 
 interface SearchRouteChildren {
   SearchConceptRoute: typeof SearchConceptRoute
+  SearchIndexRoute: typeof SearchIndexRoute
 }
 
 const SearchRouteChildren: SearchRouteChildren = {
   SearchConceptRoute: SearchConceptRoute,
+  SearchIndexRoute: SearchIndexRoute,
 }
 
 const SearchRouteWithChildren =
