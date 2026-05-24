@@ -97,7 +97,7 @@ function ApiDocsPage() {
               >
                 Free tier
               </strong>
-              10K req/day. No card. Higher limits on <Link to="/pricing">Researcher+</Link>.
+              500 req/day. No card. Higher limits on <Link to="/pricing">Researcher+</Link>.
             </div>
           </aside>
           <div>

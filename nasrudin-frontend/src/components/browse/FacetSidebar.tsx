@@ -11,6 +11,22 @@ export const DOMAIN_LABELS: Array<{ value: Domain | null; label: string }> = [
   { value: 'Thermodynamics', label: 'Thermodynamics' },
 ];
 
+// The API used to return PascalCase keys (`PureMath`) but now ships
+// snake_case (`pure_math`). The frontend was looking up the PascalCase
+// key, so every domain row rendered as 0 even though the data was
+// there. This helper falls through both shapes; once the API picks one
+// for good we can drop the alternate.
+function pascalToSnake(s: string): string {
+  return s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+}
+function countFor(counts: Record<string, number>, value: Domain | null): number {
+  if (!value) {
+    // "All" row: sum the columns we know about.
+    return Object.values(counts).reduce((a, b) => a + b, 0);
+  }
+  return counts[value] ?? counts[pascalToSnake(value)] ?? 0;
+}
+
 export function FacetSidebar({
   counts,
   active,
@@ -38,7 +54,7 @@ export function FacetSidebar({
               style={{ cursor: 'pointer' }}
             >
               <span>{d.label}</span>
-              <span className="count">{(counts[d.value ?? ''] ?? 0).toLocaleString()}</span>
+              <span className="count">{countFor(counts, d.value).toLocaleString()}</span>
             </li>
           ))}
         </ul>
