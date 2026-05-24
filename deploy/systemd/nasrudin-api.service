@@ -29,6 +29,14 @@ Environment=STRIPE_BASE_URL=https://api.stripe.com
 # come from /opt/nasrudin/.env via EnvironmentFile above.
 RuntimeDirectory=nasrudin
 RuntimeDirectoryMode=0755
+# WITHOUT this, systemd cleans /run/nasrudin/ when this unit stops, and
+# the elaborator's long-lived elab.sock gets wiped as collateral damage
+# even though nasrudin-elaborator.service is still running. Workers
+# then hang forever in "Connecting to elaborator daemon /run/nasrudin/elab.sock"
+# until the elaborator is manually restarted (~25 min cold-boot). See
+# the May 3 zombie incident: api restart → socket gone → worker stuck
+# for 22 days.
+RuntimeDirectoryPreserve=yes
 ExecStart=/opt/nasrudin/bin/physics-api
 Restart=on-failure
 RestartSec=10
