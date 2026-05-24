@@ -167,8 +167,16 @@ struct Choice {
 
 #[derive(Deserialize)]
 struct ChoiceMessage {
+    // Kimi K2.5/K2.6 emit `content: null` when the model spent its
+    // budget on `reasoning_content` and never produced a final answer
+    // (e.g. hit max_tokens mid-think). serde's `#[default]` only fires
+    // for missing fields, not explicit null — without Option<String>
+    // the response decode panics with "invalid type: null, expected
+    // a string" and the steerer cycle aborts.
     #[serde(default)]
-    content: String,
+    content: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -271,7 +279,16 @@ impl LlmProvider for GradientProvider {
             } else {
                 parsed.model
             },
-            text: choice.message.content,
+            // Prefer `content` (final answer); fall back to
+            // `reasoning_content` so a truncated cycle still yields the
+            // best-available text instead of an empty string that
+            // breaks downstream JSON-schema parsing.
+            text: choice
+                .message
+                .content
+                .filter(|s| !s.is_empty())
+                .or(choice.message.reasoning_content)
+                .unwrap_or_default(),
             input_tokens: usage.prompt_tokens,
             output_tokens: usage.completion_tokens,
             stop_reason: choice.finish_reason.unwrap_or_else(|| "stop".into()),
