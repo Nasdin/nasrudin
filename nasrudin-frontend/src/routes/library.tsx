@@ -438,7 +438,25 @@ function SavedTheoremItem({
         style={{ textDecoration: 'none', color: 'inherit', display: 'contents' }}
       >
         <span className="saved-stmt">
-          <MathExpr source={row.theorem.latex ?? row.theorem.canonical_statement} />
+          {row.theorem.latex ? (
+            <MathExpr source={row.theorem.latex} />
+          ) : (
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+                color: 'var(--ink-700)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: 'inline-block',
+                maxWidth: '100%',
+              }}
+              title={row.theorem.canonical_statement}
+            >
+              {row.theorem.canonical_statement}
+            </span>
+          )}
         </span>
         <span className="saved-domain">{row.theorem.domain}</span>
         <span className="saved-date">{new Date(row.saved_at).toLocaleDateString()}</span>

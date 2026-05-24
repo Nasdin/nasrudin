@@ -115,7 +115,6 @@ function ConceptSearchPage() {
 }
 
 function ConceptHitCard({ hit }: { hit: ConceptHit }) {
-  const stmt = hit.latex ?? hit.canonical_statement;
   return (
     <Link
       to="/theorem/$id"
@@ -149,20 +148,37 @@ function ConceptHitCard({ hit }: { hit: ConceptHit }) {
           score {hit.score.toFixed(2)} · {hit.source}
         </span>
       </div>
-      <div style={{ fontSize: 18 }}>
-        <Math source={stmt} block />
-      </div>
-      {hit.latex && (
-        <div
+      {hit.latex ? (
+        <>
+          <div style={{ fontSize: 18 }}>
+            <Math source={hit.latex} block />
+          </div>
+          <div
+            style={{
+              marginTop: 6,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 12,
+              color: 'var(--ink-500)',
+            }}
+          >
+            {hit.canonical_statement}
+          </div>
+        </>
+      ) : (
+        <pre
           style={{
-            marginTop: 6,
             fontFamily: 'var(--font-mono)',
-            fontSize: 12,
-            color: 'var(--ink-500)',
+            fontSize: 13,
+            padding: '12px 14px',
+            background: 'var(--paper-100)',
+            borderRadius: 6,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            margin: 0,
           }}
         >
           {hit.canonical_statement}
-        </div>
+        </pre>
       )}
     </Link>
   );
