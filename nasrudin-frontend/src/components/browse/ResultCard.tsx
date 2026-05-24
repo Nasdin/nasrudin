@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { memo } from 'react';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
+import { leanToSymbols } from '~/lib/physicsSymbols';
 import type { Theorem } from '~/lib/types';
 
 const linkStyle: React.CSSProperties = {
@@ -96,9 +97,9 @@ export const ResultCard = memo(function ResultCard({ thm }: { thm: Theorem }) {
                 textOverflow: 'ellipsis',
                 maxWidth: '100%',
               }}
-              title={thm.canonical_statement}
+              title={leanToSymbols(thm.canonical_statement)}
             >
-              {truncate(thm.canonical_statement, 160)}
+              {truncate(leanToSymbols(thm.canonical_statement), 160)}
             </div>
           </>
         ) : (
@@ -112,9 +113,9 @@ export const ResultCard = memo(function ResultCard({ thm }: { thm: Theorem }) {
               textOverflow: 'ellipsis',
               maxWidth: '100%',
             }}
-            title={thm.canonical_statement}
+            title={leanToSymbols(thm.canonical_statement)}
           >
-            {truncate(thm.canonical_statement, 200)}
+            {truncate(leanToSymbols(thm.canonical_statement), 200)}
           </div>
         )}
         <div className="result-name" style={{ marginTop: importedFrom ? 6 : undefined }}>

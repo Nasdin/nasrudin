@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { memo } from 'react';
 import { Math as MathExpr } from '~/lib/katex';
+import { leanToSymbols } from '~/lib/physicsSymbols';
 import type { SearchMatchItem, SearchTier } from '~/lib/types';
 import { MatchBadge } from './MatchBadge';
 
@@ -57,9 +58,9 @@ const Result = memo(function Result({ m }: { m: SearchMatchItem }) {
                   display: 'inline-block',
                   maxWidth: '100%',
                 }}
-                title={m.canonical_statement}
+                title={leanToSymbols(m.canonical_statement)}
               >
-                {m.canonical_statement}
+                {leanToSymbols(m.canonical_statement)}
               </span>
             )}
           </div>

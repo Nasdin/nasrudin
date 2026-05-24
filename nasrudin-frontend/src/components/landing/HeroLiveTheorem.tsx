@@ -3,6 +3,7 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
+import { leanToSymbols } from '~/lib/physicsSymbols';
 import { useRecentTheorems } from '~/lib/queries';
 
 function getTimeAgo(date: Date): string {
@@ -233,7 +234,7 @@ export const HeroLiveTheorem = memo(function HeroLiveTheorem() {
                   margin: 0,
                 }}
               >
-                {truncate(t.canonical_statement, 220)}
+                {truncate(leanToSymbols(t.canonical_statement), 220)}
               </pre>
             )}
             <div className="theorem-name">{id}</div>

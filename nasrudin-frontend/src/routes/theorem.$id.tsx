@@ -9,6 +9,7 @@ import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { VerifyWithLakeButton } from '~/components/theorem/VerifyWithLakeButton';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
+import { leanToSymbols } from '~/lib/physicsSymbols';
 import { useTheorem } from '~/lib/queries';
 import type { Theorem } from '~/lib/types';
 
@@ -139,7 +140,7 @@ function TheoremView({ thm }: { thm: Theorem }) {
                 wordBreak: 'break-word',
               }}
             >
-              {thm.canonical_statement}
+              {leanToSymbols(thm.canonical_statement)}
             </pre>
           )}
         </div>

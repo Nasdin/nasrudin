@@ -3,6 +3,7 @@ import { memo, useState } from 'react';
 import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
+import { leanToSymbols } from '~/lib/physicsSymbols';
 import { useRecentTheorems } from '~/lib/queries';
 
 const FILTERS = [
@@ -204,9 +205,9 @@ function BrowserRow({
                 maxWidth: '100%',
                 display: 'inline-block',
               }}
-              title={t.canonical_statement}
+              title={leanToSymbols(t.canonical_statement)}
             >
-              {truncate(t.canonical_statement, 80)}
+              {truncate(leanToSymbols(t.canonical_statement), 80)}
             </span>
           )}
         </span>
@@ -257,7 +258,7 @@ function BrowserRow({
                   wordBreak: 'break-word',
                 }}
               >
-                {t.canonical_statement}
+                {leanToSymbols(t.canonical_statement)}
               </pre>
             )}
             {importedFrom && (

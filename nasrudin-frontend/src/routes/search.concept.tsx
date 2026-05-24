@@ -4,6 +4,7 @@ import { type FormEvent, useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { Math } from '~/lib/katex';
+import { leanToSymbols } from '~/lib/physicsSymbols';
 import { useConceptSearch } from '~/lib/queries';
 import type { ConceptHit } from '~/lib/types';
 
@@ -161,7 +162,7 @@ function ConceptHitCard({ hit }: { hit: ConceptHit }) {
               color: 'var(--ink-500)',
             }}
           >
-            {hit.canonical_statement}
+            {leanToSymbols(hit.canonical_statement)}
           </div>
         </>
       ) : (
@@ -177,7 +178,7 @@ function ConceptHitCard({ hit }: { hit: ConceptHit }) {
             margin: 0,
           }}
         >
-          {hit.canonical_statement}
+          {leanToSymbols(hit.canonical_statement)}
         </pre>
       )}
     </Link>

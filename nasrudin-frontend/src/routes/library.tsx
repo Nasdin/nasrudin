@@ -6,6 +6,7 @@ import { AppHeader } from '~/components/platform/AppHeader';
 import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
+import { leanToSymbols } from '~/lib/physicsSymbols';
 import {
   type LibraryFolder,
   libraryFoldersOptions,
@@ -452,9 +453,9 @@ function SavedTheoremItem({
                 display: 'inline-block',
                 maxWidth: '100%',
               }}
-              title={row.theorem.canonical_statement}
+              title={leanToSymbols(row.theorem.canonical_statement)}
             >
-              {row.theorem.canonical_statement}
+              {leanToSymbols(row.theorem.canonical_statement)}
             </span>
           )}
         </span>
