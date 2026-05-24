@@ -33,14 +33,14 @@ pub enum ResponseFormat {
         schema: serde_json::Value,
     },
     /// Strict JSON Schema mode: the model is constrained to emit
-    /// JSON matching `schema` exactly. OpenAI and Gradient/Kimi K2.5
+    /// JSON matching `schema` exactly. OpenAI and Gradient/Kimi K2.6
     /// support this via
     /// `response_format: {"type": "json_schema", "json_schema":
     ///   {"name": ..., "strict": true, "schema": ...}}`.
     /// Token-level constrained decoding makes missing required
     /// fields, wrong types, and out-of-enum values impossible —
     /// validation failures shrink to zero for shape errors. Provider
-    /// behaviour: OpenAI gpt-4o + Kimi K2.5 enforce; older models
+    /// behaviour: OpenAI gpt-4o + Kimi K2.6 enforce; older models
     /// may 400 on unknown response_format and the caller should fall
     /// back to `Json { schema: {} }` with post-hoc validation.
     JsonSchema {

@@ -1,7 +1,7 @@
 //! LLM-driven cluster steerer.
 //!
 //! Every `STEERER_CADENCE_SECONDS` (default 600s) the daemon calls
-//! Kimi K2.5 via DigitalOcean Gradient with a curated context: the last
+//! Kimi K2.6 via DigitalOcean Gradient with a curated context: the last
 //! N cycles' (config, outcome) pairs + an aggregate snapshot of user
 //! demand + the set of paid Researcher jobs currently running. The
 //! model returns a `SteeringConfig` that biases the GA exploration of

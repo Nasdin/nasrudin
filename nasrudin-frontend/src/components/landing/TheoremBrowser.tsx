@@ -28,6 +28,28 @@ const DOMAIN_LABEL: Record<string, string> = {
   FluidDynamics: 'Classical mechanics',
 };
 
+// Imported PhysLean/Mathlib rows carry the Lean qualifier in
+// origin_payload.Imported.source. When `latex` is null (the common
+// case for ~1000 imported rows), we headline that qualifier instead
+// of feeding the prefix-form canonical statement into KaTeX — KaTeX
+// would render `(pidv : Nat (...))` as garbled italic math.
+function importedSource(payload: unknown): string | null {
+  if (payload == null || typeof payload !== 'object') return null;
+  const obj = payload as Record<string, unknown>;
+  const inner = obj.Imported as Record<string, unknown> | undefined;
+  if (!inner) return null;
+  const src = inner.source;
+  return typeof src === 'string' ? src : null;
+}
+function lastSegment(qualified: string): string {
+  const parts = qualified.split('.');
+  return parts[parts.length - 1] ?? qualified;
+}
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return `${s.slice(0, n - 1)}…`;
+}
+
 export const TheoremBrowser = memo(function TheoremBrowser() {
   const recent = useRecentTheorems(40);
   const [filter, setFilter] = useState<string>('All');
@@ -88,13 +110,11 @@ export const TheoremBrowser = memo(function TheoremBrowser() {
         )}
         {rows.slice(0, 8).map((t) => {
           const id = bytesToHex(t.id);
-          const stmt = t.latex ?? t.canonical_statement;
           const isOpen = expanded === id;
           return (
             <BrowserRow
               key={id}
               id={id}
-              stmt={stmt}
               t={t}
               isOpen={isOpen}
               setExpanded={setExpanded}
@@ -130,17 +150,17 @@ export const TheoremBrowser = memo(function TheoremBrowser() {
 
 function BrowserRow({
   id,
-  stmt,
   t,
   isOpen,
   setExpanded,
 }: {
   id: string;
-  stmt: string;
   t: import('~/lib/types').Theorem;
   isOpen: boolean;
   setExpanded: (v: string | null) => void;
 }) {
+  const importedFrom = importedSource(t.origin_payload);
+  const displayName = importedFrom ? lastSegment(importedFrom) : (t.verification_tactic ?? `gen ${t.generation ?? '—'}`);
   return (
     <>
       <button
@@ -157,11 +177,40 @@ function BrowserRow({
       >
         <span className="browser-id">{id.slice(0, 8)}</span>
         <span className="browser-stmt">
-          <MathExpr source={stmt} />
+          {t.latex ? (
+            <MathExpr source={t.latex} />
+          ) : importedFrom ? (
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 13,
+                fontStyle: 'normal',
+                color: 'var(--ink-800)',
+              }}
+              title={importedFrom}
+            >
+              {lastSegment(importedFrom)}
+            </span>
+          ) : (
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+                fontStyle: 'normal',
+                color: 'var(--ink-700)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '100%',
+                display: 'inline-block',
+              }}
+              title={t.canonical_statement}
+            >
+              {truncate(t.canonical_statement, 80)}
+            </span>
+          )}
         </span>
-        <span className="browser-name">
-          {t.verification_tactic ?? `gen ${t.generation ?? '—'}`}
-        </span>
+        <span className="browser-name">{displayName}</span>
         <span className="browser-dom">{DOMAIN_LABEL[t.domain] ?? t.domain}</span>
         <span className="browser-status">
           <VerificationBadge
@@ -192,9 +241,44 @@ function BrowserRow({
         <div className="browser-detail">
           <div className="browser-detail-block">
             <h5>Statement</h5>
-            <div className="full-stmt">
-              <MathExpr source={stmt} block />
-            </div>
+            {t.latex ? (
+              <div className="full-stmt">
+                <MathExpr source={t.latex} block />
+              </div>
+            ) : (
+              <pre
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13,
+                  padding: '12px 16px',
+                  background: 'var(--paper-100)',
+                  borderRadius: 6,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {t.canonical_statement}
+              </pre>
+            )}
+            {importedFrom && (
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  color: 'var(--ink-600)',
+                }}
+              >
+                Imported from{' '}
+                <code
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                  }}
+                >
+                  {importedFrom}
+                </code>
+              </div>
+            )}
             <div className="meta-row">
               <div>
                 generation <strong>{t.generation ?? '—'}</strong>
@@ -210,10 +294,12 @@ function BrowserRow({
               </div>
             </div>
           </div>
-          <div className="browser-detail-block">
-            <h5>Lean 4 proof</h5>
-            <pre className="browser-proof">{t.lean_source}</pre>
-          </div>
+          {t.lean_source && (
+            <div className="browser-detail-block">
+              <h5>Lean 4 proof</h5>
+              <pre className="browser-proof">{t.lean_source}</pre>
+            </div>
+          )}
           <div className="browser-detail-actions">
             <Link
               to="/theorem/$id"

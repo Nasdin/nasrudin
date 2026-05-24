@@ -47,7 +47,7 @@ function PipelineSteering() {
         fill="var(--paper-200)"
         fontFamily="var(--font-mono)"
       >
-        Kimi K2.5
+        Kimi K2.6
       </text>
 
       {/* Three bandit chips on the right */}
@@ -398,7 +398,7 @@ export const PipelineDiagram = memo(function PipelineDiagram({
     },
     {
       name: 'LLM steerer + RL bandits',
-      sub: 'Kimi K2.5 emits intent · 4 online bandits learn the knobs',
+      sub: 'Kimi K2.6 emits intent · 4 online bandits learn the knobs',
       viz: <PipelineSteering />,
     },
     { name: 'Rust GA engine', sub: 'combine · mutate · crossover', viz: <PipelineGA /> },

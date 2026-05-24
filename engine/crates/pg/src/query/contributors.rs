@@ -34,9 +34,9 @@ pub async fn list_contributors(db: &impl ConnectionTrait) -> Result<Vec<Contribu
             u.id as user_id,
             u.display_name,
             SPLIT_PART(u.email, '@', 1) as handle,
-            COUNT(DISTINCT w.id) as worker_count,
-            COALESCE(SUM(w.theorems_contributed), 0) as theorems_contributed,
-            COUNT(DISTINCT CASE WHEN w.status = 'active' THEN w.id END) as active_worker_count
+            COUNT(DISTINCT w.id)::BIGINT as worker_count,
+            COALESCE(SUM(w.theorems_contributed), 0)::BIGINT as theorems_contributed,
+            COUNT(DISTINCT CASE WHEN w.status = 'active' THEN w.id END)::BIGINT as active_worker_count
         FROM users u
         INNER JOIN api_keys ak ON ak.user_id = u.id AND ak.kind = 'worker' AND ak.revoked_at IS NULL
         INNER JOIN workers w ON w.id = ak.name
