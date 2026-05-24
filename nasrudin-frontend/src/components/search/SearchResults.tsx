@@ -34,7 +34,6 @@ export function SearchResults({ tier, matches, tookMs }: Props) {
 }
 
 const Result = memo(function Result({ m }: { m: SearchMatchItem }) {
-  const stmt = m.statement_latex ?? m.canonical_statement;
   return (
     <div className="result-card" style={cardStyle}>
       <div style={resultGridStyle}>
@@ -44,7 +43,25 @@ const Result = memo(function Result({ m }: { m: SearchMatchItem }) {
           style={resultLinkStyle}
         >
           <div className="result-stmt">
-            <MathExpr source={stmt} />
+            {m.statement_latex ? (
+              <MathExpr source={m.statement_latex} />
+            ) : (
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13,
+                  color: 'var(--ink-700)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  display: 'inline-block',
+                  maxWidth: '100%',
+                }}
+                title={m.canonical_statement}
+              >
+                {m.canonical_statement}
+              </span>
+            )}
           </div>
         </Link>
         <div className="result-meta" style={resultMetaStyle}>
