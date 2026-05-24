@@ -245,7 +245,14 @@ function PipelineGA() {
   );
 }
 
-function PipelineCandidates() {
+function formatRate(n: number): string {
+  if (n <= 0) return '0/day';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M/day`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K/day`;
+  return `${n}/day`;
+}
+
+function PipelineCandidates({ submitted24h }: { submitted24h: number }) {
   return (
     <svg viewBox="0 0 600 80" width="100%" height="80" style={{ display: 'block' }}>
       <title>Candidate theorem stream</title>
@@ -283,7 +290,7 @@ function PipelineCandidates() {
         fill="var(--ink-400)"
         fontFamily="var(--font-mono)"
       >
-        ~14M/day
+        {formatRate(submitted24h)}
       </text>
     </svg>
   );
@@ -293,6 +300,9 @@ interface PipelineDiagramProps {
   totalAxioms: number;
   totalVerified: number;
   acceptanceRate: string;
+  /** Real submitted-in-24h count from `/api/stats/landing` funnel.
+   *  Replaces the legacy hard-coded "~14M/day" marketing claim. */
+  submitted24h: number;
 }
 
 function PipelineDB({ totalVerified }: { totalVerified: number }) {
@@ -389,11 +399,23 @@ export const PipelineDiagram = memo(function PipelineDiagram({
   totalAxioms,
   totalVerified,
   acceptanceRate,
+  submitted24h,
 }: PipelineDiagramProps) {
+  // Honest description: the corpus draws on imported Mathlib + PhysLean
+  // axioms plus a hand-curated physics-postulate set. `totalAxioms`
+  // counts every indexed axiom (including the Mathlib cold tier) so the
+  // figure reflects the *available* pool, which is what this stage
+  // describes — what the GA actively pulls from in any given cycle is
+  // a smaller hot-tier sample.
+  const candidateRateLabel =
+    submitted24h > 0
+      ? `${formatRate(submitted24h)} submitted (last 24h)`
+      : 'awaiting first worker submission';
+
   const stages = [
     {
       name: 'Mathematical axioms',
-      sub: `${totalAxioms.toLocaleString()} from Mathlib · physics postulates`,
+      sub: `${totalAxioms.toLocaleString()} indexed · Mathlib + PhysLean + physics postulates`,
       viz: <PipelineSeed />,
     },
     {
@@ -404,8 +426,8 @@ export const PipelineDiagram = memo(function PipelineDiagram({
     { name: 'Rust GA engine', sub: 'combine · mutate · crossover', viz: <PipelineGA /> },
     {
       name: 'Candidate theorems',
-      sub: '~14M/day across the network',
-      viz: <PipelineCandidates />,
+      sub: candidateRateLabel,
+      viz: <PipelineCandidates submitted24h={submitted24h} />,
     },
     {
       name: 'Lean 4 verification',

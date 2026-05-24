@@ -765,10 +765,9 @@ export function useCancelResearchJob() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      apiFetch<{ cancelled: true; refunded_credits: number }>(
-        `/api/research/jobs/${id}/cancel`,
-        { method: 'POST' },
-      ),
+      apiFetch<{ cancelled: true; refunded_credits: number }>(`/api/research/jobs/${id}/cancel`, {
+        method: 'POST',
+      }),
     onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: researchJobsQueryKey });
       qc.invalidateQueries({ queryKey: ['research-job', id] });
@@ -792,6 +791,11 @@ export function useFeaturedDiscoveries() {
           cycle: string;
           elapsed: string;
           proof_lines?: number;
+          /** Hex theorem id when `found = true`; drives the card link
+           *  to `/theorem/$id`. Undefined when still searching. */
+          theorem_id?: string;
+          /** Count of axioms the GA chain composed. Only set when found. */
+          axioms_used?: number;
           note: string;
         }>
       >('/api/featured'),
@@ -858,8 +862,7 @@ export interface PublicSponsorshipSummary {
 export function useUserSponsorship(userId: string | null | undefined) {
   return useQuery<PublicSponsorshipSummary>({
     queryKey: ['users', userId, 'sponsorship'],
-    queryFn: () =>
-      apiFetch<PublicSponsorshipSummary>(`/api/users/${userId}/sponsorship`),
+    queryFn: () => apiFetch<PublicSponsorshipSummary>(`/api/users/${userId}/sponsorship`),
     enabled: !!userId,
     // Public profile data — Stripe webhook updates land within a few
     // minutes, but for badge rendering 5 min staleness is fine.

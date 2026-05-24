@@ -8,13 +8,16 @@ import { RediscoveryGrid } from '~/components/landing/RediscoveryGrid';
 import { RunWorker } from '~/components/landing/RunWorker';
 import { TheoremBrowser } from '~/components/landing/TheoremBrowser';
 import { WorkerMap } from '~/components/landing/WorkerMap';
-import { useStats, useWorkers } from '~/lib/queries';
+import { useLandingStats, useStats, useWorkers } from '~/lib/queries';
 
 export const Route = createFileRoute('/')({ component: Landing });
 
 function Landing() {
   const stats = useStats();
   const workers = useWorkers();
+  // Funnel (submitted/verified/rejected last 24h) for the pipeline strip
+  // and the rejection-rate footnote. Real Postgres counts; no hardcoding.
+  const landing = useLandingStats();
 
   const liveWorkers =
     workers.data?.filter((w) => w.status === 'Active' || w.status === 'active').length ?? 0;
@@ -26,6 +29,15 @@ function Landing() {
   // Calculate acceptance rate (verified / total)
   const acceptanceRate =
     totalTheorems > 0 ? ((totalVerified / totalTheorems) * 100).toFixed(1) : '0.0';
+
+  const funnel = landing.data?.funnel_24h;
+  const submitted24h = funnel?.submitted_24h ?? 0;
+  const rejected24h = funnel?.rejected_24h ?? 0;
+  // Honest rejection rate: rejected / (verified + rejected) over the
+  // last 24h. Falls back to "—" when the window is empty so we never
+  // print a fabricated percentage.
+  const decided24h = (funnel?.verified_24h ?? 0) + rejected24h;
+  const rejectionPct = decided24h > 0 ? ((rejected24h / decided24h) * 100).toFixed(1) : null;
 
   return (
     <div className="page">
@@ -160,9 +172,12 @@ function Landing() {
             totalAxioms={totalAxioms}
             totalVerified={totalVerified}
             acceptanceRate={acceptanceRate}
+            submitted24h={submitted24h}
           />
           <div className="margin-note" style={{ marginTop: 32, textAlign: 'center' }}>
-            ~98% of candidates are rejected. The wise fool is patient.
+            {rejectionPct !== null
+              ? `${rejectionPct}% of decided candidates were rejected in the last 24h (${rejected24h.toLocaleString()} of ${decided24h.toLocaleString()}). The wise fool is patient.`
+              : 'No candidates decided in the last 24h yet — the wise fool is patient.'}
           </div>
         </div>
       </section>
@@ -174,11 +189,12 @@ function Landing() {
             <div className="section-title-block">
               <span className="overline">Inside one cycle</span>
               <h2 className="section-title">
-                Watch the GA <em>arrive at Newton</em> — without being told.
+                One GA cycle, <em>step by step.</em>
               </h2>
               <p className="section-lede">
-                Mutate. Crossover. Compose. Verify. Five generations from the Lagrangian seed to{' '}
-                <i>F = ma</i>, all of it formal.
+                Mutate. Crossover. Compose. Verify. The trace below is captured from a real worker
+                run — each row is an operation the GA tried and what Lean said about it. When no
+                capture exists yet, this section says so honestly instead of inventing one.
               </p>
             </div>
           </div>

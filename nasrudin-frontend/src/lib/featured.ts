@@ -6,6 +6,12 @@ export interface Rediscovery {
   cycle: string;
   elapsed: string;
   proofLines?: number;
+  /** Hex theorem id when `found = true`. Drives the landing-page
+   *  card link to `/theorem/$id`. Undefined when still searching. */
+  theoremId?: string;
+  /** Count of axioms the matched GA chain composed. Undefined when
+   *  still searching. */
+  axiomsUsed?: number;
   note: string;
 }
 

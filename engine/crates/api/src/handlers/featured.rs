@@ -73,6 +73,17 @@ pub struct FeaturedDiscovery {
     pub elapsed: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proof_lines: Option<i32>,
+    /// Hex-encoded theorem id when `found = true`. Drives the
+    /// landing-page card link to `/theorem/{id}`. `None` when the
+    /// formula is still a search target.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theorem_id: Option<String>,
+    /// Count of parent theorems / axioms this derivation composed.
+    /// Only set when `found = true`; zero indicates the matched row
+    /// is an isolated lemma (which we now filter out at SQL time, so
+    /// found rows should always have ≥ 1 here).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub axioms_used: Option<usize>,
     pub note: String,
 }
 
@@ -97,12 +108,12 @@ pub async fn featured(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
         let discovery = match match_result {
             Some(theorem) => {
-                // Found a real theorem in the corpus
-                let cycle = if let Some(generation_num) = theorem.generation {
-                    format!("GA-cycle {}", generation_num)
-                } else {
-                    "GA-cycle unknown".to_string()
-                };
+                // Found a real GA-derived theorem. `find_matching_theorem`
+                // guarantees generation ≥ 1 and a non-imported tactic, so
+                // the cycle number reflects an actual GA generation rather
+                // than the "0" that imported PhysLean axioms carry.
+                let gen_num = theorem.generation.unwrap_or(0);
+                let cycle = format!("Gen {}", gen_num);
 
                 let elapsed = if let Some(duration_ms) = theorem.verification_duration_ms {
                     let seconds = duration_ms / 1000;
@@ -112,19 +123,24 @@ pub async fn featured(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                         format!("{} d · {} h", days, hours)
                     } else if hours > 0 {
                         format!("{} h", hours)
-                    } else {
+                    } else if seconds > 0 {
                         format!("{} s", seconds)
+                    } else {
+                        format!("{} ms", duration_ms)
                     }
                 } else {
-                    "unknown".to_string()
+                    "—".to_string()
                 };
 
-                // Estimate proof lines from lean source (count lines)
                 let proof_lines = Some(theorem.lean_source.lines().count() as i32);
+                let axioms_count = theorem.axioms_used.len();
+                let id_hex = hex::encode(&theorem.id);
 
                 let note = format!(
-                    "Verified theorem from the corpus with {} axioms used.",
-                    theorem.axioms_used.len()
+                    "GA-derived chain at generation {} composed from {} axiom{}.",
+                    gen_num,
+                    axioms_count,
+                    if axioms_count == 1 { "" } else { "s" }
                 );
 
                 FeaturedDiscovery {
@@ -135,13 +151,18 @@ pub async fn featured(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                     cycle,
                     elapsed,
                     proof_lines,
+                    theorem_id: Some(id_hex),
+                    axioms_used: Some(axioms_count),
                     note,
                 }
             }
             None => {
-                // Not found in corpus yet - show searching state
+                // Not yet GA-derived — show honest searching state.
+                // (Imported PhysLean lemmas for this formula are
+                // excluded by `find_matching_theorem`'s filters so we
+                // never claim a static import as a "rediscovery".)
                 let note = format!(
-                    "Searching corpus for {} theorems matching this formula.",
+                    "No GA-derived chain matching this formula yet. Workers are searching the {} corpus.",
                     target.domain.to_lowercase()
                 );
 
@@ -153,6 +174,8 @@ pub async fn featured(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                     cycle: "search active".to_string(),
                     elapsed: "not yet discovered".to_string(),
                     proof_lines: None,
+                    theorem_id: None,
+                    axioms_used: None,
                     note,
                 }
             }
@@ -164,30 +187,49 @@ pub async fn featured(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     (StatusCode::OK, Json(discoveries)).into_response()
 }
 
-/// Try to find a theorem matching the target formula in the corpus.
+/// Try to find a **GA-derived** theorem matching the target formula.
 ///
-/// This is a simple heuristic search - it looks for verified theorems in the
-/// target domain that contain the canonical patterns.
+/// Excludes imported PhysLean/Mathlib axioms — these carry `generation = 0`,
+/// `verification_tactic = 'imported'`, and `contributor_id = 'physlean'`,
+/// and surfacing one as a "rediscovery" would be dishonest: imports are
+/// the *input* to the search, not its output. A featured card only flips
+/// to `found = true` when a worker has actually evolved a chain whose
+/// final statement matches.
 async fn find_matching_theorem(
     db: &sea_orm::DatabaseConnection,
     target: &TargetFormula,
 ) -> Option<nasrudin_pg::entity::theorems::Model> {
-    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+    use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 
-    // Recent verified theorems in the target domain. We pull whole rows
-    // (not a tuple projection) because `theorems.id` is bytea, not text,
-    // and we need the latex column anyway for pattern matching.
     let candidates = nasrudin_pg::entity::theorems::Entity::find()
         .filter(nasrudin_pg::entity::theorems::Column::Status.eq("Verified"))
         .filter(nasrudin_pg::entity::theorems::Column::Domain.eq(target.domain))
+        // Exclude imported axioms: they are the seeds the GA composes
+        // from, not derivations themselves. `verification_tactic` is
+        // NULL for in-process GA discoveries and 'imported' for
+        // PhysLean/Mathlib imports, so we accept the NULL case too.
+        .filter(
+            Condition::any()
+                .add(nasrudin_pg::entity::theorems::Column::VerificationTactic.is_null())
+                .add(nasrudin_pg::entity::theorems::Column::VerificationTactic.ne("imported")),
+        )
+        .filter(nasrudin_pg::entity::theorems::Column::ContributorId.ne("physlean"))
+        // A real GA chain lives at generation ≥ 1; gen 0 means seed/axiom.
+        .filter(nasrudin_pg::entity::theorems::Column::Generation.gt(0i64))
         .order_by_desc(nasrudin_pg::entity::theorems::Column::VerifiedAt)
-        .limit(100)
+        .limit(200)
         .all(db)
         .await
         .ok()?;
 
     let mut best: Option<(nasrudin_pg::entity::theorems::Model, usize)> = None;
     for thm in candidates {
+        // Belt-and-braces: an axiom with no parents/axioms_used is also
+        // not a real derivation, regardless of how it slipped past the
+        // SQL filters above.
+        if thm.axioms_used.is_empty() {
+            continue;
+        }
         let combined = format!(
             "{} {}",
             thm.canonical_statement.to_lowercase(),

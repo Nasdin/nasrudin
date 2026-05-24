@@ -610,6 +610,21 @@ a { color: inherit; }
   border-style: dashed;
   background: var(--paper-50);
 }
+/* Clickable variant for found rediscoveries — anchor tag to /theorem/$id. */
+.rediscover-card-link {
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+}
+.rediscover-card-link:hover {
+  border-color: var(--olive-500);
+  transform: translateY(-1px);
+}
+.rediscover-card-link:focus-visible {
+  outline: 2px solid var(--olive-500);
+  outline-offset: 2px;
+}
 .rediscover-formula {
   font-family: "STIX Two Math", "Cambria Math", "Source Serif 4", serif;
   font-size: 38px;
