@@ -23,15 +23,6 @@ import platformCss from '~/styles/platform.css?url';
 // KaTeX CSS is loaded by `src/lib/katex-inner.tsx` (lazy) — only routes
 // that actually render math pull it in.
 
-// @tanstack/react-start 1.167+ <Scripts /> stopped emitting the
-// client-entry module import in production SSR — only the
-// `<link rel="modulepreload">` lands in <head>, so the JS is fetched
-// but nothing actually executes it. Page loads with SSR'd markup and
-// then sits forever: no hydration, no queries, no event handlers. We
-// resolve the client entry's hashed URL with ?url and add it as a
-// scripts entry so the inline `<script type="module" async>import(...)</script>`
-// makes it back into <head>.
-import clientEntryUrl from '~/client.tsx?url';
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -51,10 +42,20 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
     ],
     scripts: [
+      // @tanstack/react-start 1.167+ <Scripts /> stopped emitting the
+      // route-asset script that boots the client bundle. The SSR
+      // serializes the right `manifest.routes.__root__.assets = [
+      // {tag:'script', ...}]` data but no real <script> element makes
+      // it into the HTML, so React never hydrates and every page sits
+      // as a frozen SSR snapshot.
+      //
+      // Workaround: find the entry chunk at runtime by reading the
+      // first index-*.js modulepreload that Vite already emits, then
+      // dynamic-import it. This is hash-agnostic and survives rebuilds.
       {
         type: 'module',
         async: true,
-        children: `import(${JSON.stringify(clientEntryUrl)})`,
+        children: `var l=document.querySelector('link[rel=modulepreload][href*="/assets/index-"]');if(l)import(l.href);`,
       },
     ],
   }),
