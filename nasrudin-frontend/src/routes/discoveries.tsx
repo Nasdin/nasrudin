@@ -36,10 +36,7 @@ function importedSource(payload: unknown): string | null {
   const src = inner.source;
   return typeof src === 'string' ? src : null;
 }
-function lastSegment(qualified: string): string {
-  const parts = qualified.split('.');
-  return parts[parts.length - 1] ?? qualified;
-}
+import { displayLeanName as lastSegment } from '~/lib/leanNames';
 
 function RecentRow({ thm }: { thm: Theorem }) {
   const id = bytesToHex(thm.id);

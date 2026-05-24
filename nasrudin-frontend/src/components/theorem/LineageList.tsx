@@ -17,10 +17,7 @@ function importedSource(payload: unknown): string | null {
   const src = inner.source;
   return typeof src === 'string' ? src : null;
 }
-function lastSegment(qualified: string): string {
-  const parts = qualified.split('.');
-  return parts[parts.length - 1] ?? qualified;
-}
+import { displayLeanName as lastSegment } from '~/lib/leanNames';
 
 // Each parent is fetched lazily: if /api/theorems/:id resolves we render
 // a clickable link with the human label; if it 404s (e.g. PhysLean

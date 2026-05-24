@@ -36,10 +36,7 @@ function importedSource(payload: unknown): string | null {
   return typeof src === 'string' ? src : null;
 }
 
-function lastSegment(qualified: string): string {
-  const parts = qualified.split('.');
-  return parts[parts.length - 1] ?? qualified;
-}
+import { displayLeanName as lastSegment } from '~/lib/leanNames';
 
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;

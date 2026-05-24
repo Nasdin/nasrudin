@@ -181,7 +181,15 @@ export const WorkerMap = memo(function WorkerMap() {
       </div>
       <div className="network-stats">
         <div className="network-stat-card">
-          <div className="network-big-num">{(workers.data?.length ?? 0).toLocaleString()}</div>
+          <div className="network-big-num">{
+            // Count workers that the API reports as Active, NOT just
+            // ones that landed on a recognised city pin. The droplet
+            // worker reports host=`co-located on droplet` which has no
+            // CITY_COORDS entry; without this fallback it shows as 0
+            // workers even though /api/workers returns 1 Active.
+            (workers.data?.filter((w) => String(w.status).toLowerCase() === 'active').length ?? 0)
+              .toLocaleString()
+          }</div>
           <div className="network-label">Workers · live</div>
         </div>
       </div>
