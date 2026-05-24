@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query';
+import { dehydrate, hydrate, QueryClient } from '@tanstack/react-query';
 import { createRouter as createTanstackRouter } from '@tanstack/react-router';
 import { routeTree } from './routeTree.gen';
 
@@ -30,6 +30,23 @@ export function createRouter() {
     context: { queryClient },
     defaultPreload: 'intent',
     scrollRestoration: true,
+    // Serialize the queryClient cache into the SSR'd HTML so the
+    // client picks up the same data on hydration. Without this, the
+    // server renders rows from prefetched queries (e.g. /api/domains
+    // → 1655 in Electromagnetism) while the client mounts with an
+    // empty cache and renders 0 — React then throws #418 (hydration
+    // text mismatch) and bails out of hydration entirely, leaving
+    // the page as a frozen SSR snapshot with no React running.
+    // biome-ignore lint/suspicious/noExplicitAny: TanStack Router's
+    // Serializable constraint rejects DehydratedState because
+    // `mutationKey: readonly unknown[]` isn't statically verifiable.
+    // The runtime path is fine — JSON.stringify handles it. Cast
+    // to any to bypass the type-level check.
+    dehydrate: (() => ({ queryClientState: dehydrate(queryClient) })) as any,
+    // biome-ignore lint/suspicious/noExplicitAny: see dehydrate above.
+    hydrate: ((data: { queryClientState: ReturnType<typeof dehydrate> }) => {
+      hydrate(queryClient, data.queryClientState);
+    }) as any,
     defaultErrorComponent: ({ error }) => (
       <div style={{ padding: '64px', textAlign: 'center' }}>
         <h1 style={{ fontSize: 24, marginBottom: 16 }}>Something went wrong</h1>
