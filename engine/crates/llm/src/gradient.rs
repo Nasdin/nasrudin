@@ -57,8 +57,19 @@ pub struct GradientProvider {
 impl GradientProvider {
     pub fn new(api_key: String) -> Self {
         Self {
+            // Kimi K2.5 with reasoning_content + a steerer prompt that
+            // includes the full physics atom registry can take 60-180 s
+            // to come back. 60 s was tripping reqwest with
+            // "transport: error sending request" every cycle on prod.
+            // Also force HTTP/1.1: Cloudflare's HTTP/2 stream behind
+            // inference.do-ai.run sometimes drops the connection between
+            // the connect and the request body, surfacing as the same
+            // generic transport error. HTTP/1.1 keep-alive is rock-solid.
             client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
+                .timeout(std::time::Duration::from_secs(300))
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .http1_only()
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
                 .build()
                 .expect("reqwest client"),
             api_key,
