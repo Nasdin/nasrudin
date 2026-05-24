@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { CascadeAlert } from '~/components/theorem/CascadeAlert';
@@ -149,15 +150,25 @@ function TheoremView({ thm }: { thm: Theorem }) {
             <h3>Lean 4 proof</h3>
             <div className="thm-proof-bar">
               <span>{idHex}.lean</span>
-              <button
-                type="button"
-                className="copy"
-                onClick={() =>
-                  navigator.clipboard.writeText(thm.lean_source || '-- not yet verified')
-                }
-              >
-                Copy
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="copy"
+                  onClick={() =>
+                    navigator.clipboard.writeText(thm.lean_source || '-- not yet verified')
+                  }
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  className="copy"
+                  onClick={() => downloadLean(idHex, thm.lean_source || '-- not yet verified')}
+                  title="Download as .lean file"
+                >
+                  Download
+                </button>
+              </div>
             </div>
             <ProofBlock source={thm.lean_source || '-- not yet verified'} />
             {showVerifyButton && (
@@ -167,6 +178,7 @@ function TheoremView({ thm }: { thm: Theorem }) {
             )}
           </div>
         )}
+        <ChainStepsSection chainJson={thm.chain_json} />
         {isImported && !thm.lean_source && (
           <div className="thm-section">
             <h3>Source</h3>
@@ -224,4 +236,97 @@ function TheoremView({ thm }: { thm: Theorem }) {
       </aside>
     </div>
   );
+}
+
+function downloadLean(idHex: string, source: string): void {
+  const blob = new Blob([source], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${idHex}.lean`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// The GA chain that produced this theorem, persisted as JSON. Each
+// element is a `RuleStep` enum tagged with `kind` (IntroduceAxiom,
+// RearrangeEquation, TakePositiveRoot, ...) so the UI can render a
+// step-by-step trace of how the theorem was built. Imported PhysLean
+// rows have an empty array — they have no chain by construction.
+function ChainStepsSection({ chainJson }: { chainJson: unknown }) {
+  const [open, setOpen] = useState(false);
+  const steps = Array.isArray(chainJson) ? (chainJson as Array<Record<string, unknown>>) : [];
+  if (steps.length === 0) return null;
+  return (
+    <div className="thm-section">
+      <h3 style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span>Proof chain</span>
+        <span style={{ fontSize: 13, color: 'var(--ink-500)', fontWeight: 400 }}>
+          {steps.length} step{steps.length === 1 ? '' : 's'}
+        </span>
+        <button
+          type="button"
+          className="copy"
+          style={{ marginLeft: 'auto' }}
+          onClick={() => setOpen((o) => !o)}
+        >
+          {open ? 'Hide' : 'Show'}
+        </button>
+      </h3>
+      {open && (
+        <ol
+          style={{
+            display: 'grid',
+            gap: 8,
+            padding: 0,
+            paddingLeft: 24,
+            margin: 0,
+            counterReset: 'step',
+          }}
+        >
+          {steps.map((step, i) => (
+            <li
+              key={`step-${i}`}
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 13,
+                padding: '10px 14px',
+                background: 'var(--paper-100)',
+                border: '1px solid var(--paper-300)',
+                borderRadius: 6,
+                wordBreak: 'break-word',
+              }}
+            >
+              <div style={{ color: 'var(--ink-500)', fontSize: 11, marginBottom: 4 }}>
+                {typeof step.kind === 'string' ? step.kind : 'step'}
+              </div>
+              {chainStepSummary(step)}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function chainStepSummary(step: Record<string, unknown>): string {
+  const kind = typeof step.kind === 'string' ? step.kind : '';
+  switch (kind) {
+    case 'IntroduceAxiom':
+      return typeof step.axiom_name === 'string' ? step.axiom_name : '(unnamed axiom)';
+    case 'IntroduceTheorem':
+      return typeof step.theorem_name === 'string' ? step.theorem_name : '(unnamed theorem)';
+    case 'SubstituteValue':
+      return typeof step.reason === 'string' ? step.reason : 'substitute';
+    case 'AlgebraicSimplify':
+      return 'algebraic simplify';
+    case 'RearrangeEquation':
+      return typeof step.description === 'string' ? step.description : 'rearrange equation';
+    case 'TakePositiveRoot':
+      return '√ (positive root)';
+    default:
+      return JSON.stringify(step).slice(0, 200);
+  }
 }
