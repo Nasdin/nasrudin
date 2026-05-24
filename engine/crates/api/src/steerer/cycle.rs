@@ -611,7 +611,11 @@ impl LlmCaller for GradientCaller {
             model: self.model.clone(),
             system_prompt: system.to_owned(),
             user_prompt: user.to_owned(),
-            max_tokens: 16384,
+            // Kimi K2.5 caps non-streaming at 9000 tokens; K2.6 raised
+            // it but the .env still pins K2.5 on prod. Every cycle was
+            // 400ing with "exceeds the non-streaming limit of 9000".
+            // 8192 leaves headroom and works for both models.
+            max_tokens: 8192,
             temperature: 0.4,
             stop_sequences: vec![],
             response_format: response_format.clone(),
@@ -643,7 +647,11 @@ impl LlmCaller for GradientCaller {
                         model: self.model.clone(),
                         system_prompt: system.to_owned(),
                         user_prompt: user.to_owned(),
-                        max_tokens: 16384,
+                        // Kimi K2.5 caps non-streaming at 9000 tokens; K2.6 raised
+            // it but the .env still pins K2.5 on prod. Every cycle was
+            // 400ing with "exceeds the non-streaming limit of 9000".
+            // 8192 leaves headroom and works for both models.
+            max_tokens: 8192,
                         temperature: 0.4,
                         stop_sequences: vec![],
                         response_format: ResponseFormat::Json {
