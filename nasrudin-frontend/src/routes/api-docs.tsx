@@ -261,7 +261,7 @@ function ApiDocsPage() {
                         fontFamily: 'var(--font-mono)',
                       }}
                     >
-                      10,000
+                      500
                     </td>
                     <td style={{ padding: '12px', textAlign: 'right' }}>—</td>
                   </tr>

@@ -44,7 +44,7 @@ const TIERS: Tier[] = [
       'Download any .lean file & re-verify locally',
       'Save up to 50 theorems',
       'Cite & share via permalinks',
-      '1,000 API requests / day',
+      '500 API requests / day',
     ],
   },
   {

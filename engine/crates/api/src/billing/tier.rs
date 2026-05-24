@@ -38,7 +38,7 @@ impl PlanTier {
     pub fn quotas(self) -> Quotas {
         match self {
             Self::Free => Quotas {
-                api_per_day: 1_000,
+                api_per_day: 500,
                 targeted_searches_per_period: 0,
                 library_max: 50,
                 research_credits_per_period: 0,

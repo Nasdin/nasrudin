@@ -16,14 +16,46 @@ function getTimeAgo(date: Date): string {
   return `${days}d ago`;
 }
 
+// Imported PhysLean / Mathlib rows carry the original Lean qualifier in
+// `origin_payload.Imported.source`. When `latex` is null (true for every
+// imported row), we use the qualifier as the headline instead of feeding
+// the raw S-expression into KaTeX — KaTeX renders that as garbled
+// "math" because the prefix-form `(pi v:Nat (...))` looks like
+// concatenated identifiers, not algebra.
+function importedSource(payload: unknown): string | null {
+  if (payload == null || typeof payload !== 'object') return null;
+  const obj = payload as Record<string, unknown>;
+  const inner = obj.Imported as Record<string, unknown> | undefined;
+  if (!inner) return null;
+  const src = inner.source;
+  return typeof src === 'string' ? src : null;
+}
+function lastSegment(qualified: string): string {
+  const parts = qualified.split('.');
+  return parts[parts.length - 1] ?? qualified;
+}
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return `${s.slice(0, n - 1)}…`;
+}
+
 /** Render a real recent theorem as a "VERIFIED  thm:<id>  <statement>" ticker line. */
 function tickerLineFor(t: {
   id: number[];
   latex?: string | null;
   canonical_statement?: string | null;
+  origin_payload?: unknown;
 }): string {
   const id = bytesToHex(t.id).slice(0, 6);
-  const stmt = (t.latex ?? t.canonical_statement ?? '').toString().slice(0, 80);
+  // Ticker line is one-line text: prefer the Lean qualifier for imports,
+  // then latex, then a truncated canonical-statement preview. KaTeX is
+  // not involved here so the raw text just needs to be short and human-
+  // readable.
+  const imp = importedSource(t.origin_payload);
+  const stmt =
+    (t.latex ?? (imp ? lastSegment(imp) : t.canonical_statement) ?? '')
+      .toString()
+      .slice(0, 80);
   return `VERIFIED  thm:${id}…  ${stmt}`;
 }
 
@@ -64,8 +96,6 @@ export const HeroLiveTheorem = memo(function HeroLiveTheorem() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     let failures = 0;
-    // Use the central API_BASE so the SSR build can't fork off a stale
-    // localhost fallback when VITE_API_URL slips through the env chain.
     const url = `${API_BASE}/api/events/discoveries`;
     let es: EventSource | null;
     try {
@@ -102,15 +132,21 @@ export const HeroLiveTheorem = memo(function HeroLiveTheorem() {
   }, [tickerLines.length]);
 
   const t = shuffledTheorems[idx];
-  const stmt = t?.latex ?? t?.canonical_statement;
   const id = t ? bytesToHex(t.id) : null;
   const domain = t?.domain;
   const generation = t?.generation;
   const verifiedAt = t?.verified_at ? new Date(t.verified_at) : null;
   const timeAgo = verifiedAt ? getTimeAgo(verifiedAt) : null;
+  const importedFrom = t ? importedSource(t.origin_payload) : null;
+  // Display priority: real latex → headlined Lean qualifier (imports) →
+  // truncated canonical preview. The old code fed the s-expression into
+  // KaTeX which is what produced the (pidv:Nat(piv... output the user
+  // flagged.
+  const hasContent =
+    !!t && !!id && (!!t.latex || !!importedFrom || !!t.canonical_statement);
 
   // No real theorem yet → skeleton card. Never invent one.
-  if (!t || !id || !stmt) {
+  if (!t || !id || !hasContent) {
     return (
       <div>
         <div className="theorem-card theorem-card-loading" aria-live="polite">
@@ -155,13 +191,56 @@ export const HeroLiveTheorem = memo(function HeroLiveTheorem() {
             </span>
           </div>
           <div className="theorem-card-body">
-            <div className="theorem-statement">
-              <MathExpr source={stmt} block />
-            </div>
+            {t.latex ? (
+              <div className="theorem-statement">
+                <MathExpr source={t.latex} block />
+              </div>
+            ) : importedFrom ? (
+              <div
+                className="theorem-statement"
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 18,
+                  fontWeight: 600,
+                  textAlign: 'left',
+                  wordBreak: 'break-word',
+                }}
+                title={importedFrom}
+              >
+                {lastSegment(importedFrom)}
+                <div
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    fontWeight: 400,
+                    color: 'var(--ink-500)',
+                    marginTop: 6,
+                    wordBreak: 'break-all',
+                  }}
+                >
+                  {importedFrom}
+                </div>
+              </div>
+            ) : (
+              <pre
+                className="theorem-statement"
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 13,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  textAlign: 'left',
+                  margin: 0,
+                }}
+              >
+                {truncate(t.canonical_statement, 220)}
+              </pre>
+            )}
             <div className="theorem-name">{id}</div>
             <div className="theorem-tag">
               {domain} · gen {generation}
               {timeAgo && <span> · {timeAgo}</span>}
+              {importedFrom && <span> · imported</span>}
             </div>
           </div>
         </div>
