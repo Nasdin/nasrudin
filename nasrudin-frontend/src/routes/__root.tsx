@@ -11,9 +11,15 @@ const ReactQueryDevtools = import.meta.env.DEV
     )
   : null;
 
-import '~/styles/tokens.css';
-import '~/styles/styles.css';
-import '~/styles/platform.css';
+// Bare `import '...css'` no longer reaches the SSR'd HTML in
+// @tanstack/react-start 1.167+ — the build collects the CSS into a
+// hashed asset but the <link rel="stylesheet"> is never injected into
+// <head>, so the entire site loads as unstyled HTML on first paint.
+// Importing as ?url forces Vite to give us the resolved asset URL,
+// which we then declare in `head.links` below so it ships in SSR.
+import tokensCss from '~/styles/tokens.css?url';
+import stylesCss from '~/styles/styles.css?url';
+import platformCss from '~/styles/platform.css?url';
 // KaTeX CSS is loaded by `src/lib/katex-inner.tsx` (lazy) — only routes
 // that actually render math pull it in.
 
@@ -28,7 +34,12 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: 'Nasrudin — derive physics from pure logic' },
     ],
-    links: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+    links: [
+      { rel: 'stylesheet', href: tokensCss },
+      { rel: 'stylesheet', href: stylesCss },
+      { rel: 'stylesheet', href: platformCss },
+      { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+    ],
   }),
   component: RootDocument,
 });
