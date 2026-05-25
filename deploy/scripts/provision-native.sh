@@ -95,7 +95,14 @@ install -d -o nasrudin -g nasrudin "$DATA" "$DATA/rocks" "$DATA/lake-cache"
 log "syncing artifact -> $INSTALL"
 rsync -a --delete "$STAGING/bin/"      "$INSTALL/bin/"
 rsync -a --delete "$STAGING/frontend/" "$INSTALL/frontend/"
-rsync -a --delete "$STAGING/prover/"   "$INSTALL/prover/"
+# --exclude '.lake/' preserves the lake-build cache (Mathlib pkg + every
+# PhysicsGenerator.*.olean we've already compiled) across deploys. Without
+# this, every deploy wipes the cache and the next worker run pays the
+# 30-60 min cold-compile tax on the swap-bound droplet. The staged tar
+# never contains a `.lake/` directory anyway (build-release.sh ships
+# source + lakefile only), so the only material this exclude protects is
+# the runtime build artifacts.
+rsync -a --delete --exclude '.lake/' "$STAGING/prover/"   "$INSTALL/prover/"
 # libonnxruntime.so.* — bundled by build-release.sh from the build
 # container's libonnxruntime-dev. The api + worker binaries link against
 # `libonnxruntime.so.1.21` (soname) at compile time but the dynamic linker
