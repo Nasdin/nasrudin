@@ -537,6 +537,17 @@ pub fn run_discovery_from_population(
         .floor() as usize)
         .min(config.population_size.saturating_sub(1));
 
+    // M1 production-droplet path: once a chain has been Verified AND the
+    // lake budget is exhausted, exit the gen loop immediately so the
+    // worker can submit to /api/ingest without burning ~30s of wasted
+    // mutation/crossover/fitness work on a chunk that's already done.
+    // Gated by `NASRUDIN_EARLY_EXIT_ON_VERIFIED` (default ON, set to "0"
+    // to disable for research runs where statistics across all gens
+    // matter). Read once here so the env lookup doesn't add per-gen cost.
+    let early_exit_on_verified = std::env::var("NASRUDIN_EARLY_EXIT_ON_VERIFIED")
+        .map(|v| v != "0")
+        .unwrap_or(true);
+
     for gen_idx in 0..config.generations {
         report.generations_run = gen_idx + 1;
 
@@ -848,7 +859,19 @@ pub fn run_discovery_from_population(
             }
         }
 
+        // M1 early-exit: see `early_exit_on_verified` declaration above.
+        // Conditions match the production-droplet contract: at least one
+        // chain Verified this chunk AND the lake budget has been fully
+        // spent. We still update `population = offspring;` first so the
+        // final-population snapshot (if `collect_final_population` is
+        // set) reflects the gen that produced the discovery.
         population = offspring;
+        if early_exit_on_verified
+            && !report.verified.is_empty()
+            && report.lake_attempts >= config.max_lake_verifications
+        {
+            break;
+        }
     }
 
     // Track unique executable count.
@@ -1273,6 +1296,128 @@ mod tests {
         );
         // 5 × 2.0 = 10 elites for cluster 0
         assert_eq!(elite_count_with_cluster_multiplier(&cfg, 0), 10);
+    }
+
+    #[test]
+    fn early_exit_fires_when_chain_already_verified() {
+        // M1 production-droplet contract: if a chain has already been
+        // Verified and the lake budget is fully spent, the gen loop must
+        // exit immediately instead of running the remaining gens'
+        // mutation/crossover/fitness churn. We exercise this by seeding
+        // `initial_report.verified` with a fake entry and setting
+        // `max_lake_verifications = 0` so the trigger condition
+        // (`verified non-empty AND lake_attempts >= max`) holds on gen 1.
+        // Ensure env-var gate is ON for this test (default ON; harnesses
+        // may have set it to "0" elsewhere).
+        // SAFETY: env-var mutation in tests is single-threaded under
+        // `cargo test --lib` only when tests don't race for the same
+        // var. We restore the prior value at the end to be courteous to
+        // any test that reads it later.
+        let prior = std::env::var("NASRUDIN_EARLY_EXIT_ON_VERIFIED").ok();
+        // SAFETY: tests in this module don't concurrently mutate this
+        // env var. Restored at end.
+        unsafe {
+            std::env::set_var("NASRUDIN_EARLY_EXIT_ON_VERIFIED", "1");
+        }
+
+        let store = upstream_store();
+        let config = DiscoveryConfig {
+            population_size: 8,
+            // 50 gens: if early-exit DOESN'T fire, the test will run all
+            // 50 (and `generations_run` will be 50). With early-exit, it
+            // should be 1.
+            generations: 50,
+            crossover_rate: 0.6,
+            mutation_rate: 0.7,
+            tournament_size: 3,
+            max_chain_len: 8,
+            prover_root: None,
+            max_lake_verifications: 0,
+            target: None,
+            rejected_canonicals: std::sync::Arc::new(HashSet::new()),
+            cache_ctx: None,
+            novelty_bloom: None,
+            mutation_priors: None,
+            submit_unverified_top_k: 0,
+            dimension_hard_reject: false,
+            dimension_var_dims: std::sync::Arc::new(
+                std::collections::HashMap::new(),
+            ),
+            elaborator: None,
+            suffix_bias: 0.0,
+            elitism_fraction: 0.0,
+            collect_final_population: false,
+            cluster_multipliers: std::collections::HashMap::new(),
+            cluster_assignments: vec![],
+            atom_pool: None,
+            permanent_elite: None,
+        };
+        let mut rng = rand::rng();
+        let mut initial_report = DiscoveryReport::default();
+        // Pre-populate `verified` to simulate "a chain was Verified
+        // upstream of this gen" — same observable state the production
+        // path lands in after a Lake-success on gen 1.
+        initial_report.verified.push(VerifiedDiscovery {
+            chain: nasrudin_derive::Chain::new(),
+            final_expr: nasrudin_core::Expr::Lit(0, 1),
+            canonical: "stub".into(),
+            lean_source: String::new(),
+            module_path: "Stub".into(),
+            generation: 0,
+        });
+        let population = seed_population(&store, &config, &mut rng, &mut initial_report);
+        let report = run_discovery_from_population(
+            &store,
+            &config,
+            population,
+            &mut rng,
+            initial_report,
+        );
+
+        // Early-exit must have fired on gen 1, not run all 50 gens.
+        assert_eq!(
+            report.generations_run, 1,
+            "expected early-exit on gen 1 but got generations_run={}",
+            report.generations_run
+        );
+
+        // Now verify the gate works: with the env var OFF, the loop
+        // should run all 50 gens despite the pre-populated `verified`.
+        // SAFETY: see note above.
+        unsafe {
+            std::env::set_var("NASRUDIN_EARLY_EXIT_ON_VERIFIED", "0");
+        }
+        let mut initial_report2 = DiscoveryReport::default();
+        initial_report2.verified.push(VerifiedDiscovery {
+            chain: nasrudin_derive::Chain::new(),
+            final_expr: nasrudin_core::Expr::Lit(0, 1),
+            canonical: "stub".into(),
+            lean_source: String::new(),
+            module_path: "Stub".into(),
+            generation: 0,
+        });
+        let population2 = seed_population(&store, &config, &mut rng, &mut initial_report2);
+        let report2 = run_discovery_from_population(
+            &store,
+            &config,
+            population2,
+            &mut rng,
+            initial_report2,
+        );
+        assert_eq!(
+            report2.generations_run, 50,
+            "expected all 50 gens when gate is OFF but got generations_run={}",
+            report2.generations_run
+        );
+
+        // Restore the env-var to whatever it was before this test ran.
+        // SAFETY: see note above.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("NASRUDIN_EARLY_EXIT_ON_VERIFIED", v),
+                None => std::env::remove_var("NASRUDIN_EARLY_EXIT_ON_VERIFIED"),
+            }
+        }
     }
 
     #[test]
