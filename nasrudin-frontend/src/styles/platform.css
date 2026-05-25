@@ -441,6 +441,43 @@
 /* Unknown / upstream-only — no link, no underline. */
 .thm-deps-name-unknown { color: var(--ink-700); border-bottom: none; cursor: default; }
 .thm-deps-pending { color: var(--ink-500); border-bottom: none; }
+.thm-deps-explain {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: var(--paper-50);
+  border-left: 3px solid var(--terracotta-300);
+  font-family: var(--font-serif);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-700);
+}
+.thm-deps-explain em { font-style: italic; color: var(--ink-800); }
+.thm-deps-explain strong { font-weight: 600; color: var(--ink-900); }
+.thm-deps-name-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.thm-deps-kind {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.thm-deps-kind-theorem { background: var(--terracotta-50); color: var(--terracotta-700); border: 1px solid var(--terracotta-100); }
+.thm-deps-kind-axiom { background: var(--paper-100); color: var(--ink-700); border: 1px solid var(--paper-300); }
+.thm-deps-kind-definition { background: transparent; color: var(--ink-500); border: 1px solid var(--paper-200); }
+.thm-deps-desc {
+  font-family: var(--font-serif);
+  font-size: 12px;
+  color: var(--ink-600);
+  line-height: 1.45;
+  margin-top: 4px;
+}
 .thm-deps-ns {
   font-family: var(--font-mono);
   font-size: 11px;

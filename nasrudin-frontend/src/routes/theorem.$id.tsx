@@ -8,6 +8,7 @@ import { LineageList } from '~/components/theorem/LineageList';
 import { ProofBlock } from '~/components/theorem/ProofBlock';
 import { SaveButton } from '~/components/theorem/SaveButton';
 import { CitationBlock } from '~/components/theorem/CitationBlock';
+import { DownloadLeanButton } from '~/components/theorem/DownloadLeanButton';
 import { TrustPanel } from '~/components/theorem/TrustPanel';
 import { UpstreamRefsBlock } from '~/components/theorem/UpstreamRefsBlock';
 import { UsedByBlock } from '~/components/theorem/UsedByBlock';
@@ -160,7 +161,14 @@ function TheoremView({ thm }: { thm: Theorem }) {
           <h1 className="thm-name" style={{ margin: 0, wordBreak: 'break-word' }}>
             {displayHeading}
           </h1>
-          <SaveButton theoremIdHex={idHex} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <DownloadLeanButton
+              idHex={idHex}
+              leanSource={thm.lean_source ?? ''}
+              importedFrom={importedFrom}
+            />
+            <SaveButton theoremIdHex={idHex} />
+          </div>
         </div>
         {importedFrom && (
           <div

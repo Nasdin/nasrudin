@@ -35,49 +35,58 @@ function DepRow({ r }: { r: UpstreamRef }) {
   const q = useResolveQualifier(r.qualifier);
   const data = q.data;
 
-  const inner = (() => {
-    if (q.isLoading) {
-      return <span className="thm-deps-name thm-deps-pending">{r.name}</span>;
-    }
-    if (data?.kind === 'theorem') {
-      return (
-        <Link
-          to="/theorem/$id"
-          params={{ id: data.id }}
-          className="thm-deps-name thm-deps-name-theorem"
-          title={`Open theorem: ${r.qualifier}`}
-        >
-          {r.name}
-        </Link>
-      );
-    }
-    if (data?.kind === 'axiom') {
-      return (
-        <Link
-          to="/axiom/$name"
-          params={{ name: data.name }}
-          className="thm-deps-name thm-deps-name-axiom"
-          title={data.description || r.qualifier}
-        >
-          {r.name}
-          <span className="thm-deps-kind" aria-hidden="true">
-            {' '}def
-          </span>
-        </Link>
-      );
-    }
-    // kind === 'none' or query errored — plain text. No fake link.
-    return (
+  let nameEl: React.ReactNode;
+  let kindLabel: string | null = null;
+  let description: string | null = null;
+
+  if (q.isLoading) {
+    nameEl = <span className="thm-deps-name thm-deps-pending">{r.name}</span>;
+  } else if (data?.kind === 'theorem') {
+    kindLabel = 'theorem';
+    nameEl = (
+      <Link
+        to="/theorem/$id"
+        params={{ id: data.id }}
+        className="thm-deps-name thm-deps-name-theorem"
+        title={`Open theorem: ${r.qualifier}`}
+      >
+        {r.name}
+      </Link>
+    );
+  } else if (data?.kind === 'axiom') {
+    kindLabel = 'axiom';
+    description = data.description || null;
+    nameEl = (
+      <Link
+        to="/axiom/$name"
+        params={{ name: data.name }}
+        className="thm-deps-name thm-deps-name-axiom"
+        title={data.description || r.qualifier}
+      >
+        {r.name}
+      </Link>
+    );
+  } else {
+    kindLabel = 'definition';
+    nameEl = (
       <span className="thm-deps-name thm-deps-name-unknown" title={r.qualifier}>
         {r.name}
       </span>
     );
-  })();
+  }
 
   return (
     <div className="thm-deps-row">
-      {inner}
+      <div className="thm-deps-name-line">
+        {nameEl}
+        {kindLabel && (
+          <span className={`thm-deps-kind thm-deps-kind-${kindLabel}`}>
+            {kindLabel}
+          </span>
+        )}
+      </div>
       <span className="thm-deps-ns">{r.namespace}</span>
+      {description && <span className="thm-deps-desc">{description}</span>}
     </div>
   );
 }
@@ -111,6 +120,17 @@ export function UpstreamRefsBlock({ canonical }: UpstreamRefsBlockProps) {
           {refs.length} upstream {refs.length === 1 ? 'definition' : 'definitions'}
         </span>
       </div>
+      <p className="thm-deps-explain">
+        Every named Lean construct the statement above mentions. Each is
+        either a <strong>theorem</strong> Nasrudin has already verified
+        (terracotta — click to open), an <strong>axiom</strong> or
+        <strong> definition</strong> from upstream PhysLean / Mathlib
+        (dark — click for description), or an internal Lean construct
+        we don't index separately (muted). The <em>proof</em> of this
+        theorem is the chain of inferences Lean&nbsp;4's kernel uses to
+        derive the statement from these names; see the Lean source
+        section below to inspect that chain.
+      </p>
       <div className="thm-deps-grid">
         {refs.map((r) => (
           <DepRow key={r.qualifier} r={r} />
