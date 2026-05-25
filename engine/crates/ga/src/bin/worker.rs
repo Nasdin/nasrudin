@@ -519,26 +519,111 @@ async fn main() {
         }
     };
 
-    // Bloom-filter pre-check over the rejected set. The bloom is sized
-    // for ~100k entries with FPR 0.001. CPU-cache-friendly compared to
-    // the HashSet probe, so even when the set is small the check is
+    // ── M3 novelty-vs-catalog filter ─────────────────────────────────
+    //
+    // Before sizing the Bloom, collect the canonical hashes of every
+    // Eq-rooted PhysLean catalog entry so a GA chain that rediscovers
+    // an existing PhysLean theorem is treated as "already known" — no
+    // lake cycles burned, no novelty score awarded.
+    //
+    // Source path: discovered from the prover root (or
+    // `$NASRUDIN_CATALOG_PATH` override) via the standard
+    // `physlean-extract/output/catalog.json` location. Missing file is
+    // OK — workers without a local catalog mirror just fall back to
+    // the cluster-rejected memo.
+    //
+    // Default ON; disable with `NASRUDIN_NOVELTY_VS_CATALOG=0` for
+    // research / regression runs that need a clean slate.
+    let novelty_vs_catalog: bool = std::env::var("NASRUDIN_NOVELTY_VS_CATALOG")
+        .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(true);
+
+    let catalog_canonicals: Vec<Vec<u8>> = if !novelty_vs_catalog {
+        println!("▶ Novelty-vs-catalog filter DISABLED (NASRUDIN_NOVELTY_VS_CATALOG=0)");
+        Vec::new()
+    } else {
+        // Find a local catalog. Priority:
+        //   1. $NASRUDIN_CATALOG_PATH (explicit override),
+        //   2. <prover_root>/../physlean-extract/output/catalog.json
+        //      (mirrors the API server's boot-path resolution),
+        //   3. ./physlean-extract/output/catalog.json (repo-root run).
+        let catalog_path: Option<PathBuf> = std::env::var("NASRUDIN_CATALOG_PATH")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(|| {
+                prover_root.as_ref().map(|p| {
+                    p.join("../physlean-extract/output/catalog.json")
+                })
+            })
+            .or_else(|| {
+                let local = PathBuf::from("physlean-extract/output/catalog.json");
+                if local.exists() { Some(local) } else { None }
+            });
+
+        match catalog_path {
+            Some(path) if path.exists() => {
+                match nasrudin_derive::axiom_store::AxiomStore::collect_catalog_eq_canonicals(&path) {
+                    Ok(hashes) => {
+                        println!(
+                            "▶ Novelty-vs-catalog: {} Eq-rooted PhysLean entries collected from {}",
+                            hashes.len(),
+                            path.display()
+                        );
+                        hashes
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "  ! catalog hash collection failed: {e}; novelty filter falls back to cluster-rejected only"
+                        );
+                        Vec::new()
+                    }
+                }
+            }
+            Some(path) => {
+                eprintln!(
+                    "  ! catalog path resolved to {} but file does not exist; novelty filter falls back to cluster-rejected only",
+                    path.display()
+                );
+                Vec::new()
+            }
+            None => {
+                eprintln!(
+                    "  ! no catalog.json found (set NASRUDIN_CATALOG_PATH or pass --verify <prover>); novelty filter falls back to cluster-rejected only"
+                );
+                Vec::new()
+            }
+        }
+    };
+
+    // Bloom-filter pre-check over the rejected ∪ catalog set. The bloom is
+    // sized for ~100k entries with FPR 0.001. CPU-cache-friendly compared
+    // to the HashSet probe, so even when the set is small the check is
     // faster. Only built when there's something to prepopulate; an
     // empty bloom would always-miss and regress to the HashSet path
-    // anyway. Sized = max(rejected.len() * 4, 4096) so workers in
-    // early-cluster days don't have a near-saturated filter.
+    // anyway. Sized = (catalog_count + rejected_count) * 4, floor 4096,
+    // so workers in early-cluster days don't have a near-saturated filter.
     let novelty_bloom: Option<std::sync::Arc<bloomfilter::Bloom<[u8]>>> = {
-        if rejected_canonicals.is_empty() {
+        let catalog_count = catalog_canonicals.len();
+        let rejected_count = rejected_canonicals.len();
+        let total_unique_estimate = catalog_count + rejected_count;
+        if total_unique_estimate == 0 {
             None
         } else {
-            let n = std::cmp::max(rejected_canonicals.len() * 4, 4096);
+            let n = std::cmp::max(total_unique_estimate * 4, 4096);
             let mut b = bloomfilter::Bloom::new_for_fp_rate(n, 0.001)
                 .expect("bloom params are valid");
+            // Catalog hashes first, then cluster-rejected. Duplicates
+            // are harmless — `set` is idempotent on the bloom — so we
+            // don't bother deduping into a HashSet just to count.
+            for h in &catalog_canonicals {
+                b.set(h.as_slice());
+            }
             for h in rejected_canonicals.iter() {
                 b.set(h.as_slice());
             }
+            let total = catalog_count + rejected_count;
             println!(
-                "▶ Novelty bloom: {} entries pre-loaded (capacity {n}, FPR ~0.1%)",
-                rejected_canonicals.len()
+                "▶ Novelty bloom: {catalog_count} catalog + {rejected_count} cluster-rejected = {total} total hashes (capacity {n}, FPR ~0.1%)"
             );
             Some(std::sync::Arc::new(b))
         }
@@ -733,10 +818,11 @@ async fn main() {
     };
     if let Some(ref elite) = config.permanent_elite {
         println!(
-            "▶ Milestone 1: permanent elite installed ({} steps) — \
-             rest_energy_from_upstream chain locked into every generation. \
+            "▶ Milestone 1: permanent elite installed ({} steps) for target={:?} — \
+             upstream seed chain locked into every generation. \
              Unset NASRUDIN_M1_SEED_ELITE or pass NASRUDIN_M1_SEED_ELITE=0 to disable.",
-            elite.len()
+            elite.len(),
+            target_name_for_elite
         );
     } else {
         println!(
@@ -2005,9 +2091,20 @@ fn arg_value<T: std::str::FromStr>(args: &[String], flag: &str) -> Option<T> {
 /// for the given target, or when the user has set
 /// `NASRUDIN_M1_SEED_ELITE=0` to opt out (M1.d acceptance run).
 ///
-/// Today only `sr_rest_energy` has a registered seed chain
-/// (`Chain::rest_energy_from_upstream`). As Milestone 3 progresses and
-/// more domains get hand-coded baselines, add their mappings here.
+/// Registered seed chains:
+/// - `sr_rest_energy`            → `Chain::rest_energy_from_upstream`
+/// - `qm_planck_einstein`        → `Chain::planck_einstein_from_upstream`
+/// - `thermo_boltzmann_entropy`  → `Chain::boltzmann_entropy_from_upstream`
+///
+/// `em_gauss_law` is intentionally NOT registered: the electromagnetism
+/// upstream store has no `div E`, `rho`, or `VacuumPermittivity` axioms,
+/// so `∇·E = ρ/ε₀` is not derivable from the existing postulate set
+/// without inventing axioms (which would itself be a no-cheat
+/// violation). `thermo_boltzmann_entropy` takes that slot as the M1.b
+/// "second domain" anchor.
+///
+/// As Milestone 3 progresses and more domains get hand-coded baselines,
+/// add their mappings here.
 fn m1_seed_elite_for(target_name: Option<&str>) -> Option<Chain> {
     let enabled = std::env::var("NASRUDIN_M1_SEED_ELITE")
         .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
@@ -2017,6 +2114,10 @@ fn m1_seed_elite_for(target_name: Option<&str>) -> Option<Chain> {
     }
     match target_name {
         Some("sr_rest_energy") => Some(Chain::rest_energy_from_upstream()),
+        Some("qm_planck_einstein") => Some(Chain::planck_einstein_from_upstream()),
+        Some("thermo_boltzmann_entropy" | "boltzmann_entropy") => {
+            Some(Chain::boltzmann_entropy_from_upstream())
+        }
         _ => None,
     }
 }
