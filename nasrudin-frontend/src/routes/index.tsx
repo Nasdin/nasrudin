@@ -10,7 +10,16 @@ import { TheoremBrowser } from '~/components/landing/TheoremBrowser';
 import { WorkerMap } from '~/components/landing/WorkerMap';
 import { useLandingStats, useStats, useWorkers } from '~/lib/queries';
 
-export const Route = createFileRoute('/')({ component: Landing });
+// A no-op loader ensures TanStack Start's async route-match resolver
+// completes before the $_TSR stream-barrier teardown runs on the client,
+// so we never trip `Invariant failed at xe`. The component itself still
+// fetches its stats/workers/funnel data via TanStack Query post-mount —
+// none of that is server-prefetched because the landing page has no
+// path-dependent data that needs to land in SSR HTML.
+export const Route = createFileRoute('/')({
+  loader: async () => null,
+  component: Landing,
+});
 
 function Landing() {
   const stats = useStats();

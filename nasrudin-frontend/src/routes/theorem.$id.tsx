@@ -12,21 +12,44 @@ import { UpstreamRefsBlock } from '~/components/theorem/UpstreamRefsBlock';
 import { WrappedStatement } from '~/components/theorem/WrappedStatement';
 import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { VerifyWithLakeButton } from '~/components/theorem/VerifyWithLakeButton';
+import { apiFetch } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
 import { leanToHumanTitle } from '~/lib/humanTitle';
-import { Math as MathExpr } from '~/lib/katex';
 import { displayLeanName as lastSegment } from '~/lib/leanNames';
 import { leanToSymbols } from '~/lib/physicsSymbols';
-import { useTheorem } from '~/lib/queries';
 import { statementToLatex } from '~/lib/statementToLatex';
 import { statementToProse } from '~/lib/statementToProse';
 import type { Theorem } from '~/lib/types';
 
-export const Route = createFileRoute('/theorem/$id')({ component: TheoremPage });
+// SSR-side prefetch via TanStack Start `loader`. The previous version did
+// the fetch client-side via `useTheorem`, which TanStack Start runs
+// during the async route-match step alongside hydration. When the fetch
+// took long enough that hydration completed first, `es()` checked
+// `window.$_TSR` (already deleted by the now-finished hydration barrier)
+// and threw `Invariant failed at xe` — producing intermittent blank
+// pages. Fetching in the loader lets the server resolve the data before
+// it ever ships HTML, so hydration starts with `data` already in hand
+// and the route-match resolver doesn't race with $_TSR cleanup.
+export const Route = createFileRoute('/theorem/$id')({
+  loader: async ({ params }) =>
+    apiFetch<Theorem>(`/api/theorems/${params.id}`),
+  component: TheoremPage,
+  errorComponent: ({ error }) => (
+    <div className="app">
+      <AppHeader active="theorem" />
+      <div className="container-wide" style={{ paddingTop: 24 }}>
+        <p style={{ color: 'var(--danger-500)' }}>
+          Theorem not found: {error.message}
+        </p>
+      </div>
+      <AppFooter />
+    </div>
+  ),
+});
 
 function TheoremPage() {
   const { id } = Route.useParams();
-  const { data, isPending, error } = useTheorem(id);
+  const data = Route.useLoaderData();
 
   return (
     <div className="app">
@@ -37,9 +60,7 @@ function TheoremPage() {
           <span className="sep">/</span>
           <span className="current">thm:{id.slice(0, 8)}</span>
         </div>
-        {isPending && <p>loading…</p>}
-        {error && <p style={{ color: 'var(--danger-500)' }}>Theorem not found.</p>}
-        {data && <TheoremView thm={data} />}
+        <TheoremView thm={data} />
       </div>
       <AppFooter />
     </div>
