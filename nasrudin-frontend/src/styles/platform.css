@@ -361,6 +361,203 @@
   text-transform: none;
 }
 
+/* Trust panel — replaces the bare "Proof lineage" hash list for imported
+ * theorems. Layout: heading row with inline What-is-Lean chip, a vertical
+ * bulleted trust list, a row of action buttons, and a hidden-by-default
+ * source / hash drawer beneath. */
+.trust-panel {
+  background: var(--bg-raised);
+  border: 1px solid var(--paper-200);
+  border-radius: var(--radius-lg);
+  padding: 28px 32px;
+}
+.trust-panel h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--ink-900);
+}
+.trust-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 24px;
+  display: grid;
+  gap: 12px;
+}
+.trust-list li {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 12px;
+  align-items: start;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink-700);
+}
+.trust-list strong { color: var(--ink-900); font-weight: 600; }
+.trust-mark {
+  color: var(--olive-700);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.trust-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--terracotta-700);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--terracotta-100);
+}
+.trust-toggle:hover { text-decoration-color: var(--terracotta-300); }
+.trust-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.trust-source {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border: 1px dashed var(--paper-300);
+  border-radius: 8px;
+  background: var(--paper-50);
+}
+.trust-source-status {
+  font-size: 13px;
+  color: var(--ink-500);
+  font-style: italic;
+}
+.trust-source-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-500);
+}
+.trust-source-bar-actions { display: flex; gap: 8px; }
+.trust-source-pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 14px 16px;
+  background: var(--ink-900);
+  color: var(--paper-50);
+  border-radius: 6px;
+  overflow: auto;
+  white-space: pre;
+}
+.trust-hashes {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--ink-600);
+}
+.trust-hashes summary {
+  cursor: pointer;
+  color: var(--ink-500);
+  font-family: var(--font-sans);
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  font-weight: 600;
+  font-size: 11px;
+}
+.trust-hashes ol {
+  margin: 10px 0 0;
+  padding-left: 24px;
+  display: grid;
+  gap: 4px;
+}
+
+/* What-is-Lean inline chip + expanded bubble. */
+.what-is-lean {
+  display: inline-flex;
+  align-items: baseline;
+  position: relative;
+}
+.what-is-lean-trigger {
+  background: var(--paper-100);
+  border: 1px solid var(--paper-300);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  color: var(--ink-700);
+  cursor: pointer;
+}
+.what-is-lean-trigger:hover {
+  background: var(--paper-200);
+  border-color: var(--ink-300);
+}
+.what-is-lean-bubble {
+  display: block;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  max-width: 480px;
+  z-index: 5;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.55;
+  color: var(--ink-700);
+  background: var(--bg-raised);
+  border: 1px solid var(--paper-300);
+  border-radius: 8px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow-md);
+}
+.what-is-lean-bubble a {
+  color: var(--terracotta-700);
+  text-decoration-color: var(--terracotta-100);
+}
+
+/* Reusable monospaced inline pill — used inside the trust panel for
+ * Lean qualifiers, hashes, and CLI snippets. */
+.mono-pill {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--paper-100);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--paper-200);
+  color: var(--ink-800);
+  word-break: break-all;
+}
+.mono-pill-sm { font-size: 11px; padding: 0 4px; }
+
+/* Tech-details disclosure in the sidebar. */
+.thm-tech {
+  margin-top: 24px;
+  border-top: 1px dashed var(--paper-300);
+  padding-top: 16px;
+}
+.thm-tech > summary {
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  color: var(--ink-500);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.thm-tech .meta-list { margin: 0; }
+
 /* Plain-English summary box that sits above the formal statement. */
 .thm-prose {
   background: var(--paper-50);

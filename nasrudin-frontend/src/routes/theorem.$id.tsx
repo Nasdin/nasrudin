@@ -1,3 +1,4 @@
+import { useQueries } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
@@ -7,8 +8,10 @@ import { DomainBadge } from '~/components/theorem/DomainBadge';
 import { LineageList } from '~/components/theorem/LineageList';
 import { ProofBlock } from '~/components/theorem/ProofBlock';
 import { SaveButton } from '~/components/theorem/SaveButton';
+import { TrustPanel } from '~/components/theorem/TrustPanel';
 import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { VerifyWithLakeButton } from '~/components/theorem/VerifyWithLakeButton';
+import { apiFetch } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
 import { leanToHumanTitle } from '~/lib/humanTitle';
 import { Math as MathExpr } from '~/lib/katex';
@@ -161,61 +164,118 @@ function TheoremView({ thm }: { thm: Theorem }) {
           </div>
         )}
         <ChainStepsSection chainJson={thm.chain_json} />
-        {isImported && !thm.lean_source && (
-          <div className="thm-section">
-            <h3>Source</h3>
-            <p style={{ color: 'var(--ink-600)', lineHeight: 1.6 }}>
-              This theorem was imported from{' '}
-              <strong>
-                {thm.engine_git_sha === 'physlean'
-                  ? 'PhysLean'
-                  : importedFrom?.startsWith('PhysLean')
-                    ? 'PhysLean'
-                    : 'Mathlib'}
-              </strong>
-              . The original Lean 4 declaration{' '}
-              <code style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{importedFrom}</code>{' '}
-              is part of the upstream library and is accepted by Lean's kernel there. Nasrudin
-              indexes it so GA-discovered chains that depend on it can reference a real Lean
-              identifier; we do not re-prove it locally.
-            </p>
-          </div>
+        {isImported && importedFrom ? (
+          <TrustPanelSection importedFrom={importedFrom} parentHexes={parentHexes} />
+        ) : (
+          parentHexes.length > 0 && (
+            <div className="thm-section">
+              <h3>Proof lineage</h3>
+              <LineageList parents={parentHexes} />
+            </div>
+          )
         )}
-        <div className="thm-section">
-          <h3>Proof lineage</h3>
-          <LineageList parents={parentHexes} />
-        </div>
       </div>
       <aside className="thm-side">
         <h4>Provenance</h4>
         <ul className="meta-list">
           <li>
-            Worker <strong style={{ fontFamily: 'var(--font-mono)' }}>{thm.contributor_id}</strong>
-          </li>
-          {thm.user_email && (
-            <li>
-              User <strong style={{ fontFamily: 'var(--font-mono)' }}>{thm.user_email}</strong>
-            </li>
-          )}
-          <li>
-            Generation <strong>{thm.generation ?? 0}</strong>
-          </li>
-          <li>
-            Depth <strong>{thm.depth ?? 0}</strong>
-          </li>
-          <li>
             Domain <strong>{thm.domain}</strong>
+          </li>
+          <li>
+            Origin{' '}
+            <strong>
+              {isImported ? 'Imported (PhysLean)' : `GA-discovered (gen ${thm.generation ?? 0})`}
+            </strong>
           </li>
           <li>
             Created <strong>{new Date(thm.created_at).toLocaleString()}</strong>
           </li>
-          <li>
-            Full ID{' '}
-            <strong style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{idHex}</strong>
-          </li>
         </ul>
+        <TechDetails thm={thm} idHex={idHex} />
       </aside>
     </div>
+  );
+}
+
+// For imported theorems we collapse the redundant "Source" + "Proof
+// lineage" pair into a single TrustPanel that answers what a non-Lean
+// professor actually wants: who attests this, where to read the upstream
+// Lean source, how to verify yourself in 30 s. The lineage hashes are
+// still available behind a "Show dependency hashes" toggle inside the
+// trust panel for Lean users.
+//
+// To decide whether to mark the dependency tree as "100% upstream" we
+// probe each parent's /api/theorems/<hex> in parallel — if every probe
+// 404s, every dependency is an upstream namespace reference and we can
+// safely say so.
+function TrustPanelSection({
+  importedFrom,
+  parentHexes,
+}: {
+  importedFrom: string;
+  parentHexes: string[];
+}) {
+  const queries = useQueries({
+    queries: parentHexes.map((h) => ({
+      queryKey: ['theorem', h] as const,
+      queryFn: () => apiFetch<Theorem>(`/api/theorems/${h}`),
+      staleTime: 10 * 60_000,
+      retry: false,
+    })),
+  });
+  const allDone = queries.every((q) => !q.isLoading);
+  const allParentsUpstream = allDone && queries.every((q) => !!q.error || !q.data);
+
+  return (
+    <div className="thm-section">
+      <TrustPanel
+        importedFrom={importedFrom}
+        parentHexes={parentHexes}
+        allParentsUpstream={allParentsUpstream}
+      />
+    </div>
+  );
+}
+
+// Tech-details panel — the things only a Lean / Nasrudin engineer cares
+// about. Hidden behind a disclosure so the sidebar's default state is
+// dominated by Domain / Origin / Created, not by hashes and worker ids.
+function TechDetails({ thm, idHex }: { thm: Theorem; idHex: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="thm-tech"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary>Tech details</summary>
+      <ul className="meta-list">
+        <li>
+          Worker <strong style={{ fontFamily: 'var(--font-mono)' }}>{thm.contributor_id}</strong>
+        </li>
+        {thm.user_email && (
+          <li>
+            User <strong style={{ fontFamily: 'var(--font-mono)' }}>{thm.user_email}</strong>
+          </li>
+        )}
+        <li>
+          Generation <strong>{thm.generation ?? 0}</strong>
+        </li>
+        <li>
+          Depth <strong>{thm.depth ?? 0}</strong>
+        </li>
+        <li>
+          Tactic <strong>{thm.verification_tactic ?? '—'}</strong>
+        </li>
+        <li>
+          Engine SHA{' '}
+          <strong style={{ fontFamily: 'var(--font-mono)' }}>{thm.engine_git_sha}</strong>
+        </li>
+        <li>
+          Full ID <strong style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{idHex}</strong>
+        </li>
+      </ul>
+    </details>
   );
 }
 
