@@ -429,6 +429,211 @@ function nameAppearsIn(n: Node, name: string): boolean {
 
 // ─── Public entry ───────────────────────────────────────────────────────────
 
+// ─── Segmented (wrappable) statement renderer ───────────────────────────────
+//
+// `statementToLatex` returns a single LaTeX string. KaTeX renders that string
+// as one `display: inline-block` element which the browser does not wrap, so
+// long ∀-chained statements overflow the page horizontally. To get genuine
+// word-wrapping we instead emit the statement as an alternating sequence of
+// math chunks (each a tiny KaTeX-renderable LaTeX string) and plain-text
+// connectors. The renderer drops each math chunk into its own `<MathExpr>`
+// and the browser wraps between them at the connector text exactly the same
+// way it wraps a sentence.
+
+export type StatementChunk =
+  | { kind: 'math'; latex: string }
+  | { kind: 'text'; text: string };
+
+export interface StatementSegments {
+  chunks: StatementChunk[];
+  /** Same semantics as `StatementLatex.complete`. */
+  complete: boolean;
+}
+
+function chunkAtom(value: string): StatementChunk {
+  return { kind: 'math', latex: renderAtom(value) };
+}
+
+function emitChunks(n: Node, ctx: Ctx, out: StatementChunk[]) {
+  // Π-chain: emit each binder group as its own math chunk, with comma /
+  // space text between so the browser has a wrap point. The trailing body
+  // recursively emits its own chunks.
+  if (n.kind === 'list' && n.head === 'pi' && n.items.length === 4) {
+    const { groups, body } = collectBinders(n, 'pi');
+    const cleaned = groups.filter((g) => !g.names.every(isHygenic));
+    const dropped = groups.length - cleaned.length;
+    if (dropped > 0) ctx.setIncomplete();
+
+    // Unused single binder → render as `A → B` directly.
+    if (cleaned.length === 1) {
+      const g0 = cleaned[0];
+      if (g0 && g0.names.length === 1) {
+        const onlyName = g0.names[0];
+        if (onlyName && !nameAppearsIn(body, onlyName)) {
+          out.push({ kind: 'math', latex: emitNode(g0.type, ctx) });
+          out.push({ kind: 'text', text: ' → ' });
+          emitChunks(body, ctx, out);
+          return;
+        }
+      }
+    }
+
+    if (cleaned.length === 0) {
+      emitChunks(body, ctx, out);
+      return;
+    }
+
+    cleaned.forEach((g, i) => {
+      const names = g.names.map(escapeIdent).join(',\\, ');
+      const piece = `\\forall\\, ${names} : ${emitNode(g.type, ctx)}`;
+      out.push({ kind: 'math', latex: piece });
+      // Comma between binder groups, period before the body.
+      out.push({
+        kind: 'text',
+        text: i + 1 < cleaned.length ? ', ' : '. ',
+      });
+    });
+    emitChunks(body, ctx, out);
+    return;
+  }
+
+  // Top-level arrow / iff / equality / comparison: split around the
+  // operator so the two sides become independent chunks with a text
+  // connector. These are the most common natural wrap points in formal
+  // statements ("antecedent → consequent", "lhs = rhs").
+  if (n.kind === 'list' && n.items.length === 3) {
+    const op = n.head;
+    const left = n.items[1];
+    const right = n.items[2];
+    if (left && right) {
+      if (op === '->') {
+        emitChunks(left, ctx, out);
+        out.push({ kind: 'text', text: ' → ' });
+        emitChunks(right, ctx, out);
+        return;
+      }
+      if (op === '<->') {
+        emitChunks(left, ctx, out);
+        out.push({ kind: 'text', text: ' ⇔ ' });
+        emitChunks(right, ctx, out);
+        return;
+      }
+      if (op === '=' || op === '<' || op === '>' || op === '<=' || op === '>=') {
+        const sym =
+          op === '<=' ? ' ≤ ' : op === '>=' ? ' ≥ ' : ` ${op} `;
+        emitChunks(left, ctx, out);
+        out.push({ kind: 'text', text: sym });
+        emitChunks(right, ctx, out);
+        return;
+      }
+    }
+  }
+
+  // Bare atom — wrap as a single math chunk.
+  if (n.kind === 'atom') {
+    out.push(chunkAtom(n.value));
+    return;
+  }
+
+  // Fall-through: render the whole subtree as one math chunk. It won't
+  // wrap internally, but the surrounding text connectors above will keep
+  // it from being the entire statement.
+  out.push({ kind: 'math', latex: emitNode(n, ctx) });
+}
+
+export function statementToSegments(canonical: string): StatementSegments {
+  if (!canonical || !canonical.trim()) {
+    return { chunks: [], complete: false };
+  }
+  const tokens = tokenize(canonical);
+  const { node, complete: parseOk } = parse(tokens);
+  if (!node) return { chunks: [], complete: false };
+  let renderOk = true;
+  const ctx: Ctx = {
+    setIncomplete: () => {
+      renderOk = false;
+    },
+  };
+  const chunks: StatementChunk[] = [];
+  try {
+    emitChunks(node, ctx, chunks);
+  } catch {
+    return { chunks: [], complete: false };
+  }
+  return { chunks, complete: parseOk && renderOk };
+}
+
+/** A single upstream constant referenced inside a theorem's canonical
+ *  statement — e.g. the timelike-dominance theorem references
+ *  `Lorentz.Vector`, `Lorentz.Vector.causalCharacter`,
+ *  `Inner.inner`, etc. The TrustPanel uses this to render "this
+ *  theorem is built atop these named upstream definitions" instead of
+ *  the useless list of SHA hashes from the `parents` field. */
+export interface UpstreamRef {
+  /** The full Lean qualifier as it appears in the AST, e.g.
+   *  `Lorentz.Vector.causalCharacter`. */
+  qualifier: string;
+  /** The display name (last `.`-segment, with snake_case kept). */
+  name: string;
+  /** Everything before the last segment, dot-joined. Empty when the
+   *  reference has no namespace (e.g. `Real`, `Nat`). */
+  namespace: string;
+}
+
+// Identifiers we don't surface — Lean type universes (`Type`, `Sort`,
+// `Prop`), Mathlib's foundational primitives, and a handful of always-
+// present helper traits that ship with virtually every statement and
+// add zero signal to the user.
+const REF_IGNORE = new Set([
+  'Sort',
+  'Type',
+  'Prop',
+  'Nat',
+  'Int',
+  'Real',
+  'Complex',
+  'Rat',
+  'Bool',
+  'True',
+  'False',
+  // `<sort>` token from the serialiser.
+  '<sort>',
+]);
+
+function walkRefs(n: Node, out: Map<string, UpstreamRef>) {
+  if (n.kind === 'atom') {
+    if (n.value.startsWith('v:')) {
+      const inner = n.value.slice(2);
+      const dot = inner.lastIndexOf('.');
+      // Only include references that have a real namespace prefix —
+      // bare bound-variable references (`v:d`, `v:x`) come from Π/λ
+      // binders and aren't dependencies on upstream constants.
+      if (dot > 0) {
+        const namespace = inner.slice(0, dot);
+        const name = inner.slice(dot + 1);
+        if (!REF_IGNORE.has(inner) && !REF_IGNORE.has(name)) {
+          out.set(inner, { qualifier: inner, name, namespace });
+        }
+      }
+    }
+    return;
+  }
+  for (const c of n.items) walkRefs(c, out);
+}
+
+/** Extract every namespaced upstream constant referenced inside the
+ *  canonical statement. De-duplicated and sorted by qualifier so the
+ *  TrustPanel's display order is stable. */
+export function collectUpstreamRefs(canonical: string): UpstreamRef[] {
+  if (!canonical || !canonical.trim()) return [];
+  const tokens = tokenize(canonical);
+  const { node } = parse(tokens);
+  if (!node) return [];
+  const out = new Map<string, UpstreamRef>();
+  walkRefs(node, out);
+  return [...out.values()].sort((a, b) => a.qualifier.localeCompare(b.qualifier));
+}
+
 export function statementToLatex(canonical: string): StatementLatex {
   if (!canonical || !canonical.trim()) {
     return { latex: '', complete: false };

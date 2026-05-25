@@ -1,10 +1,9 @@
 import { Link } from '@tanstack/react-router';
 import { memo, useEffect, useMemo, useState } from 'react';
+import { WrappedStatement } from '~/components/theorem/WrappedStatement';
 import { API_BASE } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
-import { Math as MathExpr } from '~/lib/katex';
 import { useRecentTheorems } from '~/lib/queries';
-import { statementToLatex } from '~/lib/statementToLatex';
 
 function getTimeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -49,11 +48,17 @@ function HeroStatement({
   canonical: string;
   importedFrom: string | null;
 }) {
-  const src = latex ?? statementToLatex(canonical).latex;
-  if (src && src.trim().length > 0) {
+  // WrappedStatement splits at Π-binders + top-level operators so long
+  // ∀-chained formulas wrap line-by-line inside the card instead of
+  // overflowing horizontally.
+  if (latex || canonical) {
     return (
       <div className="theorem-statement">
-        <MathExpr source={src} block />
+        <WrappedStatement
+          serverLatex={latex}
+          canonical={canonical}
+          size="inline"
+        />
       </div>
     );
   }

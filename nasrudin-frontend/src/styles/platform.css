@@ -307,13 +307,17 @@
 
 .thm-page {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: minmax(0, 1fr) 320px;
   gap: 48px;
 }
-.thm-main {}
+/* `min-width: 0` on the main column lets long unbreakable strings inside
+ * (LaTeX, prose, dependency-qualifier code spans) wrap instead of pushing
+ * the grid track wider than 1fr and clipping the right edge. */
+.thm-main { min-width: 0; }
 .thm-side {
   border-left: 1px dashed var(--paper-300);
   padding-left: 32px;
+  min-width: 0;
 }
 .thm-eyebrow {
   display: flex;
@@ -359,6 +363,97 @@
   font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
+}
+
+/* "Built from" — sits right under the formal statement and lists the
+ * upstream constants the theorem references by Lean qualifier. Each row
+ * is the human-readable display name, the namespace as subtle context,
+ * and a click-through GitHub-search link. Replaces "12 unclickable
+ * SHA hashes" with "12 named definitions/axioms you can actually read". */
+.thm-deps {
+  margin: 0 0 32px;
+  padding: 18px 22px;
+  background: var(--paper-50);
+  border: 1px solid var(--paper-200);
+  border-radius: 8px;
+}
+.thm-deps-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  color: var(--ink-500);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.thm-deps-count {
+  font-weight: 400;
+  color: var(--ink-400);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.thm-deps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 6px 24px;
+}
+.thm-deps-row {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0;
+  min-width: 0;
+}
+.thm-deps-name {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--ink-900);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--paper-300);
+  padding-bottom: 1px;
+  width: fit-content;
+  max-width: 100%;
+}
+.thm-deps-name:hover { border-bottom-color: var(--terracotta-500); }
+.thm-deps-ext {
+  font-size: 10px;
+  color: var(--ink-500);
+  margin-left: 2px;
+}
+.thm-deps-ns {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-500);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.thm-deps-hashes {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--ink-500);
+}
+.thm-deps-hashes summary {
+  cursor: pointer;
+  font-family: var(--font-sans);
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-500);
+}
+.thm-deps-hashes ol {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+}
+.thm-deps-hashes li code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-500);
 }
 
 /* Trust panel — replaces the bare "Proof lineage" hash list for imported
@@ -527,7 +622,10 @@
 }
 
 /* Reusable monospaced inline pill — used inside the trust panel for
- * Lean qualifiers, hashes, and CLI snippets. */
+ * Lean qualifiers, hashes, and CLI snippets. The `git clone && lake
+ * build` reproducibility one-liner is long; without `overflow-wrap:
+ * anywhere` it stretches the trust panel and the surrounding column
+ * past the viewport edge. */
 .mono-pill {
   font-family: var(--font-mono);
   font-size: 13px;
@@ -537,8 +635,15 @@
   border: 1px solid var(--paper-200);
   color: var(--ink-800);
   word-break: break-all;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  /* Render inline-block so the pill participates in line wrapping rather
+   * than acting as one unbreakable token. */
+  display: inline;
 }
 .mono-pill-sm { font-size: 11px; padding: 0 4px; }
+.trust-list li > div { min-width: 0; overflow-wrap: anywhere; }
+.thm-name { overflow-wrap: anywhere; }
 
 /* Tech-details disclosure in the sidebar. */
 .thm-tech {
@@ -569,7 +674,14 @@
   font-size: 17px;
   line-height: 1.55;
   color: var(--ink-800);
+  /* Force long unbreakable tokens (e.g. `someVeryLongIdentifierName`) to
+   * wrap inside the box so the prose can't push the main column past its
+   * grid track width. Without this the box overflows past the right edge
+   * and clips. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
+.thm-prose code, .thm-prose strong { overflow-wrap: anywhere; }
 .thm-prose-eyebrow {
   display: block;
   font-family: var(--font-sans);
@@ -596,14 +708,43 @@
   padding: 48px 32px;
   margin-bottom: 32px;
   text-align: center;
+  max-width: 100%;
 }
-.thm-statement-big {
+/* WrappedStatement — alternating math chunks + plain-text connectors so
+ * the browser can wrap a long formula between chunks the same way it
+ * wraps a sentence with embedded inline math. The `wrapped-statement`
+ * container is regular block flow with normal whitespace; the math
+ * chunks are inline `<MathExpr>` (KaTeX inline mode) and the text
+ * connectors are plain `<span>` so they become natural break points. */
+.wrapped-statement {
+  display: block;
+  text-align: center;
+  line-height: 1.7;
+  word-spacing: 2px;
+  /* Wrapping is the entire point — no nowrap, no overflow-hidden. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.wrapped-statement-big {
   font-family: "STIX Two Math", "Source Serif 4", serif;
   font-style: italic;
-  font-size: 38px;
+  font-size: clamp(20px, 2.2vw, 28px);
   color: var(--ink-900);
-  line-height: 1.4;
-  font-weight: 400;
+}
+.wrapped-statement-inline {
+  font-family: "STIX Two Math", "Cambria Math", "Source Serif 4", serif;
+  font-style: italic;
+  font-size: clamp(15px, 1.6vw, 19px);
+  color: var(--ink-900);
+}
+.wrapped-statement-math { display: inline; white-space: normal; }
+.wrapped-statement-sep {
+  display: inline;
+  white-space: normal;
+  font-style: normal;
+  color: var(--ink-700);
+  padding: 0 1px;
 }
 .thm-statement-big sup, .thm-statement-big sub { font-size: 0.55em; }
 .thm-statement-big .op { font-style: normal; padding: 0 6px; }

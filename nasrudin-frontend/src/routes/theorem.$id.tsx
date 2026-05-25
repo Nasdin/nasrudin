@@ -8,6 +8,8 @@ import { LineageList } from '~/components/theorem/LineageList';
 import { ProofBlock } from '~/components/theorem/ProofBlock';
 import { SaveButton } from '~/components/theorem/SaveButton';
 import { TrustPanel } from '~/components/theorem/TrustPanel';
+import { UpstreamRefsBlock } from '~/components/theorem/UpstreamRefsBlock';
+import { WrappedStatement } from '~/components/theorem/WrappedStatement';
 import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { VerifyWithLakeButton } from '~/components/theorem/VerifyWithLakeButton';
 import { bytesToHex } from '~/lib/hex';
@@ -128,6 +130,7 @@ function TheoremView({ thm }: { thm: Theorem }) {
         <div className="thm-statement-block">
           <StatementRender thm={thm} />
         </div>
+        <UpstreamRefsBlock canonical={thm.canonical_statement} />
         {(thm.lean_source || !isImported) && (
           <div className="thm-section">
             <h3>Lean 4 proof</h3>
@@ -166,17 +169,11 @@ function TheoremView({ thm }: { thm: Theorem }) {
           <div className="thm-section">
             <TrustPanel
               importedFrom={importedFrom}
-              parentHexes={parentHexes}
               // Imported PhysLean rows have purely upstream parents — the
-              // `parents` array is filled with hashes of upstream axiom /
-              // type-definition references that don't appear as
-              // navigable theorem rows in our DB. `engine_git_sha`
-              // tells us the row came from the physlean importer, so
-              // every dependency is by construction upstream. We avoid
-              // probing /api/theorems/<hash> for each parent here on
-              // purpose: doing N parallel fetches during route-match
-              // delays hydration past TanStack Start's $_TSR stream
-              // barrier and trips a router invariant.
+              // `engine_git_sha` field is the source of truth for that.
+              // The named-dependency list lives in <UpstreamRefsBlock />
+              // right under the formal statement; this panel only carries
+              // the trust narrative.
               allParentsUpstream={thm.engine_git_sha === 'physlean'}
             />
           </div>
@@ -262,19 +259,23 @@ function TechDetails({ thm, idHex }: { thm: Theorem; idHex: string }) {
 function StatementRender({ thm }: { thm: Theorem }) {
   const [showKernel, setShowKernel] = useState(false);
 
+  // Probe the segmented renderer to decide whether we can show math at all.
+  // If even the segments are empty (truly unparseable), drop straight to
+  // the AST fallback.
   const rendered = thm.latex
     ? { latex: thm.latex, complete: true }
     : statementToLatex(thm.canonical_statement);
-
   const canShowLatex = rendered.latex.trim().length > 0;
   const rawAst = leanToSymbols(thm.canonical_statement);
 
   return (
     <div>
       {canShowLatex ? (
-        <div className="thm-statement-big">
-          <MathExpr source={rendered.latex} block />
-        </div>
+        <WrappedStatement
+          serverLatex={thm.latex ?? null}
+          canonical={thm.canonical_statement}
+          size="big"
+        />
       ) : (
         <pre
           style={{

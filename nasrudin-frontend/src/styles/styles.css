@@ -144,11 +144,12 @@ a { color: inherit; }
 }
 .hero-grid {
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
   gap: 64px;
   align-items: start;
   position: relative;
 }
+.hero-grid > * { min-width: 0; }
 .hero-eyebrow {
   display: inline-flex;
   align-items: center;
@@ -350,31 +351,20 @@ a { color: inherit; }
   padding: 28px 24px 8px;
 }
 .theorem-statement {
-  font-family: "STIX Two Math", "Cambria Math", "Source Serif 4", serif;
-  font-size: clamp(16px, 2.4vw, 22px);
-  line-height: 1.4;
   color: var(--ink-900);
   text-align: center;
   padding: 16px 12px;
-  height: 140px;
+  /* Box grows vertically as the wrapped formula occupies more lines. */
+  min-height: 140px;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  font-style: italic;
-  font-weight: 400;
-}
-.theorem-statement > * {
+  min-width: 0;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Inner content (`<WrappedStatement>`) is responsible for sizing,
+   * font, and line-wrap. Keep this container layout-only. */
 }
-.theorem-statement .katex-display,
-.theorem-statement .katex {
-  max-width: 100%;
-  overflow: hidden;
-  margin: 0;
-}
+.theorem-statement > * { max-width: 100%; }
 .theorem-statement .var { font-style: italic; }
 .theorem-statement .op { font-style: normal; padding: 0 4px; }
 .theorem-name {
