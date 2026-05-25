@@ -1,10 +1,57 @@
 //! Shared application state.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, RwLock};
 
 use nasrudin_derive::AxiomStore;
 use nasrudin_ga::{DiscoveryEvent, GaStatusSnapshot};
 use nasrudin_rocks::TheoremDb;
+
+/// Set of canonical hashes (8-byte xxhash64 LE) for every Eq-rooted
+/// PhysLean catalog entry. Populated at API boot via
+/// [`AxiomStore::collect_catalog_eq_canonicals`]; used by the
+/// `/api/discoveries/novel` handler to reject GA-derived theorems whose
+/// canonical statement already lives in the imported catalog (M3
+/// acceptance criterion: a discovery is "novel" iff its canonical_hash
+/// does NOT appear in this set).
+///
+/// Empty when the catalog file is missing at boot — the handler then
+/// degrades to "every non-imported GA theorem is novel", which is a
+/// permissive fallback rather than an incorrect rejection.
+#[derive(Debug, Clone, Default)]
+pub struct CatalogHashSet {
+    /// HashSet over 8-byte canonical hashes. Cloned-into from a `Vec`
+    /// once at boot; reads are `O(1)` membership checks per row.
+    pub hashes: Arc<HashSet<Vec<u8>>>,
+}
+
+impl CatalogHashSet {
+    /// Build from a `Vec<Vec<u8>>` (the shape
+    /// `AxiomStore::collect_catalog_eq_canonicals` returns).
+    pub fn from_vec(v: Vec<Vec<u8>>) -> Self {
+        Self {
+            hashes: Arc::new(v.into_iter().collect()),
+        }
+    }
+
+    /// Empty (no catalog available at boot) — every row is treated as
+    /// novel by the handler.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn len(&self) -> usize {
+        self.hashes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty()
+    }
+
+    pub fn contains(&self, hash: &[u8]) -> bool {
+        self.hashes.contains(hash)
+    }
+}
 
 /// Hot-swappable AxiomStore handle.
 ///
@@ -205,6 +252,16 @@ pub struct AppState {
         uuid::Uuid,
         crate::admin::bulk_runner::BulkProgress,
     )>,
+    /// Pre-built set of canonical hashes for every Eq-rooted PhysLean
+    /// catalog entry. Built at boot from
+    /// `physlean-extract/output/catalog.json` (path discovery mirrors
+    /// the worker — `NASRUDIN_CATALOG_PATH` → `<prover_root>/..` →
+    /// repo-root). Used by `/api/discoveries/novel` (M3) to reject
+    /// GA-derived theorems that merely rediscover something already in
+    /// the catalog. Empty when the catalog file is missing — the
+    /// endpoint then degrades to returning all non-imported GA
+    /// theorems.
+    pub catalog_hashes: CatalogHashSet,
 }
 
 /// Cache key for the `/api/seed` JSON response cache. Distinct

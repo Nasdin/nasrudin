@@ -263,6 +263,7 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         ),
         trust_invalidation_tx: tokio::sync::broadcast::channel(16).0,
         trusted_spot_check_rate: 50,
+        catalog_hashes: physics_api::state::CatalogHashSet::empty(),
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the
@@ -287,6 +288,10 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         .route(
             "/api/theorems",
             axum::routing::get(handlers::theorems::list),
+        )
+        .route(
+            "/api/discoveries/novel",
+            axum::routing::get(handlers::discoveries::novel),
         )
         .route(
             "/api/events/discoveries",
