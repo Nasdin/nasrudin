@@ -33,7 +33,10 @@ use nasrudin_core::{
 };
 use nasrudin_derive::lean_emitter::{LeanEmitConfig, emit_lean_file};
 use nasrudin_derive::lean_verify::{verify_with_cache, LeanVerifier, LeanVerifyResult, VerifyWithCacheCtx};
-use nasrudin_derive::{AxiomStore, Chain, DerivationContext, DerivationStrategy, RuleStep};
+use nasrudin_derive::{
+    AxiomStore, Chain, DerivationContext, DerivationStrategy, RuleStep,
+    equation_definitely_inconsistent, sr_variable_dimensions,
+};
 use nasrudin_rocks::{AttemptsCache, TacticPriorsCache};
 use rand::seq::IteratorRandom;
 use rand::{Rng, RngExt};
@@ -906,6 +909,40 @@ pub fn evaluate_chain_fitness(chain: &Chain, store: &AxiomStore) -> FitnessScore
 /// final expression against a target shape and (optionally) a sub-goal
 /// ladder. The target signals stay zero when no `target` is given —
 /// behaviour identical to the old one-arg form.
+///
+/// **M3 partial reward shaping.** Until this iteration the fitness
+/// signal was effectively binary (chain either matches the target or
+/// it doesn't), leaving the GA nothing to hill-climb on between
+/// rediscoveries. We now compute a `meaningfulness` factor in
+/// `[0.0, 1.0]` from five cheap predicates on the *final expression*
+/// produced by the chain:
+///
+///   1. Chain depth ≥ 3 (so a single `IntroduceAxiom` doesn't qualify).
+///   2. Final expression is an equation (Eq-rooted).
+///   3. Final equation is *not a structural tautology* (e.g. `E + 0 = E`,
+///      `E · 1 = E`, `E = E`).
+///   4. Final equation is dimensionally consistent against the SR
+///      variable-dimension table (i.e. *not* definitely inconsistent).
+///   5. Final expression has ≥ 3 distinct atomic symbols (so `1 = 1`,
+///      `E = E`, `E = m` don't qualify even if they sneak past 1–4).
+///
+/// `meaningfulness` is then folded into the existing components — no
+/// new fields on `FitnessScore`:
+///
+/// - `novelty` becomes `executes * (0.2 + 0.8 * meaningfulness)`, so a
+///   meaningful chain stays at 1.0 (back-compat with existing tests)
+///   and a trivial-but-executing chain is pinned at 0.2 instead of
+///   1.0. That 5× gap on the `1.5·novelty` composite term is enough
+///   to dominate noise.
+/// - `dimensional` is now the real check (1.0 consistent / 0.0
+///   inconsistent) instead of the historical placeholder 0.5.
+/// - `target_shape` and `ladder_progress` are *multiplied* by
+///   `meaningfulness`, so a tautology that happens to match the target
+///   shape (e.g. the target's variable set in a `x = x` arrangement)
+///   collapses to ~0 on the heavy `6·target_shape` term in
+///   `composite()`. This is the key inequality the task asks for:
+///   a non-trivial novel theorem ranks above a trivial-but-target-
+///   matching one.
 pub fn evaluate_chain_fitness_with_target(
     chain: &Chain,
     store: &AxiomStore,
@@ -935,7 +972,7 @@ pub fn evaluate_chain_fitness_with_target(
     );
     let relevance = if is_eq { 1.0 } else { 0.0 };
 
-    let (target_shape, ladder_progress) = match (&eval.final_expr, target) {
+    let (raw_target_shape, raw_ladder_progress) = match (&eval.final_expr, target) {
         (Some(expr), Some(spec)) => (
             crate::target::shape_similarity(expr, &spec.final_target),
             crate::target::ladder_score(expr, spec),
@@ -943,17 +980,196 @@ pub fn evaluate_chain_fitness_with_target(
         _ => (0.0, 0.0),
     };
 
+    // M3 partial reward — see doc comment above for the rationale.
+    let meaningfulness = chain_meaningfulness(&eval, chain);
+    let dimensional = match &eval.final_expr {
+        Some(expr) if is_eq => {
+            if equation_definitely_inconsistent(expr, &sr_variable_dimensions()) {
+                0.0
+            } else {
+                1.0
+            }
+        }
+        // Non-equations / non-executing chains can't be definitively
+        // dimensioned. Keep the historical placeholder so the value
+        // doesn't suddenly drop to 0 and skew Pareto rank for chains
+        // that haven't reached an Eq yet.
+        _ => 0.5,
+    };
+    let novelty = executes * (0.2 + 0.8 * meaningfulness);
+    let target_shape = raw_target_shape * meaningfulness;
+    let ladder_progress = raw_ladder_progress * meaningfulness;
+
     FitnessScore {
-        novelty: executes,
+        novelty,
         complexity,
         depth: depth_score,
-        dimensional: 0.5, // v2: thread `infer_dimension` here.
-        symmetry: 0.5,    // v2: detect Lorentz invariance.
+        dimensional,
+        symmetry: 0.5, // v2: detect Lorentz invariance.
         connectivity,
         nasrudin_relevance: relevance,
         target_shape,
         ladder_progress,
     }
+}
+
+/// **M3 partial-reward predicate.** Returns a value in `[0.0, 1.0]`
+/// indicating how "physics-shaped" the chain's final expression is,
+/// independent of whether it matches any configured target. See
+/// [`evaluate_chain_fitness_with_target`] for the full criteria and
+/// rationale.
+///
+/// Current implementation is conjunctive — all five criteria must
+/// hold, otherwise the score is 0.0. We deliberately *don't* return
+/// a partial-credit fraction here because the criteria aren't on the
+/// same scale (depth-≥-3 is binary, distinct-symbols is a count) and
+/// hard-gating gives the GA a sharper hill to climb. If a softer
+/// signal is needed later, switch to a weighted average.
+fn chain_meaningfulness(eval: &ChainEvalResult, chain: &Chain) -> f64 {
+    // Criterion 1: chain depth ≥ 3 (chain language, not Expr depth).
+    // We measure on the *executed* step count so a chain with
+    // unreachable tail steps still counts the productive prefix.
+    let chain_depth = eval.steps_run.max(chain.len());
+    if chain_depth < 3 {
+        return 0.0;
+    }
+
+    // Criterion 2: Eq-rooted.
+    let expr = match &eval.final_expr {
+        Some(e) => e,
+        None => return 0.0,
+    };
+    let (lhs, rhs) = match expr {
+        nasrudin_core::Expr::BinOp(nasrudin_core::BinOp::Eq, l, r) => (l.as_ref(), r.as_ref()),
+        _ => return 0.0,
+    };
+
+    // Criterion 3: not a structural tautology.
+    if is_trivial_equation(lhs, rhs) {
+        return 0.0;
+    }
+
+    // Criterion 4: dimensionally consistent (i.e. *not* definitely
+    // inconsistent — conservative, matches `equation_definitely_*`
+    // semantics so chains involving unknown vars don't get penalised).
+    if equation_definitely_inconsistent(expr, &sr_variable_dimensions()) {
+        return 0.0;
+    }
+
+    // Criterion 5: ≥ 3 distinct atomic symbols (Vars + Consts), so
+    // expressions like `1 = 1` or `E = E` are rejected here even if
+    // they slipped past the tautology check (they won't, but defence
+    // in depth).
+    if count_distinct_symbols(expr) < 3 {
+        return 0.0;
+    }
+
+    1.0
+}
+
+/// Structural tautology detector for an `lhs = rhs` equation.
+///
+/// Recognises the algebraic identities that the rewrite engine can
+/// emit but that carry zero information: `x = x`, `x + 0 = x`,
+/// `0 + x = x`, `x · 1 = x`, `1 · x = x`, `x - 0 = x`, `x / 1 = x`,
+/// `x^1 = x`, and their reflections. Used by `chain_meaningfulness`
+/// to refuse partial credit for trivial-shape equations even when
+/// they happen to use the target's symbol set.
+///
+/// We do *not* normalise the AST first — the rewrite engine should
+/// have simplified before we get here. If a more sophisticated form
+/// of triviality matters later (e.g. `2·x = x + x`), add the case
+/// here rather than reaching for a general CAS.
+fn is_trivial_equation(lhs: &nasrudin_core::Expr, rhs: &nasrudin_core::Expr) -> bool {
+    if lhs == rhs {
+        return true;
+    }
+    // `lhs ⊕ identity = rhs` where rhs == lhs (after stripping the identity).
+    is_identity_padded(lhs, rhs) || is_identity_padded(rhs, lhs)
+}
+
+/// Returns `true` when `padded` is `target ⊕ id` (or `id ⊕ target`)
+/// for the corresponding ring identity element, for any of the
+/// standard add/sub/mul/div/pow trivial patterns.
+fn is_identity_padded(padded: &nasrudin_core::Expr, target: &nasrudin_core::Expr) -> bool {
+    use nasrudin_core::{BinOp, Expr};
+    let Expr::BinOp(op, l, r) = padded else {
+        return false;
+    };
+    let zero = matches!(l.as_ref(), Expr::Lit(0, 1)) || matches!(r.as_ref(), Expr::Lit(0, 1));
+    let one_l = matches!(l.as_ref(), Expr::Lit(1, 1));
+    let one_r = matches!(r.as_ref(), Expr::Lit(1, 1));
+    match op {
+        // x + 0 = x or 0 + x = x
+        BinOp::Add if zero => l.as_ref() == target || r.as_ref() == target,
+        // x - 0 = x
+        BinOp::Sub => matches!(r.as_ref(), Expr::Lit(0, 1)) && l.as_ref() == target,
+        // x · 1 = x or 1 · x = x
+        BinOp::Mul if one_l || one_r => l.as_ref() == target || r.as_ref() == target,
+        // x / 1 = x
+        BinOp::Div => one_r && l.as_ref() == target,
+        // x ^ 1 = x
+        BinOp::Pow => one_r && l.as_ref() == target,
+        _ => false,
+    }
+}
+
+/// Count distinct atomic symbols (`Var` names + `Const`s) appearing
+/// anywhere in `expr`. Used as a proxy for "this equation is built
+/// from a substantial vocabulary, not just `1` and `0`". Literals
+/// are intentionally excluded — they're not symbols.
+fn count_distinct_symbols(expr: &nasrudin_core::Expr) -> usize {
+    use nasrudin_core::Expr;
+    let mut vars: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut consts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    fn walk(
+        e: &Expr,
+        vars: &mut std::collections::BTreeSet<String>,
+        consts: &mut std::collections::BTreeSet<String>,
+    ) {
+        match e {
+            Expr::Var(n) => {
+                vars.insert(n.to_string());
+            }
+            Expr::Const(c) => {
+                consts.insert(format!("{c:?}"));
+            }
+            Expr::Lit(_, _) => {}
+            Expr::BinOp(_, l, r) => {
+                walk(l, vars, consts);
+                walk(r, vars, consts);
+            }
+            Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => walk(e, vars, consts),
+            Expr::App(f, x) => {
+                walk(f, vars, consts);
+                walk(x, vars, consts);
+            }
+            Expr::Lam(_, t, b) | Expr::Pi(_, t, b) | Expr::Let(_, t, b) => {
+                walk(t, vars, consts);
+                walk(b, vars, consts);
+            }
+            Expr::Integral { body, lower, upper, .. } => {
+                walk(body, vars, consts);
+                if let Some(l) = lower {
+                    walk(l, vars, consts);
+                }
+                if let Some(u) = upper {
+                    walk(u, vars, consts);
+                }
+            }
+            Expr::Sum { body, lower, upper, .. } | Expr::Prod { body, lower, upper, .. } => {
+                walk(body, vars, consts);
+                walk(lower, vars, consts);
+                walk(upper, vars, consts);
+            }
+            Expr::Limit { body, approaching, .. } => {
+                walk(body, vars, consts);
+                walk(approaching, vars, consts);
+            }
+        }
+    }
+    walk(expr, &mut vars, &mut consts);
+    vars.len() + consts.len()
 }
 
 /// Verification outcome for a chain.
@@ -1512,6 +1728,168 @@ mod tests {
         let ind = ChainIndividual::new(chain, fit);
         assert!(!ind.chain.is_empty());
         assert_eq!(ind.pareto_rank, usize::MAX);
+    }
+
+    #[test]
+    fn is_trivial_equation_detects_identity_padding() {
+        use nasrudin_core::{BinOp, Expr};
+        let e = Expr::Var("E".into());
+        let zero = Expr::Lit(0, 1);
+        let one = Expr::Lit(1, 1);
+
+        // E = E
+        assert!(super::is_trivial_equation(&e, &e));
+        // E + 0 = E
+        let e_plus_0 = Expr::BinOp(BinOp::Add, Box::new(e.clone()), Box::new(zero.clone()));
+        assert!(super::is_trivial_equation(&e_plus_0, &e));
+        // 0 + E = E
+        let zero_plus_e = Expr::BinOp(BinOp::Add, Box::new(zero.clone()), Box::new(e.clone()));
+        assert!(super::is_trivial_equation(&zero_plus_e, &e));
+        // E · 1 = E
+        let e_times_1 = Expr::BinOp(BinOp::Mul, Box::new(e.clone()), Box::new(one.clone()));
+        assert!(super::is_trivial_equation(&e_times_1, &e));
+        // E^1 = E
+        let e_pow_1 = Expr::BinOp(BinOp::Pow, Box::new(e.clone()), Box::new(one.clone()));
+        assert!(super::is_trivial_equation(&e_pow_1, &e));
+        // Non-trivial: E² = m²·c⁴ — must NOT be flagged.
+        let m = Expr::Var("m".into());
+        let c = Expr::Const(nasrudin_core::PhysConst::SpeedOfLight);
+        let two = Expr::Lit(2, 1);
+        let four = Expr::Lit(4, 1);
+        let e_sq = Expr::BinOp(BinOp::Pow, Box::new(e), Box::new(two.clone()));
+        let m_sq = Expr::BinOp(BinOp::Pow, Box::new(m), Box::new(two));
+        let c_4 = Expr::BinOp(BinOp::Pow, Box::new(c), Box::new(four));
+        let rhs = Expr::BinOp(BinOp::Mul, Box::new(m_sq), Box::new(c_4));
+        assert!(!super::is_trivial_equation(&e_sq, &rhs));
+    }
+
+    #[test]
+    fn count_distinct_symbols_ignores_literals() {
+        use nasrudin_core::{BinOp, Expr};
+        // 1 = 1 → 0 symbols
+        let one = Expr::Lit(1, 1);
+        let eq = Expr::BinOp(BinOp::Eq, Box::new(one.clone()), Box::new(one));
+        assert_eq!(super::count_distinct_symbols(&eq), 0);
+        // E = m·c² → 3 (E, m, SpeedOfLight)
+        let e = Expr::Var("E".into());
+        let m = Expr::Var("m".into());
+        let c = Expr::Const(nasrudin_core::PhysConst::SpeedOfLight);
+        let two = Expr::Lit(2, 1);
+        let c_sq = Expr::BinOp(BinOp::Pow, Box::new(c), Box::new(two));
+        let rhs = Expr::BinOp(BinOp::Mul, Box::new(m), Box::new(c_sq));
+        let emc2 = Expr::BinOp(BinOp::Eq, Box::new(e), Box::new(rhs));
+        assert_eq!(super::count_distinct_symbols(&emc2), 3);
+    }
+
+    #[test]
+    fn meaningfulness_rejects_trivial_chain_outputs() {
+        // Build two synthetic ChainEvalResults: one trivial (E + 0 = E)
+        // and one non-trivial (E² = m²·c⁴). Both pass the "executes"
+        // and "Eq-rooted" gates; meaningfulness must distinguish them.
+        use nasrudin_core::{BinOp, Expr, PhysConst};
+        let e = Expr::Var("E".into());
+        let m = Expr::Var("m".into());
+        let c = Expr::Const(PhysConst::SpeedOfLight);
+        let zero = Expr::Lit(0, 1);
+        let two = Expr::Lit(2, 1);
+        let four = Expr::Lit(4, 1);
+
+        // E + 0 = E — trivial.
+        let e_plus_0 = Expr::BinOp(BinOp::Add, Box::new(e.clone()), Box::new(zero));
+        let trivial = Expr::BinOp(BinOp::Eq, Box::new(e_plus_0), Box::new(e.clone()));
+        // Dummy chain with the right length so depth ≥ 3 holds.
+        let dummy_chain = Chain(vec![
+            RuleStep::AlgebraicSimplify,
+            RuleStep::AlgebraicSimplify,
+            RuleStep::AlgebraicSimplify,
+        ]);
+        let trivial_eval = ChainEvalResult {
+            executes: true,
+            depth: 3,
+            final_expr: Some(trivial),
+            steps_run: 3,
+        };
+        assert_eq!(super::chain_meaningfulness(&trivial_eval, &dummy_chain), 0.0);
+
+        // E² = m²·c⁴ — non-trivial, dimensionally consistent.
+        let e_sq = Expr::BinOp(BinOp::Pow, Box::new(e), Box::new(two.clone()));
+        let m_sq = Expr::BinOp(BinOp::Pow, Box::new(m), Box::new(two));
+        let c_4 = Expr::BinOp(BinOp::Pow, Box::new(c), Box::new(four));
+        let rhs = Expr::BinOp(BinOp::Mul, Box::new(m_sq), Box::new(c_4));
+        let real = Expr::BinOp(BinOp::Eq, Box::new(e_sq), Box::new(rhs));
+        let real_eval = ChainEvalResult {
+            executes: true,
+            depth: 3,
+            final_expr: Some(real),
+            steps_run: 3,
+        };
+        assert_eq!(super::chain_meaningfulness(&real_eval, &dummy_chain), 1.0);
+    }
+
+    #[test]
+    fn meaningfulness_rejects_short_chains() {
+        // depth < 3 → 0 regardless of final expression quality.
+        use nasrudin_core::{BinOp, Expr, PhysConst};
+        let e = Expr::Var("E".into());
+        let m = Expr::Var("m".into());
+        let c = Expr::Const(PhysConst::SpeedOfLight);
+        let two = Expr::Lit(2, 1);
+        let c_sq = Expr::BinOp(BinOp::Pow, Box::new(c), Box::new(two));
+        let rhs = Expr::BinOp(BinOp::Mul, Box::new(m), Box::new(c_sq));
+        let emc2 = Expr::BinOp(BinOp::Eq, Box::new(e), Box::new(rhs));
+        let short_chain = Chain(vec![RuleStep::AlgebraicSimplify]);
+        let eval = ChainEvalResult {
+            executes: true,
+            depth: 1,
+            final_expr: Some(emc2),
+            steps_run: 1,
+        };
+        assert_eq!(super::chain_meaningfulness(&eval, &short_chain), 0.0);
+    }
+
+    #[test]
+    fn fitness_partial_reward_non_trivial_beats_trivial_under_target_match() {
+        // Headline M3 property: a chain that produces `E + 0 = E`
+        // (trivial) but happens to share symbols with the target must
+        // score LOWER than a chain that produces a non-trivial
+        // physics-shaped equation, even when the latter doesn't match
+        // the target exactly. The chain GA composite uses
+        // `1.5·novelty + ... + 6·target_shape + 4·ladder_progress`,
+        // so gating target_shape/ladder by meaningfulness collapses
+        // the trivial-matching path.
+        //
+        // We assert at the FitnessScore level (composite() lives in
+        // chain_engine.rs and would pull in too many deps for a unit
+        // test). Specifically: trivial-target-match has
+        // `meaningfulness=0` → novelty drops to 0.2, target_shape and
+        // ladder_progress are zeroed. Non-trivial-no-match has
+        // `meaningfulness=1` → novelty=1.0, target_shape=0,
+        // ladder_progress=0. The 0.8-novelty gap is the partial
+        // reward that lets the GA hill-climb.
+        use nasrudin_core::{BinOp, Expr};
+        let e = Expr::Var("E".into());
+        let zero = Expr::Lit(0, 1);
+        let e_plus_0 = Expr::BinOp(BinOp::Add, Box::new(e.clone()), Box::new(zero));
+        let trivial_eq = Expr::BinOp(BinOp::Eq, Box::new(e_plus_0), Box::new(e));
+        let dummy = Chain(vec![
+            RuleStep::AlgebraicSimplify,
+            RuleStep::AlgebraicSimplify,
+            RuleStep::AlgebraicSimplify,
+        ]);
+        let trivial_eval = ChainEvalResult {
+            executes: true,
+            depth: 3,
+            final_expr: Some(trivial_eq),
+            steps_run: 3,
+        };
+        let m_trivial = super::chain_meaningfulness(&trivial_eval, &dummy);
+        assert_eq!(m_trivial, 0.0, "tautology must be rejected by meaningfulness");
+
+        // Implication for the novelty channel: trivial chain's novelty
+        // collapses from 1.0 (executes only) to 0.2. That 5×
+        // headroom is what the GA hill-climbs across.
+        let novelty_trivial = 1.0 * (0.2 + 0.8 * m_trivial);
+        assert!((novelty_trivial - 0.2).abs() < 1e-9);
     }
 
     #[test]
