@@ -1,4 +1,3 @@
-import { useQueries } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
@@ -11,7 +10,6 @@ import { SaveButton } from '~/components/theorem/SaveButton';
 import { TrustPanel } from '~/components/theorem/TrustPanel';
 import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { VerifyWithLakeButton } from '~/components/theorem/VerifyWithLakeButton';
-import { apiFetch } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
 import { leanToHumanTitle } from '~/lib/humanTitle';
 import { Math as MathExpr } from '~/lib/katex';
@@ -165,7 +163,23 @@ function TheoremView({ thm }: { thm: Theorem }) {
         )}
         <ChainStepsSection chainJson={thm.chain_json} />
         {isImported && importedFrom ? (
-          <TrustPanelSection importedFrom={importedFrom} parentHexes={parentHexes} />
+          <div className="thm-section">
+            <TrustPanel
+              importedFrom={importedFrom}
+              parentHexes={parentHexes}
+              // Imported PhysLean rows have purely upstream parents — the
+              // `parents` array is filled with hashes of upstream axiom /
+              // type-definition references that don't appear as
+              // navigable theorem rows in our DB. `engine_git_sha`
+              // tells us the row came from the physlean importer, so
+              // every dependency is by construction upstream. We avoid
+              // probing /api/theorems/<hash> for each parent here on
+              // purpose: doing N parallel fetches during route-match
+              // delays hydration past TanStack Start's $_TSR stream
+              // barrier and trips a router invariant.
+              allParentsUpstream={thm.engine_git_sha === 'physlean'}
+            />
+          </div>
         ) : (
           parentHexes.length > 0 && (
             <div className="thm-section">
@@ -193,46 +207,6 @@ function TheoremView({ thm }: { thm: Theorem }) {
         </ul>
         <TechDetails thm={thm} idHex={idHex} />
       </aside>
-    </div>
-  );
-}
-
-// For imported theorems we collapse the redundant "Source" + "Proof
-// lineage" pair into a single TrustPanel that answers what a non-Lean
-// professor actually wants: who attests this, where to read the upstream
-// Lean source, how to verify yourself in 30 s. The lineage hashes are
-// still available behind a "Show dependency hashes" toggle inside the
-// trust panel for Lean users.
-//
-// To decide whether to mark the dependency tree as "100% upstream" we
-// probe each parent's /api/theorems/<hex> in parallel — if every probe
-// 404s, every dependency is an upstream namespace reference and we can
-// safely say so.
-function TrustPanelSection({
-  importedFrom,
-  parentHexes,
-}: {
-  importedFrom: string;
-  parentHexes: string[];
-}) {
-  const queries = useQueries({
-    queries: parentHexes.map((h) => ({
-      queryKey: ['theorem', h] as const,
-      queryFn: () => apiFetch<Theorem>(`/api/theorems/${h}`),
-      staleTime: 10 * 60_000,
-      retry: false,
-    })),
-  });
-  const allDone = queries.every((q) => !q.isLoading);
-  const allParentsUpstream = allDone && queries.every((q) => !!q.error || !q.data);
-
-  return (
-    <div className="thm-section">
-      <TrustPanel
-        importedFrom={importedFrom}
-        parentHexes={parentHexes}
-        allParentsUpstream={allParentsUpstream}
-      />
     </div>
   );
 }
