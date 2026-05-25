@@ -5,7 +5,7 @@ import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { useCancelResearchJob, useMe, useResearchJob, useResearchJobStream } from '~/lib/queries';
 import type { ResearchJob, ResearchJobEvent } from '~/lib/types';
 
-export const Route = createFileRoute('/research/$id')({ component: ResearchDetailPage });
+export const Route = createFileRoute('/research/$id')({ loader: async () => null, component: ResearchDetailPage });
 
 function ResearchDetailPage() {
   const me = useMe();

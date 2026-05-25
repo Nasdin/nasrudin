@@ -8,7 +8,7 @@ import { isApiError } from '~/lib/api';
 import { COUNTRIES, flagEmoji } from '~/lib/countries';
 import { useMe, useMeProfile, useUpdateMeProfile } from '~/lib/queries';
 
-export const Route = createFileRoute('/settings')({ component: SettingsPage });
+export const Route = createFileRoute('/settings')({ loader: async () => null, component: SettingsPage });
 
 function SettingsPage() {
   const me = useMe();

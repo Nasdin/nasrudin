@@ -8,7 +8,7 @@ import { leanToSymbols } from '~/lib/physicsSymbols';
 import { useConceptSearch } from '~/lib/queries';
 import type { ConceptHit } from '~/lib/types';
 
-export const Route = createFileRoute('/search/concept')({ component: ConceptSearchPage });
+export const Route = createFileRoute('/search/concept')({ loader: async () => null, component: ConceptSearchPage });
 
 function ConceptSearchPage() {
   const [draft, setDraft] = useState('');

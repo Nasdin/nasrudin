@@ -7,8 +7,10 @@ import { DomainBadge } from '~/components/theorem/DomainBadge';
 import { LineageList } from '~/components/theorem/LineageList';
 import { ProofBlock } from '~/components/theorem/ProofBlock';
 import { SaveButton } from '~/components/theorem/SaveButton';
+import { CitationBlock } from '~/components/theorem/CitationBlock';
 import { TrustPanel } from '~/components/theorem/TrustPanel';
 import { UpstreamRefsBlock } from '~/components/theorem/UpstreamRefsBlock';
+import { UsedByBlock } from '~/components/theorem/UsedByBlock';
 import { WrappedStatement } from '~/components/theorem/WrappedStatement';
 import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { VerifyWithLakeButton } from '~/components/theorem/VerifyWithLakeButton';
@@ -33,6 +35,37 @@ import type { Theorem } from '~/lib/types';
 export const Route = createFileRoute('/theorem/$id')({
   loader: async ({ params }) =>
     apiFetch<Theorem>(`/api/theorems/${params.id}`),
+  // Set per-theorem <title> and Open Graph metadata from the loader
+  // result. Shareable links (Slack, Twitter, Reddit) get a meaningful
+  // preview card — "Timelike vectors have a dominant time component"
+  // instead of the generic site-wide title.
+  head: ({ loaderData }) => {
+    if (!loaderData) {
+      return { meta: [{ title: 'Nasrudin — theorem' }] };
+    }
+    const imp = (loaderData.origin_payload as { Imported?: { source?: string } } | null)
+      ?.Imported?.source ?? null;
+    const human = imp ? leanToHumanTitle(imp) : null;
+    const idHex = bytesToHex(loaderData.id);
+    const title = human || imp || `thm:${idHex.slice(0, 8)}`;
+    const fullTitle = `${title} — Nasrudin`;
+    const description = imp
+      ? `Formally verified Lean 4 theorem imported from PhysLean: ${imp}. Domain: ${loaderData.domain}.`
+      : `Genetically discovered theorem in Nasrudin's corpus. Domain: ${loaderData.domain}.`;
+    return {
+      meta: [
+        { title: fullTitle },
+        { name: 'description', content: description },
+        { property: 'og:title', content: fullTitle },
+        { property: 'og:description', content: description },
+        { property: 'og:type', content: 'article' },
+        { property: 'og:url', content: `https://nasrudin.org/theorem/${idHex}` },
+        { name: 'twitter:card', content: 'summary' },
+        { name: 'twitter:title', content: fullTitle },
+        { name: 'twitter:description', content: description },
+      ],
+    };
+  },
   component: TheoremPage,
   errorComponent: ({ error }) => (
     <div className="app">
@@ -152,6 +185,15 @@ function TheoremView({ thm }: { thm: Theorem }) {
           <StatementRender thm={thm} />
         </div>
         <UpstreamRefsBlock canonical={thm.canonical_statement} />
+        <UsedByBlock idHex={idHex} />
+        <CitationBlock
+          idHex={idHex}
+          importedFrom={importedFrom}
+          displayTitle={displayHeading}
+          domain={thm.domain}
+          verifiedAt={thm.verified_at ?? null}
+          verificationTactic={thm.verification_tactic ?? null}
+        />
         {(thm.lean_source || !isImported) && (
           <div className="thm-section">
             <h3>Lean 4 proof</h3>

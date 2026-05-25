@@ -5,7 +5,7 @@ import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { ApiError, apiFetch } from '~/lib/api';
 import { useMe } from '~/lib/queries';
 
-export const Route = createFileRoute('/admin')({ component: AdminGate });
+export const Route = createFileRoute('/admin')({ loader: async () => null, component: AdminGate });
 
 type AdminAccess = 'admin' | 'not_admin';
 

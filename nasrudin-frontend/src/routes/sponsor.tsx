@@ -4,6 +4,7 @@ import { AppHeader } from '~/components/platform/AppHeader';
 import { API_BASE } from '~/lib/api';
 
 export const Route = createFileRoute('/sponsor')({
+  loader: async () => null,
   component: SponsorPage,
   validateSearch: (search: Record<string, unknown>): { thanks?: string } =>
     typeof search.thanks === 'string' ? { thanks: search.thanks } : {},

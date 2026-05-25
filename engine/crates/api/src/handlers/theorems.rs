@@ -265,6 +265,79 @@ pub async fn by_id(
     }
 }
 
+/// `GET /api/theorems/{id}/dependents` — list theorems that build on
+/// this one (reverse lineage).
+///
+/// Powers the "Used by" panel on the theorem detail page. Returns a
+/// slim JSON payload with just the fields the panel renders — id,
+/// humanised display name (derived from `origin_payload` when imported),
+/// domain — so we don't ship the full theorem rows for every dependent.
+/// Caps results at 200 to keep payloads bounded; very popular base
+/// theorems can have thousands of downstream consumers.
+pub async fn dependents(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let pg = match &state.pg {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "pg_unavailable" })),
+            )
+                .into_response();
+        }
+    };
+    let id_bytes = match hex::decode(&id) {
+        Ok(b) if b.len() == 8 => b,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "bad_id" })),
+            )
+                .into_response();
+        }
+    };
+    match theorems::list_dependents(pg, &id_bytes, 200).await {
+        Ok(rows) => {
+            let items: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|t| {
+                    let imported = t
+                        .origin_payload
+                        .as_ref()
+                        .and_then(|p| p.get("Imported"))
+                        .and_then(|i| i.get("source"))
+                        .and_then(|s| s.as_str())
+                        .map(String::from);
+                    serde_json::json!({
+                        "id": hex::encode(&t.id),
+                        "domain": t.domain,
+                        "imported_source": imported,
+                        "generation": t.generation,
+                        "verification_tactic": t.verification_tactic,
+                        "created_at": t.created_at,
+                    })
+                })
+                .collect();
+            let total = items.len();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "dependents": items,
+                    "total": total,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 /// `GET /api/theorems/{hash}/lean` — download the Lean source for a verified
 /// theorem as `text/plain` with a `Content-Disposition: attachment` filename.
 ///

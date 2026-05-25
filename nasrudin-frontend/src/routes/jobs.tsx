@@ -4,7 +4,7 @@ import { AppHeader } from '~/components/platform/AppHeader';
 import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { useMe, useMyConjectures } from '~/lib/queries';
 
-export const Route = createFileRoute('/jobs')({ component: JobsPage });
+export const Route = createFileRoute('/jobs')({ loader: async () => null, component: JobsPage });
 
 function JobsPage() {
   const me = useMe();

@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { AuthForm } from '~/components/auth/AuthForm';
 import { useLandingStats } from '~/lib/queries';
 
-export const Route = createFileRoute('/signin')({ component: SignInPage });
+export const Route = createFileRoute('/signin')({ loader: async () => null, component: SignInPage });
 
 function fmt(n: number | undefined): string {
   if (typeof n !== 'number') return '—';

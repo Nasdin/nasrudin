@@ -6,7 +6,7 @@ import ConfirmWithReasonModal from '~/components/admin/ConfirmWithReasonModal';
 import DataTable from '~/components/admin/DataTable';
 import type { AdminUserDetail } from '~/lib/adminTypes';
 
-export const Route = createFileRoute('/admin/users/$id')({ component: UserDetail });
+export const Route = createFileRoute('/admin/users/$id')({ loader: async () => null, component: UserDetail });
 
 type Pending =
   | { kind: 'admin'; is_admin: boolean }

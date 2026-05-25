@@ -600,6 +600,33 @@ const REF_IGNORE = new Set([
   '<sort>',
 ]);
 
+// Patterns that indicate the qualifier is internal Lean machinery rather
+// than a user-meaningful dependency. Auto-generated proof helpers
+// (`_proof_1`, `_proof_2`), hygenic names from macro expansion
+// (`._hygCtx._hyg.<n>`), Lean's `_internal` namespace, and the empty
+// `_proof_N` last-segment all leak into the AST but add zero signal —
+// hiding them keeps the "Built from" panel focused on names a reader
+// actually wants to click.
+const NOISE_PATTERNS: RegExp[] = [
+  /^_proof_\d+$/,
+  /^_proof$/,
+  /^_internal(\.|$)/,
+  /^.*\._hygCtx\._hyg\.\d+/,
+  /^.*\._hyg\.\d+$/,
+  /^.*\._@\./, // internal anonymous namespace markers
+  /^.*\.proof_\d+$/,
+  /^inst\./,
+  /^inst$/,
+  /^inst_\d+$/,
+];
+
+function isNoiseQualifier(inner: string, name: string): boolean {
+  for (const re of NOISE_PATTERNS) {
+    if (re.test(inner) || re.test(name)) return true;
+  }
+  return false;
+}
+
 function walkRefs(n: Node, out: Map<string, UpstreamRef>) {
   if (n.kind === 'atom') {
     if (n.value.startsWith('v:')) {
@@ -611,7 +638,11 @@ function walkRefs(n: Node, out: Map<string, UpstreamRef>) {
       if (dot > 0) {
         const namespace = inner.slice(0, dot);
         const name = inner.slice(dot + 1);
-        if (!REF_IGNORE.has(inner) && !REF_IGNORE.has(name)) {
+        if (
+          !REF_IGNORE.has(inner) &&
+          !REF_IGNORE.has(name) &&
+          !isNoiseQualifier(inner, name)
+        ) {
           out.set(inner, { qualifier: inner, name, namespace });
         }
       }

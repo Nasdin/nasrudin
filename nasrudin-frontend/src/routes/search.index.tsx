@@ -9,7 +9,7 @@ import { AppHeader } from '~/components/platform/AppHeader';
 import { useSearch } from '~/lib/queries';
 import type { SearchFilters, SearchInputFormat, SearchRequest } from '~/lib/types';
 
-export const Route = createFileRoute('/search/')({ component: SearchPage });
+export const Route = createFileRoute('/search/')({ loader: async () => null, component: SearchPage });
 
 const EMPTY_FILTERS: SearchFilters = {
   domain: null,

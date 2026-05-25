@@ -14,7 +14,7 @@ import {
 } from '~/lib/queries';
 import type { AuthUser, ResearchJob } from '~/lib/types';
 
-export const Route = createFileRoute('/research/')({ component: ResearchPage });
+export const Route = createFileRoute('/research/')({ loader: async () => null, component: ResearchPage });
 
 function ResearchPage() {
   const me = useMe();

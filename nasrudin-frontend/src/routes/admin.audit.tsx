@@ -4,7 +4,7 @@ import { adminFetch } from '~/lib/adminApi';
 import DataTable from '~/components/admin/DataTable';
 import type { AuditEntry } from '~/lib/adminTypes';
 
-export const Route = createFileRoute('/admin/audit')({ component: AuditPage });
+export const Route = createFileRoute('/admin/audit')({ loader: async () => null, component: AuditPage });
 
 function AuditPage() {
   const { data } = useQuery<{ entries: AuditEntry[] }>({

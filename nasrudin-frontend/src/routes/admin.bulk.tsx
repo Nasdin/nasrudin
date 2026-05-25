@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { adminFetch } from '~/lib/adminApi';
 import { API_BASE } from '~/lib/api';
 
-export const Route = createFileRoute('/admin/bulk')({ component: BulkPage });
+export const Route = createFileRoute('/admin/bulk')({ loader: async () => null, component: BulkPage });
 
 type ActionKind = 'set_trust' | 'set_plan' | 'adjust_credits' | 'set_spot_check_rate';
 

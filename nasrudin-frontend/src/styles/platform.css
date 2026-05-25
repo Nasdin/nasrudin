@@ -681,6 +681,49 @@
 }
 .thm-tech .meta-list { margin: 0; }
 
+/* Citation block — formatted plain-text + BibTeX with one-click Copy. */
+.citation-block {
+  display: grid;
+  gap: 18px;
+}
+.citation-row {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  gap: 16px;
+  align-items: start;
+}
+.citation-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  color: var(--ink-500);
+  font-weight: 600;
+  padding-top: 14px;
+}
+.citation-text {
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--paper-50);
+  border: 1px solid var(--paper-200);
+  border-radius: 6px;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-800);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.citation-text-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--ink-900);
+  color: var(--paper-50);
+  border-color: var(--ink-900);
+}
+
 /* Plain-English summary box that sits above the formal statement. */
 .thm-prose {
   background: var(--paper-50);

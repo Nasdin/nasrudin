@@ -26,7 +26,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::state::AppState;
@@ -138,4 +139,114 @@ pub async fn resolve(
     //    using a status code as the type discriminator would force the
     //    client into try/catch on every dep row, which is awkward.
     (StatusCode::OK, Json(ResolveResponse::None)).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct BulkRequest {
+    pub qualifiers: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct BulkResponse {
+    pub results: HashMap<String, ResolveResponse>,
+}
+
+/// `POST /api/resolve/bulk` — same lookup as `/api/resolve/{q}` but for
+/// an array of qualifiers in one round-trip. Powers the theorem detail
+/// page's "Built from" panel, which has 5–15 dependency rows per
+/// theorem; with one bulk call we save N-1 HTTP round-trips and ~N×TLS
+/// handshake overhead.
+///
+/// Caps the input at 64 qualifiers per request. That's well above the
+/// largest "Built from" panel we've seen in production (largest single
+/// theorem statement references ~30 named upstream constants) and keeps
+/// the endpoint cheap for adversarial callers.
+pub async fn bulk(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BulkRequest>,
+) -> impl IntoResponse {
+    const MAX_QUALIFIERS: usize = 64;
+    if req.qualifiers.len() > MAX_QUALIFIERS {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "too_many_qualifiers",
+                "max": MAX_QUALIFIERS,
+            })),
+        )
+            .into_response();
+    }
+
+    let mut results: HashMap<String, ResolveResponse> = HashMap::new();
+    // De-dupe input early — the frontend may include the same qualifier
+    // twice if the theorem statement references it in multiple positions.
+    let mut seen = std::collections::HashSet::new();
+    let unique: Vec<String> = req
+        .qualifiers
+        .into_iter()
+        .filter(|q| !q.is_empty() && q.len() <= 512 && seen.insert(q.clone()))
+        .collect();
+
+    // Theorem-by-source lookups: each one is sub-ms on the new
+    // `theorems_imported_source_idx`. Run sequentially rather than via
+    // a single `IN (...)` query because we need the (qualifier → row)
+    // pairing in the response and the SQL→Rust pair-reconstruction
+    // costs more than 64 indexed lookups.
+    if let Some(pg) = state.pg.as_ref() {
+        for q in &unique {
+            if results.contains_key(q) {
+                continue;
+            }
+            match theorems::find_by_imported_source(pg, q).await {
+                Ok(Some(t)) => {
+                    let id_hex = hex::encode(&t.id);
+                    let source = t
+                        .origin_payload
+                        .as_ref()
+                        .and_then(|p| p.get("Imported"))
+                        .and_then(|i| i.get("source"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or(q)
+                        .to_string();
+                    results.insert(
+                        q.clone(),
+                        ResolveResponse::Theorem {
+                            id: id_hex,
+                            domain: t.domain.clone(),
+                            source,
+                            verification_tactic: t.verification_tactic.clone(),
+                        },
+                    );
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        qualifier = %q,
+                        error = %e,
+                        "bulk: pg lookup failed",
+                    );
+                }
+            }
+        }
+    }
+
+    // Axiom store fallback for qualifiers PG didn't resolve.
+    let store = state.axiom_store.load();
+    for q in &unique {
+        if results.contains_key(q) {
+            continue;
+        }
+        let hit = store.get(q).or_else(|| store.get(last_segment(q)));
+        let resp = match hit {
+            Some(a) => ResolveResponse::Axiom {
+                name: a.name,
+                domain: a.domain.to_string(),
+                description: a.description,
+            },
+            None => ResolveResponse::None,
+        };
+        results.insert(q.clone(), resp);
+    }
+
+    (StatusCode::OK, Json(BulkResponse { results })).into_response()
 }

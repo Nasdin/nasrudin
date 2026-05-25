@@ -13,8 +13,8 @@
 use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, ExprTrait, NotSet, QueryFilter,
-    QueryOrder, QuerySelect, Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, ExprTrait, FromQueryResult,
+    NotSet, QueryFilter, QueryOrder, QuerySelect, Set,
 };
 
 use crate::entity::theorems;
@@ -233,6 +233,38 @@ pub async fn list_by_ids(
         .all(db)
         .await
         .context("list_by_ids theorems")
+}
+
+/// List theorems that have `parent_id` in their `parents` array. This is
+/// the reverse-lineage query — given a theorem, find every downstream
+/// theorem that builds on it. Used by the "Used by" panel on the
+/// theorem detail page.
+///
+/// `parents` is a `bytea[]` column in PG. The `@>` containment operator
+/// (with an `array(...)` literal of a single element) checks whether the
+/// array contains the given hash. PG can use a GIN index on the column
+/// for this; if no index exists the planner falls back to a sequential
+/// scan, which is still tolerable at our current ~30 k row count.
+pub async fn list_dependents(
+    db: &impl ConnectionTrait,
+    parent_id: &[u8],
+    limit: u64,
+) -> Result<Vec<theorems::Model>> {
+    // `FromQueryResult` needs to be in scope to make `Model::find_by_statement`
+    // available — it's a default-method on the trait, not on Model directly.
+    use sea_orm::{FromQueryResult, Statement};
+    let stmt = Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        r#"SELECT * FROM theorems
+           WHERE parents @> ARRAY[$1]::bytea[]
+           ORDER BY created_at DESC
+           LIMIT $2"#,
+        [parent_id.to_vec().into(), (limit as i64).into()],
+    );
+    theorems::Model::find_by_statement(stmt)
+        .all(db)
+        .await
+        .context("list_dependents theorems")
 }
 
 /// Look up the theorem (if any) imported from a specific Lean qualifier.

@@ -15,7 +15,7 @@ import {
   useStartPaperDraft,
 } from '~/lib/queries';
 
-export const Route = createFileRoute('/conjecture/$id')({ component: ConjectureJobPage });
+export const Route = createFileRoute('/conjecture/$id')({ loader: async () => null, component: ConjectureJobPage });
 
 function ConjectureJobPage() {
   const { id } = Route.useParams();

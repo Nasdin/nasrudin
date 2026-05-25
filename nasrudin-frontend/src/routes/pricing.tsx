@@ -4,7 +4,7 @@ import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { API_BASE } from '~/lib/api';
 
-export const Route = createFileRoute('/pricing')({ component: PricingPage });
+export const Route = createFileRoute('/pricing')({ loader: async () => null, component: PricingPage });
 
 interface Tier {
   name: string;

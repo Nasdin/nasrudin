@@ -270,6 +270,62 @@ async fn main() -> anyhow::Result<()> {
     nasrudin_derive::no_cheat_audit::audit_or_panic(&axiom_store, "physics-api boot");
     tracing::info!("No-cheat audit passed: 0 forbidden headlines in AxiomStore");
 
+    // M3 catalog hash set. Pre-compute every Eq-rooted PhysLean
+    // canonical hash so `/api/discoveries/novel` can do O(1)
+    // novelty checks against the imported corpus. Path discovery
+    // mirrors the worker (engine/crates/ga/src/bin/worker.rs):
+    //   1. $NASRUDIN_CATALOG_PATH (explicit override)
+    //   2. <prover_root>/../physlean-extract/output/catalog.json
+    //   3. ./physlean-extract/output/catalog.json (repo-root run)
+    // Missing file → empty set + WARN; the endpoint still serves but
+    // treats every non-imported GA row as novel. This is an
+    // operational degradation, not a correctness bug.
+    let catalog_hashes = {
+        let resolved: Option<std::path::PathBuf> = std::env::var("NASRUDIN_CATALOG_PATH")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| Some(catalog_path.clone()))
+            .or_else(|| {
+                let local =
+                    std::path::PathBuf::from("physlean-extract/output/catalog.json");
+                local.exists().then_some(local)
+            });
+        match resolved {
+            Some(p) if p.exists() => {
+                match nasrudin_derive::axiom_store::AxiomStore::collect_catalog_eq_canonicals(&p) {
+                    Ok(v) => {
+                        tracing::info!(
+                            "M3 catalog hash set built: {} Eq-rooted entries from {}",
+                            v.len(),
+                            p.display(),
+                        );
+                        physics_api::state::CatalogHashSet::from_vec(v)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "M3 catalog hash collection failed at {}: {e}; /api/discoveries/novel will treat every non-imported GA theorem as novel",
+                            p.display(),
+                        );
+                        physics_api::state::CatalogHashSet::empty()
+                    }
+                }
+            }
+            Some(p) => {
+                tracing::warn!(
+                    "M3 catalog file resolved to {} but does not exist; /api/discoveries/novel will treat every non-imported GA theorem as novel",
+                    p.display(),
+                );
+                physics_api::state::CatalogHashSet::empty()
+            }
+            None => {
+                tracing::warn!(
+                    "M3 catalog path could not be resolved (set NASRUDIN_CATALOG_PATH); /api/discoveries/novel will treat every non-imported GA theorem as novel",
+                );
+                physics_api::state::CatalogHashSet::empty()
+            }
+        }
+    };
+
     let axiom_store = SharedAxiomStore::new(axiom_store);
 
     // Admin token for `/api/admin/*` endpoints (corpus reload).
@@ -605,6 +661,7 @@ async fn main() -> anyhow::Result<()> {
         trust_cache: trust_cache.clone(),
         trust_invalidation_tx: trust_invalidation_tx.clone(),
         trusted_spot_check_rate,
+        catalog_hashes,
     });
 
     // Reseed CapacityTracker.paid_slots from the DB. The counter is
@@ -1030,6 +1087,13 @@ async fn main() -> anyhow::Result<()> {
     let api = Router::new()
         .route("/api/ga/status", get(ga_status_handler))
         .route("/api/featured", get(handlers::featured::featured))
+        // M3: novel-discovery feed. Returns GA-verified theorems whose
+        // canonical_hash is NOT in the boot-loaded PhysLean catalog
+        // hash set. See handlers/discoveries.rs for the filter spec.
+        .route(
+            "/api/discoveries/novel",
+            get(handlers::discoveries::novel),
+        )
         .route(
             "/api/theorems/{hash}/lean",
             get(handlers::theorems::lean_download),
@@ -1037,6 +1101,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/theorems/recent", get(handlers::theorems::recent))
         .route("/api/theorems/{id}/lineage", get(get_lineage))
         .route("/api/theorems/{id}/proof", get(get_proof))
+        // Reverse lineage — list theorems whose `parents` array contains
+        // this id. Powers the "Used by" panel on the theorem detail page.
+        .route(
+            "/api/theorems/{id}/dependents",
+            get(handlers::theorems::dependents),
+        )
         // P-Task 4: manual "Verify with Lake" button. POST is
         // user-triggered, GET is the polling status endpoint.
         .route(
@@ -1067,6 +1137,10 @@ async fn main() -> anyhow::Result<()> {
         // dependency-row click lands on a real in-app destination instead
         // of an external GitHub search.
         .route("/api/resolve/{qualifier}", get(handlers::resolve::resolve))
+        // Bulk variant: one POST resolves all of a theorem's dependencies
+        // at once, avoiding the N-1 TLS+HTTP overheads of firing
+        // resolve-per-row from the "Built from" panel.
+        .route("/api/resolve/bulk", post(handlers::resolve::bulk))
         .route("/api/seed", get(handlers::seed::seed))
         // Cold-tier corpus dump for worker hydration. Streams every
         // entry of `CF_CORPUS_AXIOM` as line-delimited JSON. Workers

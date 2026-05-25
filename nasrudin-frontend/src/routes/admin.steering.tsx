@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { adminFetch } from '~/lib/adminApi';
 
-export const Route = createFileRoute('/admin/steering')({ component: SteeringPage });
+export const Route = createFileRoute('/admin/steering')({ loader: async () => null, component: SteeringPage });
 
 function SteeringPage() {
   const { data } = useQuery<unknown>({

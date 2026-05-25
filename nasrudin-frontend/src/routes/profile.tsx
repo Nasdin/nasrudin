@@ -18,7 +18,7 @@ import {
   type SponsorTier,
 } from '~/lib/queries';
 
-export const Route = createFileRoute('/profile')({ component: ProfilePage });
+export const Route = createFileRoute('/profile')({ loader: async () => null, component: ProfilePage });
 
 function BillingCard() {
   const { data } = useBillingMe();

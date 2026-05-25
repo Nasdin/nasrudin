@@ -14,7 +14,7 @@ import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { useApiKeys, useMe, useMyWorkers, useRevokeApiKey } from '~/lib/queries';
 import type { ApiKeySummary, NewApiKey, Worker } from '~/lib/types';
 
-export const Route = createFileRoute('/api-keys')({ component: ApiKeysPage });
+export const Route = createFileRoute('/api-keys')({ loader: async () => null, component: ApiKeysPage });
 
 function ApiKeysPage() {
   const me = useMe();

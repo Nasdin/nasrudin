@@ -13,6 +13,7 @@ import { useContributorWorkers } from '~/lib/queries';
 import type { Worker } from '~/lib/types';
 
 export const Route = createFileRoute('/contributors/$id')({
+  loader: async () => null,
   component: ContributorDetailPage,
 });
 

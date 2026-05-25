@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
 import { adminFetch } from '~/lib/adminApi';
 
-export const Route = createFileRoute('/admin/corpus')({ component: CorpusPage });
+export const Route = createFileRoute('/admin/corpus')({ loader: async () => null, component: CorpusPage });
 
 function CorpusPage() {
   const [last, setLast] = useState<unknown>(null);

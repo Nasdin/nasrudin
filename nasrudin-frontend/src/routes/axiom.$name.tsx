@@ -5,7 +5,7 @@ import { AppHeader } from '~/components/platform/AppHeader';
 import { DomainBadge } from '~/components/theorem/DomainBadge';
 import { apiFetch } from '~/lib/api';
 
-export const Route = createFileRoute('/axiom/$name')({ component: AxiomPage });
+export const Route = createFileRoute('/axiom/$name')({ loader: async () => null, component: AxiomPage });
 
 type Resolve =
   | {

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { adminFetch } from '~/lib/adminApi';
 import type { AdminStats } from '~/lib/adminTypes';
 
-export const Route = createFileRoute('/admin/')({ component: AdminDashboard });
+export const Route = createFileRoute('/admin/')({ loader: async () => null, component: AdminDashboard });
 
 function AdminDashboard() {
   const { data } = useQuery<AdminStats>({

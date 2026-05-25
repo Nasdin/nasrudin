@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 
-export const Route = createFileRoute('/api-docs')({ component: ApiDocsPage });
+export const Route = createFileRoute('/api-docs')({ loader: async () => null, component: ApiDocsPage });
 
 interface CodeTab {
   lang: string;

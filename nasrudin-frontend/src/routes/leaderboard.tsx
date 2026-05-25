@@ -3,7 +3,7 @@ import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { useUserSponsorship, useContributors, type SponsorTier } from '~/lib/queries';
 
-export const Route = createFileRoute('/leaderboard')({ component: LeaderboardPage });
+export const Route = createFileRoute('/leaderboard')({ loader: async () => null, component: LeaderboardPage });
 
 /// Small colored dot rendered next to a contributor handle when the
 /// linked user has an active sponsorship. Subtle by design — no

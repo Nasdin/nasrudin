@@ -6,7 +6,7 @@ import { SignInPrompt } from '~/components/platform/SignInPrompt';
 import { isApiError } from '~/lib/api';
 import { useCreateConjecture, useMe } from '~/lib/queries';
 
-export const Route = createFileRoute('/conjecture/')({ component: ConjecturePage });
+export const Route = createFileRoute('/conjecture/')({ loader: async () => null, component: ConjecturePage });
 
 function ConjecturePage() {
   const me = useMe();

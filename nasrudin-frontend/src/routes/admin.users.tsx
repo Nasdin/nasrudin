@@ -12,7 +12,7 @@ interface ListResp {
   page_size: number;
 }
 
-export const Route = createFileRoute('/admin/users')({ component: UsersList });
+export const Route = createFileRoute('/admin/users')({ loader: async () => null, component: UsersList });
 
 function UsersList() {
   const [search, setSearch] = useState('');
