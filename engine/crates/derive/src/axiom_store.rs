@@ -70,6 +70,31 @@ pub use nasrudin_core::Axiom;
 /// hot working set before the LRU starts evicting.
 const COLD_LRU_CAPACITY: usize = 1024;
 
+/// Peel Pi/Lam/Let binders to reach an `Eq`-rooted body and return its
+/// canonical-form string.
+///
+/// PhysLean catalog statements are almost universally Pi-wrapped over
+/// implicit type-class params (e.g. `∀ (E m c : ℝ), E = m * c^2`); the
+/// meaningful algebraic content lives in the body. The novelty bloom on
+/// the worker compares against `final_expr.to_canonical()` where the
+/// final_expr is the Eq itself (no Pi wrapper), so we have to strip the
+/// wrapper before hashing or we'd never get a match.
+///
+/// Returns `None` for any statement that doesn't bottom out in
+/// `BinOp(Eq, _, _)` — those aren't equations the GA can collide with.
+///
+/// Used by [`AxiomStore::collect_catalog_eq_canonicals`] and the worker's
+/// novelty-vs-catalog bloom prepopulation (M3).
+pub fn eq_canonical_under_pi(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::BinOp(BinOp::Eq, _, _) => Some(expr.to_canonical()),
+        Expr::Pi(_, _, body) | Expr::Lam(_, _, body) | Expr::Let(_, _, body) => {
+            eq_canonical_under_pi(body)
+        }
+        _ => None,
+    }
+}
+
 /// Classify an `Expr` as a proposition the GA can compose meaningfully.
 ///
 /// A proposition has a top-level relational connective: `Eq`, `Ne`,
@@ -481,6 +506,53 @@ impl AxiomStore {
             count - ast_count
         );
         Ok(count)
+    }
+
+    /// Parse a PhysLean catalog JSON file and return the canonical-form
+    /// hashes of every entry whose statement (after stripping Pi/Lam/Let
+    /// wrappers) is an `Eq`-rooted equation.
+    ///
+    /// **M3 novelty-vs-catalog filter.** These hashes are pre-populated
+    /// into the worker's `novelty_bloom` so any GA-produced chain whose
+    /// final equation matches an existing PhysLean theorem is treated
+    /// as "already known" and not lake-verified. The bloom comparison
+    /// uses `nasrudin_core::canonical_hash` against
+    /// `final_expr.to_canonical()` — same path the worker uses for
+    /// rejected_canonicals.
+    ///
+    /// Returns a `Vec<Vec<u8>>` (xxhash64 little-endian bytes) so it
+    /// can be dropped straight into a `HashSet<Vec<u8>>` or fed to
+    /// `bloomfilter::Bloom::set`. The catalog file isn't required to
+    /// exist; missing/unreadable returns `Ok(vec![])` so workers
+    /// without a local catalog mirror just fall back to the
+    /// cluster-rejected set.
+    pub fn collect_catalog_eq_canonicals(
+        catalog_path: &std::path::Path,
+    ) -> anyhow::Result<Vec<Vec<u8>>> {
+        if !catalog_path.exists() {
+            return Ok(Vec::new());
+        }
+        let content = std::fs::read_to_string(catalog_path)?;
+        let mut deser = serde_json::Deserializer::from_str(&content);
+        deser.disable_recursion_limit();
+        let deser = serde_stacker::Deserializer::new(&mut deser);
+        let catalog: serde_json::Value = serde::Deserialize::deserialize(deser)?;
+
+        let mut out: Vec<Vec<u8>> = Vec::new();
+        if let Some(theorems) = catalog.get("theorems").and_then(|t| t.as_array()) {
+            for thm in theorems {
+                let Some(ast) = thm.get("expr_ast").filter(|v| !v.is_null()) else {
+                    continue;
+                };
+                let Ok(expr) = serde_json::from_value::<Expr>(ast.clone()) else {
+                    continue;
+                };
+                if let Some(canon) = eq_canonical_under_pi(&expr) {
+                    out.push(nasrudin_core::canonical_hash(&canon));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Streaming hydration of the Mathlib math-corpus into the cold
@@ -1166,5 +1238,205 @@ mod tests {
             let parsed: Result<Expr, _> = serde_json::from_value(v);
             assert!(parsed.is_ok(), "failed to deserialise: {src}");
         }
+    }
+
+    /// `eq_canonical_under_pi` should:
+    /// - return Some for a bare Eq (the GA's typical output shape),
+    /// - peel one or more Pi binders to reach an Eq body (PhysLean's
+    ///   typical wire shape over implicit ∀ params),
+    /// - return None for an App-chain / Var / non-equation,
+    /// - and the returned canonical string must round-trip through
+    ///   `canonical_hash` to the same bytes the worker computes for an
+    ///   identical chain output.
+    #[test]
+    fn eq_canonical_under_pi_strips_wrappers() {
+        // Bare Eq: E = m * c^2
+        let eq = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(Expr::Var("E".into())),
+            Box::new(Expr::BinOp(
+                BinOp::Mul,
+                Box::new(Expr::Var("m".into())),
+                Box::new(Expr::BinOp(
+                    BinOp::Pow,
+                    Box::new(Expr::Var("c".into())),
+                    Box::new(Expr::Lit(2, 1)),
+                )),
+            )),
+        );
+        let bare = eq_canonical_under_pi(&eq).expect("bare eq");
+        assert!(bare.starts_with("(= "), "got {bare}");
+
+        // Pi-wrapped: ∀ (E : Real), E = m * c^2
+        let pi = Expr::Pi(
+            "E".into(),
+            Box::new(Expr::Var("Real".into())),
+            Box::new(eq.clone()),
+        );
+        let wrapped = eq_canonical_under_pi(&pi).expect("pi-wrapped eq");
+        // The inner body's canonical must be identical to the bare form;
+        // that's the whole point of peeling.
+        assert_eq!(wrapped, bare);
+
+        // Nested Pi: ∀ E, ∀ m, ∀ c, E = m * c^2  → still bottoms out.
+        let pi2 = Expr::Pi(
+            "m".into(),
+            Box::new(Expr::Var("Real".into())),
+            Box::new(Expr::Pi(
+                "c".into(),
+                Box::new(Expr::Var("Real".into())),
+                Box::new(eq.clone()),
+            )),
+        );
+        let wrapped2 = eq_canonical_under_pi(&pi2).expect("nested pi");
+        assert_eq!(wrapped2, bare);
+
+        // Non-equation App chain (the `instAddCommGroup`-style entry):
+        // expr_ast = Pi over Nat to App(AddCommGroup, App(Lorentz.CoMod, d))
+        let non_eq = Expr::Pi(
+            "d".into(),
+            Box::new(Expr::Var("Nat".into())),
+            Box::new(Expr::App(
+                Box::new(Expr::Var("AddCommGroup".into())),
+                Box::new(Expr::App(
+                    Box::new(Expr::Var("Lorentz.CoMod".into())),
+                    Box::new(Expr::Var("d".into())),
+                )),
+            )),
+        );
+        assert!(eq_canonical_under_pi(&non_eq).is_none());
+
+        // Confirm round-trip with canonical_hash.
+        let hash_a = nasrudin_core::canonical_hash(&bare);
+        let hash_b = nasrudin_core::canonical_hash(&wrapped);
+        assert_eq!(hash_a, hash_b, "Pi-wrapped should hash identically to bare Eq");
+    }
+
+    /// M3 acceptance test: build a tiny in-memory mock catalog with three
+    /// entries (one bare Eq, one Pi-wrapped Eq, one non-equation App
+    /// chain), feed it through `collect_catalog_eq_canonicals`, and
+    /// confirm:
+    ///
+    /// 1. exactly 2/3 entries produce a hash (the non-eq is dropped),
+    /// 2. a chain that reproduces the same canonical equation hashes
+    ///    into the bloom-populated set (i.e. the catalog filter would
+    ///    flag it as "already known").
+    #[test]
+    fn catalog_eq_canonicals_collects_and_blooms() {
+        use std::io::Write;
+        // Mock catalog with three entries.
+        let catalog_json = serde_json::json!({
+            "theorems": [
+                {
+                    "name": "rest_energy_bare",
+                    "domain": "SpecialRelativity",
+                    "doc_string": "E = m * c^2 as bare Eq",
+                    "expr_ast": {"BinOp": ["Eq",
+                        {"Var": "E"},
+                        {"BinOp": ["Mul",
+                            {"Var": "m"},
+                            {"BinOp": ["Pow", {"Var": "c"}, {"Lit": [2, 1]}]}
+                        ]}
+                    ]}
+                },
+                {
+                    "name": "rest_energy_pi",
+                    "domain": "SpecialRelativity",
+                    "doc_string": "∀ (E m c : Real), E = m * c^2",
+                    "expr_ast": {"Pi": ["E", {"Var": "Real"},
+                        {"BinOp": ["Eq",
+                            {"Var": "E"},
+                            {"BinOp": ["Mul",
+                                {"Var": "m"},
+                                {"BinOp": ["Pow", {"Var": "c"}, {"Lit": [2, 1]}]}
+                            ]}
+                        ]}
+                    ]}
+                },
+                {
+                    "name": "lorentz_comod_instaddcommgroup",
+                    "domain": "SpecialRelativity",
+                    "doc_string": "non-equation type instance",
+                    "expr_ast": {"Pi": ["d", {"Var": "Nat"},
+                        {"App": [{"Var": "AddCommGroup"},
+                            {"App": [{"Var": "Lorentz.CoMod"}, {"Var": "d"}]}]}
+                    ]}
+                }
+            ]
+        });
+
+        // Write to a tempfile (no extra crate dep — std::env::temp_dir
+        // is good enough for a unit test).
+        let tmpdir = std::env::temp_dir();
+        let path = tmpdir.join(format!(
+            "nasrudin_m3_catalog_{}.json",
+            std::process::id()
+        ));
+        {
+            let mut f = std::fs::File::create(&path).expect("create tmp catalog");
+            f.write_all(catalog_json.to_string().as_bytes())
+                .expect("write tmp catalog");
+        }
+
+        let hashes = AxiomStore::collect_catalog_eq_canonicals(&path)
+            .expect("collect_catalog_eq_canonicals");
+        // 2 of 3 entries hash; the non-equation drops.
+        assert_eq!(
+            hashes.len(),
+            2,
+            "expected exactly the two Eq-rooted entries (bare + Pi-wrapped)"
+        );
+
+        // The Pi-wrapped and bare entries must hash to the *same* value
+        // — that's the whole novelty-filter contract.
+        assert_eq!(hashes[0], hashes[1], "Pi-wrap + bare must collide");
+
+        // Now build the bloom the way the worker does and confirm a
+        // synthetic chain producing `E = m * c^2` would hit it.
+        let mut bloom = bloomfilter::Bloom::<[u8]>::new_for_fp_rate(
+            std::cmp::max(hashes.len() * 4, 4096),
+            0.001,
+        )
+        .expect("bloom params");
+        for h in &hashes {
+            bloom.set(h.as_slice());
+        }
+
+        // A GA chain whose final_expr is `E = m * c^2` (no Pi wrapper,
+        // because the chain engine outputs bare equations) must hit the
+        // bloom — that's the M3 acceptance criterion.
+        let chain_final = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(Expr::Var("E".into())),
+            Box::new(Expr::BinOp(
+                BinOp::Mul,
+                Box::new(Expr::Var("m".into())),
+                Box::new(Expr::BinOp(
+                    BinOp::Pow,
+                    Box::new(Expr::Var("c".into())),
+                    Box::new(Expr::Lit(2, 1)),
+                )),
+            )),
+        );
+        let canon = chain_final.to_canonical();
+        let canon_hash = nasrudin_core::canonical_hash(&canon);
+        assert!(
+            bloom.check(canon_hash.as_slice()),
+            "chain producing the catalog equation must hit the bloom"
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Missing/empty catalog path is OK — workers without a local
+    /// catalog mirror just get zero hashes and fall back to the
+    /// cluster-rejected set.
+    #[test]
+    fn catalog_eq_canonicals_handles_missing_file() {
+        let missing = std::path::Path::new("/nonexistent/path/catalog.json");
+        let hashes = AxiomStore::collect_catalog_eq_canonicals(missing)
+            .expect("missing path returns Ok(empty)");
+        assert!(hashes.is_empty());
     }
 }

@@ -3254,6 +3254,7 @@ name = "nasrudin-derive"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bloomfilter",
  "chrono",
  "hex",
  "lru",

@@ -24,3 +24,7 @@ nasrudin-lean-bridge = { path = "../lean-bridge" }
 serial_test = "3"
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "process", "io-util", "sync"] }
+# M3 novelty-vs-catalog: verify the bloom prepopulation contract from
+# the same crate the helper lives in. Worker (`nasrudin-ga`) uses the
+# matching crate version for the runtime path.
+bloomfilter = "3"
