@@ -5,6 +5,7 @@ import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import { leanToSymbols } from '~/lib/physicsSymbols';
 import { useRecentTheorems } from '~/lib/queries';
+import { statementToLatex } from '~/lib/statementToLatex';
 
 const FILTERS = [
   'All',
@@ -42,10 +43,91 @@ function importedSource(payload: unknown): string | null {
   const src = inner.source;
   return typeof src === 'string' ? src : null;
 }
+
 import { displayLeanName as lastSegment } from '~/lib/leanNames';
+
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
   return `${s.slice(0, n - 1)}…`;
+}
+
+// Compact one-line statement for table rows: prefer LaTeX (server or
+// client-translated). Fall back to the Lean qualifier last-segment for
+// imports without a parseable statement; final fallback is a truncated
+// AST string. KaTeX renders in-place so visitors see real math, not
+// `(pi d v:Nat (...))`.
+function RowStatement({
+  latex,
+  canonical,
+  importedFrom,
+}: {
+  latex: string | null;
+  canonical: string;
+  importedFrom: string | null;
+}) {
+  const src = latex ?? statementToLatex(canonical).latex;
+  if (src && src.trim().length > 0) {
+    return <MathExpr source={src} />;
+  }
+  if (importedFrom) {
+    return (
+      <span
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 13,
+          fontStyle: 'normal',
+          color: 'var(--ink-800)',
+        }}
+        title={importedFrom}
+      >
+        {lastSegment(importedFrom)}
+      </span>
+    );
+  }
+  const text = truncate(leanToSymbols(canonical), 80);
+  return (
+    <span
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 12,
+        fontStyle: 'normal',
+        color: 'var(--ink-700)',
+        whiteSpace: 'nowrap',
+      }}
+      title={leanToSymbols(canonical)}
+    >
+      {text}
+    </span>
+  );
+}
+
+// Expanded-row statement: same priority as RowStatement but renders
+// block math and falls back to a pre-block AST view (the row is already
+// expanded, so vertical space is fine).
+function DetailStatement({ latex, canonical }: { latex: string | null; canonical: string }) {
+  const src = latex ?? statementToLatex(canonical).latex;
+  if (src && src.trim().length > 0) {
+    return (
+      <div className="full-stmt">
+        <MathExpr source={src} block />
+      </div>
+    );
+  }
+  return (
+    <pre
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 13,
+        padding: '12px 16px',
+        background: 'var(--paper-100)',
+        borderRadius: 6,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+      }}
+    >
+      {leanToSymbols(canonical)}
+    </pre>
+  );
 }
 
 export const TheoremBrowser = memo(function TheoremBrowser() {
@@ -109,15 +191,7 @@ export const TheoremBrowser = memo(function TheoremBrowser() {
         {rows.slice(0, 8).map((t) => {
           const id = bytesToHex(t.id);
           const isOpen = expanded === id;
-          return (
-            <BrowserRow
-              key={id}
-              id={id}
-              t={t}
-              isOpen={isOpen}
-              setExpanded={setExpanded}
-            />
-          );
+          return <BrowserRow key={id} id={id} t={t} isOpen={isOpen} setExpanded={setExpanded} />;
         })}
       </div>
       {rows.length > 0 && (
@@ -158,7 +232,9 @@ function BrowserRow({
   setExpanded: (v: string | null) => void;
 }) {
   const importedFrom = importedSource(t.origin_payload);
-  const displayName = importedFrom ? lastSegment(importedFrom) : (t.verification_tactic ?? `gen ${t.generation ?? '—'}`);
+  const displayName = importedFrom
+    ? lastSegment(importedFrom)
+    : (t.verification_tactic ?? `gen ${t.generation ?? '—'}`);
   return (
     <>
       <button
@@ -175,38 +251,11 @@ function BrowserRow({
       >
         <span className="browser-id">{id.slice(0, 8)}</span>
         <span className="browser-stmt">
-          {t.latex ? (
-            <MathExpr source={t.latex} />
-          ) : importedFrom ? (
-            <span
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 13,
-                fontStyle: 'normal',
-                color: 'var(--ink-800)',
-              }}
-              title={importedFrom}
-            >
-              {lastSegment(importedFrom)}
-            </span>
-          ) : (
-            <span
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 12,
-                fontStyle: 'normal',
-                color: 'var(--ink-700)',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                maxWidth: '100%',
-                display: 'inline-block',
-              }}
-              title={leanToSymbols(t.canonical_statement)}
-            >
-              {truncate(leanToSymbols(t.canonical_statement), 80)}
-            </span>
-          )}
+          <RowStatement
+            latex={t.latex ?? null}
+            canonical={t.canonical_statement ?? ''}
+            importedFrom={importedFrom}
+          />
         </span>
         <span className="browser-name">{displayName}</span>
         <span className="browser-dom">{DOMAIN_LABEL[t.domain] ?? t.domain}</span>
@@ -239,25 +288,7 @@ function BrowserRow({
         <div className="browser-detail">
           <div className="browser-detail-block">
             <h5>Statement</h5>
-            {t.latex ? (
-              <div className="full-stmt">
-                <MathExpr source={t.latex} block />
-              </div>
-            ) : (
-              <pre
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 13,
-                  padding: '12px 16px',
-                  background: 'var(--paper-100)',
-                  borderRadius: 6,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {leanToSymbols(t.canonical_statement)}
-              </pre>
-            )}
+            <DetailStatement latex={t.latex ?? null} canonical={t.canonical_statement ?? ''} />
             {importedFrom && (
               <div
                 style={{

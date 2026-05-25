@@ -3,8 +3,8 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '~/lib/api';
 import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
-import { leanToSymbols } from '~/lib/physicsSymbols';
 import { useRecentTheorems } from '~/lib/queries';
+import { statementToLatex } from '~/lib/statementToLatex';
 
 function getTimeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -31,10 +31,66 @@ function importedSource(payload: unknown): string | null {
   const src = inner.source;
   return typeof src === 'string' ? src : null;
 }
+
 import { displayLeanName as lastSegment } from '~/lib/leanNames';
-function truncate(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return `${s.slice(0, n - 1)}…`;
+
+// Render the statement of a live-ticker theorem with KaTeX whenever
+// possible — preferring server-side `latex`, then a client-side translation
+// of the prefix-form `canonical_statement`, and finally falling back to the
+// Lean qualifier (for imports with no statement at all). The previous
+// fallback fed the raw S-expression through KaTeX, which produced unreadable
+// concatenated-italic-letters output the user flagged as "not in latex".
+function HeroStatement({
+  latex,
+  canonical,
+  importedFrom,
+}: {
+  latex: string | null;
+  canonical: string;
+  importedFrom: string | null;
+}) {
+  const src = latex ?? statementToLatex(canonical).latex;
+  if (src && src.trim().length > 0) {
+    return (
+      <div className="theorem-statement">
+        <MathExpr source={src} block />
+      </div>
+    );
+  }
+  if (importedFrom) {
+    return (
+      <div
+        className="theorem-statement"
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 18,
+          fontWeight: 600,
+          textAlign: 'left',
+          wordBreak: 'break-word',
+        }}
+        title={importedFrom}
+      >
+        {lastSegment(importedFrom)}
+        <div
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            fontWeight: 400,
+            color: 'var(--ink-500)',
+            marginTop: 6,
+            wordBreak: 'break-all',
+          }}
+        >
+          {importedFrom}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="theorem-statement" style={{ color: 'var(--ink-500)', fontStyle: 'italic' }}>
+      (no statement)
+    </div>
+  );
 }
 
 /** Render a real recent theorem as a "VERIFIED  thm:<id>  <statement>" ticker line. */
@@ -50,10 +106,9 @@ function tickerLineFor(t: {
   // not involved here so the raw text just needs to be short and human-
   // readable.
   const imp = importedSource(t.origin_payload);
-  const stmt =
-    (t.latex ?? (imp ? lastSegment(imp) : t.canonical_statement) ?? '')
-      .toString()
-      .slice(0, 80);
+  const stmt = (t.latex ?? (imp ? lastSegment(imp) : t.canonical_statement) ?? '')
+    .toString()
+    .slice(0, 80);
   return `VERIFIED  thm:${id}…  ${stmt}`;
 }
 
@@ -140,8 +195,7 @@ export const HeroLiveTheorem = memo(function HeroLiveTheorem() {
   // truncated canonical preview. The old code fed the s-expression into
   // KaTeX which is what produced the (pidv:Nat(piv... output the user
   // flagged.
-  const hasContent =
-    !!t && !!id && (!!t.latex || !!importedFrom || !!t.canonical_statement);
+  const hasContent = !!t && !!id && (!!t.latex || !!importedFrom || !!t.canonical_statement);
 
   // No real theorem yet → skeleton card. Never invent one.
   if (!t || !id || !hasContent) {
@@ -189,51 +243,11 @@ export const HeroLiveTheorem = memo(function HeroLiveTheorem() {
             </span>
           </div>
           <div className="theorem-card-body">
-            {t.latex ? (
-              <div className="theorem-statement">
-                <MathExpr source={t.latex} block />
-              </div>
-            ) : importedFrom ? (
-              <div
-                className="theorem-statement"
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 18,
-                  fontWeight: 600,
-                  textAlign: 'left',
-                  wordBreak: 'break-word',
-                }}
-                title={importedFrom}
-              >
-                {lastSegment(importedFrom)}
-                <div
-                  style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11,
-                    fontWeight: 400,
-                    color: 'var(--ink-500)',
-                    marginTop: 6,
-                    wordBreak: 'break-all',
-                  }}
-                >
-                  {importedFrom}
-                </div>
-              </div>
-            ) : (
-              <pre
-                className="theorem-statement"
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 13,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  textAlign: 'left',
-                  margin: 0,
-                }}
-              >
-                {truncate(leanToSymbols(t.canonical_statement), 220)}
-              </pre>
-            )}
+            <HeroStatement
+              latex={t.latex ?? null}
+              canonical={t.canonical_statement ?? ''}
+              importedFrom={importedFrom}
+            />
             <div className="theorem-name">{id}</div>
             <div className="theorem-tag">
               {domain} · gen {generation}

@@ -12,6 +12,7 @@ import { bytesToHex } from '~/lib/hex';
 import { Math as MathExpr } from '~/lib/katex';
 import { leanToSymbols } from '~/lib/physicsSymbols';
 import { useTheorem } from '~/lib/queries';
+import { statementToLatex } from '~/lib/statementToLatex';
 import type { Theorem } from '~/lib/types';
 
 export const Route = createFileRoute('/theorem/$id')({ component: TheoremPage });
@@ -49,6 +50,7 @@ function importedSource(payload: unknown): string | null {
   const src = inner.source;
   return typeof src === 'string' ? src : null;
 }
+
 import { displayLeanName as lastSegment } from '~/lib/leanNames';
 
 function TheoremView({ thm }: { thm: Theorem }) {
@@ -113,34 +115,7 @@ function TheoremView({ thm }: { thm: Theorem }) {
           </div>
         )}
         <div className="thm-statement-block">
-          {thm.latex ? (
-            <div className="thm-statement-big">
-              <MathExpr source={thm.latex} block />
-            </div>
-          ) : (
-            // No LaTeX = imported PhysLean/Mathlib row OR a GA chain
-            // whose emitter never produced LaTeX. KaTeX over the
-            // prefix-form string renders garbled "math"; show the raw
-            // statement as code instead so the user can actually read
-            // the s-expression. PhysLean theorems are the dominant case
-            // here (~1,000 rows in the seeded corpus).
-            <pre
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 13,
-                lineHeight: 1.55,
-                padding: '20px 24px',
-                background: 'var(--paper-100)',
-                border: '1px solid var(--paper-300)',
-                borderRadius: 8,
-                overflow: 'auto',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-              }}
-            >
-              {leanToSymbols(thm.canonical_statement)}
-            </pre>
-          )}
+          <StatementRender thm={thm} />
         </div>
         {(thm.lean_source || !isImported) && (
           <div className="thm-section">
@@ -185,8 +160,8 @@ function TheoremView({ thm }: { thm: Theorem }) {
                 {thm.engine_git_sha === 'physlean'
                   ? 'PhysLean'
                   : importedFrom?.startsWith('PhysLean')
-                  ? 'PhysLean'
-                  : 'Mathlib'}
+                    ? 'PhysLean'
+                    : 'Mathlib'}
               </strong>
               . The original Lean 4 declaration{' '}
               <code style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{importedFrom}</code>{' '}
@@ -205,8 +180,7 @@ function TheoremView({ thm }: { thm: Theorem }) {
         <h4>Provenance</h4>
         <ul className="meta-list">
           <li>
-            Worker{' '}
-            <strong style={{ fontFamily: 'var(--font-mono)' }}>{thm.contributor_id}</strong>
+            Worker <strong style={{ fontFamily: 'var(--font-mono)' }}>{thm.contributor_id}</strong>
           </li>
           {thm.user_email && (
             <li>
@@ -231,6 +205,96 @@ function TheoremView({ thm }: { thm: Theorem }) {
           </li>
         </ul>
       </aside>
+    </div>
+  );
+}
+
+// Render the theorem statement: prefer server-provided `latex`; otherwise
+// translate the prefix-form `canonical_statement` to LaTeX on the fly. When
+// the translator can't render structurally (`complete: false`) we still
+// show the partial LaTeX it produced but expose a "View kernel form" toggle
+// so a Lean user can see the raw AST. For truly empty / unparseable input
+// we drop straight through to the AST view.
+function StatementRender({ thm }: { thm: Theorem }) {
+  const [showKernel, setShowKernel] = useState(false);
+
+  const rendered = thm.latex
+    ? { latex: thm.latex, complete: true }
+    : statementToLatex(thm.canonical_statement);
+
+  const canShowLatex = rendered.latex.trim().length > 0;
+  const rawAst = leanToSymbols(thm.canonical_statement);
+
+  return (
+    <div>
+      {canShowLatex ? (
+        <div className="thm-statement-big">
+          <MathExpr source={rendered.latex} block />
+        </div>
+      ) : (
+        <pre
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 13,
+            lineHeight: 1.55,
+            padding: '20px 24px',
+            background: 'var(--paper-100)',
+            border: '1px solid var(--paper-300)',
+            borderRadius: 8,
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          {rawAst}
+        </pre>
+      )}
+      {canShowLatex && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            marginTop: 12,
+            fontSize: 12,
+            color: 'var(--ink-500)',
+          }}
+        >
+          {!rendered.complete && (
+            <span title="The translator left some internal bindings as ‘?’ — the kernel form has the full detail.">
+              partial render
+            </span>
+          )}
+          <button
+            type="button"
+            className="copy"
+            onClick={() => setShowKernel((v) => !v)}
+            aria-expanded={showKernel}
+          >
+            {showKernel ? 'Hide' : 'View'} Lean kernel form
+          </button>
+        </div>
+      )}
+      {canShowLatex && showKernel && (
+        <pre
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+            lineHeight: 1.55,
+            padding: '16px 20px',
+            marginTop: 12,
+            background: 'var(--paper-100)',
+            border: '1px solid var(--paper-300)',
+            borderRadius: 8,
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            color: 'var(--ink-700)',
+          }}
+        >
+          {rawAst}
+        </pre>
+      )}
     </div>
   );
 }
