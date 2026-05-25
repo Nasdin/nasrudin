@@ -3,16 +3,20 @@ import { useState } from 'react';
 import { AppFooter } from '~/components/platform/AppFooter';
 import { AppHeader } from '~/components/platform/AppHeader';
 import { CascadeAlert } from '~/components/theorem/CascadeAlert';
+import { DomainBadge } from '~/components/theorem/DomainBadge';
 import { LineageList } from '~/components/theorem/LineageList';
 import { ProofBlock } from '~/components/theorem/ProofBlock';
 import { SaveButton } from '~/components/theorem/SaveButton';
 import { VerificationBadge } from '~/components/theorem/VerificationBadge';
 import { VerifyWithLakeButton } from '~/components/theorem/VerifyWithLakeButton';
 import { bytesToHex } from '~/lib/hex';
+import { leanToHumanTitle } from '~/lib/humanTitle';
 import { Math as MathExpr } from '~/lib/katex';
+import { displayLeanName as lastSegment } from '~/lib/leanNames';
 import { leanToSymbols } from '~/lib/physicsSymbols';
 import { useTheorem } from '~/lib/queries';
 import { statementToLatex } from '~/lib/statementToLatex';
+import { statementToProse } from '~/lib/statementToProse';
 import type { Theorem } from '~/lib/types';
 
 export const Route = createFileRoute('/theorem/$id')({ component: TheoremPage });
@@ -51,13 +55,20 @@ function importedSource(payload: unknown): string | null {
   return typeof src === 'string' ? src : null;
 }
 
-import { displayLeanName as lastSegment } from '~/lib/leanNames';
-
 function TheoremView({ thm }: { thm: Theorem }) {
   const idHex = bytesToHex(thm.id);
   const importedFrom = importedSource(thm.origin_payload);
   const isImported = thm.verification_tactic === 'imported';
-  const displayHeading = importedFrom ? lastSegment(importedFrom) : idHex;
+  // The visible page title prefers a humanised reading of the Lean
+  // qualifier ("Timelike vectors dominate space") over the raw last-segment
+  // ("timelike_time_dominates_space"). For GA-derived theorems with no
+  // imported source we still fall back to the theorem id.
+  const humanTitle = leanToHumanTitle(importedFrom);
+  const displayHeading = humanTitle || (importedFrom ? lastSegment(importedFrom) : idHex);
+  const prose = statementToProse(thm.canonical_statement, {
+    importedFrom,
+    domain: thm.domain ?? null,
+  });
   const parentHexes = (thm.parents ?? []).map(bytesToHex);
   const showVerifyButton =
     thm.status === 'Verified' &&
@@ -76,6 +87,7 @@ function TheoremView({ thm }: { thm: Theorem }) {
             submitterTrusted={thm.worker_trusted}
             rejectedReason={thm.rejected_reason}
           />
+          <DomainBadge domain={thm.domain} size="md" />
           <span>· thm:{idHex.slice(0, 8)}</span>
           <span>· gen {thm.generation ?? 0}</span>
         </div>
@@ -88,15 +100,7 @@ function TheoremView({ thm }: { thm: Theorem }) {
             flexWrap: 'wrap',
           }}
         >
-          <h1
-            className="thm-name"
-            style={{
-              margin: 0,
-              fontFamily: isImported ? 'var(--font-mono)' : undefined,
-              fontSize: isImported ? 28 : undefined,
-              wordBreak: 'break-word',
-            }}
-          >
+          <h1 className="thm-name" style={{ margin: 0, wordBreak: 'break-word' }}>
             {displayHeading}
           </h1>
           <SaveButton theoremIdHex={idHex} />
@@ -112,6 +116,12 @@ function TheoremView({ thm }: { thm: Theorem }) {
             }}
           >
             {importedFrom}
+          </div>
+        )}
+        {prose && (
+          <div className="thm-prose" role="note" aria-label="Plain-English summary">
+            <span className="thm-prose-eyebrow">In one sentence</span>
+            {prose}
           </div>
         )}
         <div className="thm-statement-block">

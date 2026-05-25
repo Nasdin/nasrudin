@@ -323,6 +323,65 @@
   font-size: 12px;
   color: var(--ink-500);
   margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+/* Domain pill — promoted from the sidebar so it sits next to the
+ * verification badge in the page eyebrow. Sizes correspond to "lg" for
+ * the theorem-page hero, "md" for table rows, "sm" for ticker chips. */
+.domain-pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.domain-pill-sm { font-size: 10px; padding: 2px 8px; text-transform: uppercase; letter-spacing: var(--tracking-allcaps); }
+.domain-pill-md { font-size: 12px; }
+.domain-pill-lg { font-size: 13px; padding: 6px 14px; }
+
+.domain-pill-pure-math       { background: #f0eee9; color: #3f3a32; border-color: #d8d1c2; }
+.domain-pill-classical       { background: #efe9d8; color: #5c4b1e; border-color: #d9c98c; }
+.domain-pill-electromagnetism{ background: #f4e7d8; color: #7c4a14; border-color: #e6c98a; }
+.domain-pill-relativity      { background: #dfeaf2; color: #1f4763; border-color: #b2cbdf; }
+.domain-pill-quantum         { background: #ece2ef; color: #5a3168; border-color: #cbb3d3; }
+.domain-pill-other           { background: var(--paper-100); color: var(--ink-700); border-color: var(--paper-300); }
+
+.domain-block { display: inline-flex; flex-direction: column; gap: 4px; }
+.domain-tagline {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--ink-500);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Plain-English summary box that sits above the formal statement. */
+.thm-prose {
+  background: var(--paper-50);
+  border-left: 4px solid var(--terracotta-300);
+  border-radius: 4px;
+  padding: 18px 22px;
+  margin: 0 0 24px;
+  font-family: var(--font-serif);
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--ink-800);
+}
+.thm-prose-eyebrow {
+  display: block;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: var(--tracking-allcaps);
+  text-transform: uppercase;
+  color: var(--ink-500);
+  font-weight: 600;
+  margin-bottom: 8px;
 }
 .thm-name {
   font-family: var(--font-serif);
