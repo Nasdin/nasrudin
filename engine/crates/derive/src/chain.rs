@@ -290,9 +290,15 @@ mod tests {
             lean.contains(": E = (m * (c ^ 2))"),
             "emitted Lean missing `E = (m * (c ^ 2))` final goal; got:\n{lean}"
         );
-        // Standard discharge ladder: nlinarith first, polyrith, then
-        // linear_combination as last-ditch.
+        // Standard discharge ladder: nlinarith -> linarith ->
+        // ring_nf;nlinarith -> linear_combination as last-ditch.
+        // `polyrith` was removed (external Sage server timeouts on
+        // resource-constrained boxes).
         assert!(lean.contains("nlinarith"), "emitter dropped nlinarith");
+        assert!(
+            !lean.contains("polyrith"),
+            "emitter still emits polyrith; it was removed for offline reliability"
+        );
         assert!(lean.contains("Real.sqrt_sq"), "emitter dropped Real.sqrt_sq rewrite");
         assert!(
             lean.contains("rest_energy_seed_chain"),

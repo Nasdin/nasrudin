@@ -292,15 +292,19 @@ fn emit_chain_theorem(out: &mut String, ctx: &DerivationContext, config: &LeanEm
                 ));
             } else {
                 // Multi-axiom path: throw all hypotheses at a tactic cascade.
-                // `nlinarith` handles polynomial inequalities; if it fails,
-                // `polyrith` (slower) tries polynomial-arithmetic discovery.
+                // Ladder: `nlinarith` (polynomial inequalities) -> `linarith`
+                // (fast linear) -> `ring_nf at * <;> nlinarith` (normalize
+                // then retry) -> `linear_combination 0` (last-ditch, only
+                // closes literal `0 = 0`). `polyrith` is intentionally
+                // omitted because it calls an external Sage server, which
+                // times out on resource-constrained boxes.
                 out.push_str(&format!(
                     "  have h_em : {} := by\n",
                     expr_to_lean(&pre.result)
                 ));
                 out.push_str(&format!(
-                    "    first\n      | (nlinarith [{}])\n      | (polyrith)\n      | (linear_combination 0)\n",
-                    full_hyps.join(", "),
+                    "    first\n      | (nlinarith [{hyps}])\n      | (linarith [{hyps}])\n      | (ring_nf at * <;> nlinarith [{hyps}])\n      | (linear_combination 0)\n",
+                    hyps = full_hyps.join(", "),
                 ));
             }
             // Non-negativity of RHS (typically m * c^2 or m * c).
@@ -331,13 +335,15 @@ fn emit_chain_theorem(out: &mut String, ctx: &DerivationContext, config: &LeanEm
     }
 
     // Generic fallback: try nlinarith with all hypotheses; if that fails,
-    // fall through to a tactic cascade (omega / norm_num / ring / simp /
-    // linarith / nlinarith / polyrith / grind).
+    // fall through a tactic cascade. `polyrith` is intentionally NOT
+    // included — it calls an external Sage server over the network and
+    // times out on resource-constrained boxes. The ladder below
+    // (nlinarith / linarith / ring_nf;nlinarith / ring / norm_num /
+    // simp / grind) covers the algebraic goals we actually emit.
     if !hyp_list.is_empty() {
         out.push_str(&format!(
-            "  first\n    | (nlinarith [{}])\n    | (linarith [{}])\n",
-            hyp_list.join(", "),
-            hyp_list.join(", "),
+            "  first\n    | (nlinarith [{hyps}])\n    | (linarith [{hyps}])\n    | (ring_nf at * <;> nlinarith [{hyps}])\n    | (linear_combination 0)\n",
+            hyps = hyp_list.join(", "),
         ));
     } else {
         out.push_str("  first\n");
