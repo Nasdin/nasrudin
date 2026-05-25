@@ -794,23 +794,39 @@ pub fn run_discovery_from_population(
                                 generation: gen_idx,
                             });
                         }
-                        ChainVerifyOutcome::LeanRejected { stderr, .. } => {
+                        ChainVerifyOutcome::LeanRejected { lean_source, stderr } => {
                             // M1 diagnostic: log the actual elaborator
-                            // stderr so we can see WHY Lake rejected.
-                            // Truncated to 1000 chars to keep journal
-                            // entries manageable; the first error is
-                            // typically the load-bearing one anyway.
-                            let snippet: String =
+                            // stderr + the first 2KB of source so we can
+                            // see WHY Lake rejected and reproduce
+                            // outside the worker.
+                            let stderr_snip: String =
                                 stderr.chars().take(1000).collect();
+                            // Slice on a char boundary, not byte
+                            // boundary — the emitter occasionally puts
+                            // unicode (²·) in comment blocks and a
+                            // mid-codepoint slice would panic.
+                            let src_snip: String =
+                                lean_source.chars().take(2048).collect();
                             tracing::warn!(
                                 gen = gen_idx,
                                 theorem = %theorem_name,
-                                stderr = %snippet,
+                                stderr = %stderr_snip,
                                 "Lake/elaborator REJECTED chain"
                             );
-                            eprintln!(
-                                "  ✗ Lake reject gen={gen_idx} thm={theorem_name}:\n{snippet}"
-                            );
+                            // Only dump the source on the FIRST reject
+                            // of each chunk to avoid swamping the
+                            // journal. `report.lake_passed == 0` here
+                            // because the success branch is the other
+                            // arm of the match.
+                            if report.lake_attempts == 1 {
+                                eprintln!(
+                                    "  ✗ Lake reject gen={gen_idx} thm={theorem_name} stderr:\n{stderr_snip}\n  --- emitted Lean (first 2KB) ---\n{src_snip}\n  --- end emit ---"
+                                );
+                            } else {
+                                eprintln!(
+                                    "  ✗ Lake reject gen={gen_idx} thm={theorem_name}: {stderr_snip}"
+                                );
+                            }
                         }
                         ChainVerifyOutcome::PreFilterFailed { reason } => {
                             tracing::debug!(
