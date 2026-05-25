@@ -785,7 +785,15 @@
   /* Wrapping is the entire point — no nowrap, no overflow-hidden. */
   white-space: normal;
   overflow-wrap: anywhere;
+  /* PhysLean catalog rows can have one giant application like
+   * `eraseIdx(orderedInsert(le1, r0, r), val(orderedInsertEquiv(...)))`
+   * that becomes a single un-breakable math chunk wider than the card.
+   * Without the line below the chunk overflows the card and the whole
+   * theorem page gets a horizontal scrollbar. `max-width: 100%` clips
+   * the statement to its container, `overflow-x: auto` lets the user
+   * scroll the wide chunk horizontally within the card. */
   max-width: 100%;
+  overflow-x: auto;
 }
 .wrapped-statement-big {
   font-family: "STIX Two Math", "Source Serif 4", serif;
