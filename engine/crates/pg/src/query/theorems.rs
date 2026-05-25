@@ -235,6 +235,38 @@ pub async fn list_by_ids(
         .context("list_by_ids theorems")
 }
 
+/// Look up the theorem (if any) imported from a specific Lean qualifier.
+///
+/// Imported PhysLean rows store the original Lean identifier in
+/// `origin_payload->'Imported'->>'source'`, e.g.
+/// `"Lorentz.Vector.timelike_time_dominates_space"`. This helper does an
+/// indexed JSONB lookup so the "Built from" panel on each theorem detail
+/// page can resolve each upstream qualifier to its in-corpus theorem
+/// without scanning the full table. A 2026-05-25 migration creates an
+/// expression index over the same path expression — make sure it's
+/// applied before relying on this for production-scale traffic.
+pub async fn find_by_imported_source(
+    db: &impl ConnectionTrait,
+    qualifier: &str,
+) -> Result<Option<theorems::Model>> {
+    use sea_orm::{FromQueryResult, Statement};
+    // SeaORM doesn't expose `->'X'->>'Y'` JSONB navigation cleanly through
+    // its `Expr` API, so we drop down to a raw statement. The query is
+    // simple and parameterised; the index from the migration kicks in.
+    let stmt = Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        r#"SELECT * FROM theorems
+           WHERE (origin_payload->'Imported'->>'source') = $1
+           LIMIT 1"#,
+        [qualifier.into()],
+    );
+    let row = theorems::Model::find_by_statement(stmt)
+        .one(db)
+        .await
+        .context("find_by_imported_source theorem")?;
+    Ok(row)
+}
+
 /// Look up a single theorem by its canonical hash (also 8 bytes, unique).
 pub async fn get_by_canonical_hash(
     db: &impl ConnectionTrait,

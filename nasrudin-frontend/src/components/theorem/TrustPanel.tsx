@@ -4,14 +4,9 @@ import { WhatIsLean } from './WhatIsLean';
 
 interface TrustPanelProps {
   importedFrom: string | null;
-  /** Hex strings of the theorem's parent ids. Most imports have ~5–10 of
-   *  these, all pointing at upstream definitions / axioms that aren't
-   *  individually navigable. */
-  parentHexes: string[];
-  /** True when no parent in `parentHexes` resolves to a navigable theorem
-   *  row — i.e. the dependencies are all upstream. The page passes this
-   *  in so we can collapse the lineage section entirely for the most
-   *  common "everything is upstream" import shape. */
+  /** True when every parent of this theorem is itself an upstream
+   *  PhysLean / Mathlib definition rather than a GA-derived row.
+   *  Drives the wording in the trust list. */
   allParentsUpstream: boolean;
 }
 
@@ -20,9 +15,8 @@ interface TrustPanelProps {
 // the question only a Lean expert had: "What are the SHA-256 hashes of the
 // dependent theorems?". For an imported PhysLean theorem the right trust
 // story is upstream attestation + ability to verify yourself.
-export function TrustPanel({ importedFrom, parentHexes, allParentsUpstream }: TrustPanelProps) {
+export function TrustPanel({ importedFrom, allParentsUpstream }: TrustPanelProps) {
   const [showSource, setShowSource] = useState(false);
-  const [showHashes, setShowHashes] = useState(false);
   const links = importedFrom ? physleanLinks(importedFrom) : null;
   const sourceQ = usePhysleanSource(showSource ? importedFrom : null);
 
@@ -59,18 +53,10 @@ export function TrustPanel({ importedFrom, parentHexes, allParentsUpstream }: Tr
             ✓
           </span>
           <div>
-            <strong>{parentHexes.length} upstream dependencies.</strong>{' '}
+            <strong>Built atop upstream PhysLean / Mathlib.</strong>{' '}
             {allParentsUpstream
-              ? 'Every dependency of this theorem is itself an upstream PhysLean / Mathlib definition or axiom — there is no GA-derived link in the chain.'
-              : 'Mix of upstream PhysLean definitions and downstream Nasrudin-discovered chains; see the expanded list for details.'}{' '}
-            <button
-              type="button"
-              className="trust-toggle"
-              onClick={() => setShowHashes((v) => !v)}
-              aria-expanded={showHashes}
-            >
-              {showHashes ? 'Hide' : 'Show'} dependency hashes
-            </button>
+              ? 'Every named dependency in the statement above is itself an upstream PhysLean / Mathlib definition — no GA-derived link in the chain.'
+              : 'Mix of upstream PhysLean definitions and Nasrudin-discovered chains. See the "Built from" list above for the named references.'}
           </div>
         </li>
         <li>
@@ -154,18 +140,6 @@ export function TrustPanel({ importedFrom, parentHexes, allParentsUpstream }: Tr
         </div>
       )}
 
-      {showHashes && parentHexes.length > 0 && (
-        <details className="trust-hashes" open>
-          <summary>Dependency hashes ({parentHexes.length})</summary>
-          <ol>
-            {parentHexes.map((h) => (
-              <li key={h}>
-                <code className="mono-pill mono-pill-sm">{h}</code>
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
     </div>
   );
 }

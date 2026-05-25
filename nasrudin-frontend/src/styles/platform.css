@@ -423,6 +423,24 @@
   color: var(--ink-500);
   margin-left: 2px;
 }
+.thm-deps-kind {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+  margin-left: 6px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+/* In-corpus theorem hit — strongest visual affordance. */
+.thm-deps-name-theorem { color: var(--terracotta-700); border-bottom-color: var(--terracotta-200); }
+.thm-deps-name-theorem:hover { border-bottom-color: var(--terracotta-500); }
+/* Indexed axiom / definition — softer secondary affordance. */
+.thm-deps-name-axiom { color: var(--ink-800); border-bottom-color: var(--paper-300); }
+.thm-deps-name-axiom:hover { border-bottom-color: var(--ink-500); }
+/* Unknown / upstream-only — no link, no underline. */
+.thm-deps-name-unknown { color: var(--ink-700); border-bottom: none; cursor: default; }
+.thm-deps-pending { color: var(--ink-500); border-bottom: none; }
 .thm-deps-ns {
   font-family: var(--font-mono);
   font-size: 11px;

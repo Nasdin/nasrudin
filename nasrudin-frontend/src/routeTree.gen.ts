@@ -36,6 +36,7 @@ import { Route as SearchConceptRouteImport } from './routes/search.concept'
 import { Route as ResearchIdRouteImport } from './routes/research.$id'
 import { Route as ContributorsIdRouteImport } from './routes/contributors.$id'
 import { Route as ConjectureIdRouteImport } from './routes/conjecture.$id'
+import { Route as AxiomNameRouteImport } from './routes/axiom.$name'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as AdminSteeringRouteImport } from './routes/admin.steering'
 import { Route as AdminCorpusRouteImport } from './routes/admin.corpus'
@@ -178,6 +179,11 @@ const ConjectureIdRoute = ConjectureIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => ConjectureRoute,
 } as any)
+const AxiomNameRoute = AxiomNameRouteImport.update({
+  id: '/axiom/$name',
+  path: '/axiom/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminUsersRoute = AdminUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -233,6 +239,7 @@ export interface FileRoutesByFullPath {
   '/admin/corpus': typeof AdminCorpusRoute
   '/admin/steering': typeof AdminSteeringRoute
   '/admin/users': typeof AdminUsersRouteWithChildren
+  '/axiom/$name': typeof AxiomNameRoute
   '/conjecture/$id': typeof ConjectureIdRoute
   '/contributors/$id': typeof ContributorsIdRoute
   '/research/$id': typeof ResearchIdRoute
@@ -264,6 +271,7 @@ export interface FileRoutesByTo {
   '/admin/corpus': typeof AdminCorpusRoute
   '/admin/steering': typeof AdminSteeringRoute
   '/admin/users': typeof AdminUsersRouteWithChildren
+  '/axiom/$name': typeof AxiomNameRoute
   '/conjecture/$id': typeof ConjectureIdRoute
   '/contributors/$id': typeof ContributorsIdRoute
   '/research/$id': typeof ResearchIdRoute
@@ -300,6 +308,7 @@ export interface FileRoutesById {
   '/admin/corpus': typeof AdminCorpusRoute
   '/admin/steering': typeof AdminSteeringRoute
   '/admin/users': typeof AdminUsersRouteWithChildren
+  '/axiom/$name': typeof AxiomNameRoute
   '/conjecture/$id': typeof ConjectureIdRoute
   '/contributors/$id': typeof ContributorsIdRoute
   '/research/$id': typeof ResearchIdRoute
@@ -337,6 +346,7 @@ export interface FileRouteTypes {
     | '/admin/corpus'
     | '/admin/steering'
     | '/admin/users'
+    | '/axiom/$name'
     | '/conjecture/$id'
     | '/contributors/$id'
     | '/research/$id'
@@ -368,6 +378,7 @@ export interface FileRouteTypes {
     | '/admin/corpus'
     | '/admin/steering'
     | '/admin/users'
+    | '/axiom/$name'
     | '/conjecture/$id'
     | '/contributors/$id'
     | '/research/$id'
@@ -403,6 +414,7 @@ export interface FileRouteTypes {
     | '/admin/corpus'
     | '/admin/steering'
     | '/admin/users'
+    | '/axiom/$name'
     | '/conjecture/$id'
     | '/contributors/$id'
     | '/research/$id'
@@ -434,6 +446,7 @@ export interface RootRouteChildren {
   SigninRoute: typeof SigninRoute
   SponsorRoute: typeof SponsorRoute
   WorkersRoute: typeof WorkersRoute
+  AxiomNameRoute: typeof AxiomNameRoute
   ContributorsIdRoute: typeof ContributorsIdRoute
   TheoremIdRoute: typeof TheoremIdRoute
 }
@@ -629,6 +642,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConjectureIdRouteImport
       parentRoute: typeof ConjectureRoute
     }
+    '/axiom/$name': {
+      id: '/axiom/$name'
+      path: '/axiom/$name'
+      fullPath: '/axiom/$name'
+      preLoaderRoute: typeof AxiomNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/users': {
       id: '/admin/users'
       path: '/users'
@@ -766,6 +786,7 @@ const rootRouteChildren: RootRouteChildren = {
   SigninRoute: SigninRoute,
   SponsorRoute: SponsorRoute,
   WorkersRoute: WorkersRoute,
+  AxiomNameRoute: AxiomNameRoute,
   ContributorsIdRoute: ContributorsIdRoute,
   TheoremIdRoute: TheoremIdRoute,
 }

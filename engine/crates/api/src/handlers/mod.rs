@@ -19,6 +19,7 @@ pub mod me;
 pub mod me_library;
 pub mod preferences;
 pub mod research_jobs;
+pub mod resolve;
 pub mod saved_searches;
 pub mod search;
 pub mod seed;

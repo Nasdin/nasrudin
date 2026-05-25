@@ -1061,6 +1061,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/domains", get(list_domains))
         .route("/api/axioms", get(list_axioms))
+        // Resolve a Lean qualifier (e.g. `Lorentz.Vector.spatialPart`) to
+        // an in-corpus theorem, an indexed axiom, or "unknown". Powers the
+        // "Built from" panel on each theorem detail page so every
+        // dependency-row click lands on a real in-app destination instead
+        // of an external GitHub search.
+        .route("/api/resolve/{qualifier}", get(handlers::resolve::resolve))
         .route("/api/seed", get(handlers::seed::seed))
         // Cold-tier corpus dump for worker hydration. Streams every
         // entry of `CF_CORPUS_AXIOM` as line-delimited JSON. Workers
