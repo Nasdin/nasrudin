@@ -794,9 +794,38 @@ pub fn run_discovery_from_population(
                                 generation: gen_idx,
                             });
                         }
-                        _ => {
-                            // Skip silently; pre-filter / Lean rejection /
-                            // toolchain absence are all expected.
+                        ChainVerifyOutcome::LeanRejected { stderr, .. } => {
+                            // M1 diagnostic: log the actual elaborator
+                            // stderr so we can see WHY Lake rejected.
+                            // Truncated to 1000 chars to keep journal
+                            // entries manageable; the first error is
+                            // typically the load-bearing one anyway.
+                            let snippet: String =
+                                stderr.chars().take(1000).collect();
+                            tracing::warn!(
+                                gen = gen_idx,
+                                theorem = %theorem_name,
+                                stderr = %snippet,
+                                "Lake/elaborator REJECTED chain"
+                            );
+                            eprintln!(
+                                "  ✗ Lake reject gen={gen_idx} thm={theorem_name}:\n{snippet}"
+                            );
+                        }
+                        ChainVerifyOutcome::PreFilterFailed { reason } => {
+                            tracing::debug!(
+                                gen = gen_idx,
+                                "pre-filter rejection: {reason}"
+                            );
+                        }
+                        ChainVerifyOutcome::ToolchainError { message } => {
+                            tracing::warn!(
+                                gen = gen_idx,
+                                "lean toolchain error: {message}"
+                            );
+                            eprintln!(
+                                "  ✗ Lean toolchain error gen={gen_idx}: {message}"
+                            );
                         }
                     }
                 }
