@@ -1136,11 +1136,11 @@ async fn main() -> anyhow::Result<()> {
         // "Built from" panel on each theorem detail page so every
         // dependency-row click lands on a real in-app destination instead
         // of an external GitHub search.
-        .route("/api/resolve/{qualifier}", get(handlers::resolve::resolve))
-        // Bulk variant: one POST resolves all of a theorem's dependencies
-        // at once, avoiding the N-1 TLS+HTTP overheads of firing
-        // resolve-per-row from the "Built from" panel.
+        // Bulk variant FIRST — register more-specific path before the
+        // wildcard `/{qualifier}` route so axum's matchit doesn't treat
+        // `bulk` as a qualifier value and 405 the POST.
         .route("/api/resolve/bulk", post(handlers::resolve::bulk))
+        .route("/api/resolve/{qualifier}", get(handlers::resolve::resolve))
         .route("/api/seed", get(handlers::seed::seed))
         // Cold-tier corpus dump for worker hydration. Streams every
         // entry of `CF_CORPUS_AXIOM` as line-delimited JSON. Workers
