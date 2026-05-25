@@ -673,6 +673,11 @@ async fn main() {
         println!("▶ Persistent elaborator DISABLED (lake-only path)");
     }
 
+    // Capture the target name before the spec is moved into config —
+    // we still need it to decide whether to install the M1 permanent
+    // elite below.
+    let target_name_for_elite: Option<&'static str> =
+        target_spec.as_ref().map(|t| t.name);
     let config = DiscoveryConfig {
         population_size: pop,
         generations: gens,
@@ -718,7 +723,28 @@ async fn main() {
         cluster_multipliers: std::collections::HashMap::new(),
         cluster_assignments: vec![],
         atom_pool: None,
+        // Milestone 1 mechanism test: when the target is sr_rest_energy
+        // and the env opt-out hasn't been set, lock the hand-coded
+        // upstream rest-energy chain in as the permanent elite so each
+        // chunk has at least one Lake-quality candidate. M1.d clears
+        // NASRUDIN_M1_SEED_ELITE=0 (or unsets the target) to confirm
+        // the GA can rediscover it from random seeds + the steerer.
+        permanent_elite: m1_seed_elite_for(target_name_for_elite),
     };
+    if let Some(ref elite) = config.permanent_elite {
+        println!(
+            "▶ Milestone 1: permanent elite installed ({} steps) — \
+             rest_energy_from_upstream chain locked into every generation. \
+             Unset NASRUDIN_M1_SEED_ELITE or pass NASRUDIN_M1_SEED_ELITE=0 to disable.",
+            elite.len()
+        );
+    } else {
+        println!(
+            "▶ Milestone 1: no permanent elite (target={:?}, NASRUDIN_M1_SEED_ELITE check). \
+             Pure-random GA from random_chain_seed.",
+            target_name_for_elite
+        );
+    }
 
     // ── Chunked execution with periodic seed-sync ─────────────────────
     // Run the GA in `chunks` rounds of `gens / chunks` generations each.
@@ -1868,7 +1894,10 @@ async fn run_seed_driven_chunk(
             collect_final_population: false,
             cluster_multipliers: std::collections::HashMap::new(),
             cluster_assignments: vec![],
-        atom_pool: None,
+            atom_pool: None,
+            // Research-mode jobs target an LLM-supplied conjecture, not
+            // sr_rest_energy — no permanent elite makes sense here.
+            permanent_elite: None,
         };
         let report = run_discovery(&filtered, &chunk_config, rng);
         total_attempted += report.total_candidates as u64;
@@ -1969,6 +1998,27 @@ fn arg_value<T: std::str::FromStr>(args: &[String], flag: &str) -> Option<T> {
         .position(|a| a == flag)
         .and_then(|pos| args.get(pos + 1))
         .and_then(|s| s.parse().ok())
+}
+
+/// Milestone 1: map a target spec name to the hand-coded "known-good"
+/// chain that hits it. Returns `None` when no such chain is registered
+/// for the given target, or when the user has set
+/// `NASRUDIN_M1_SEED_ELITE=0` to opt out (M1.d acceptance run).
+///
+/// Today only `sr_rest_energy` has a registered seed chain
+/// (`Chain::rest_energy_from_upstream`). As Milestone 3 progresses and
+/// more domains get hand-coded baselines, add their mappings here.
+fn m1_seed_elite_for(target_name: Option<&str>) -> Option<Chain> {
+    let enabled = std::env::var("NASRUDIN_M1_SEED_ELITE")
+        .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(true);
+    if !enabled {
+        return None;
+    }
+    match target_name {
+        Some("sr_rest_energy") => Some(Chain::rest_energy_from_upstream()),
+        _ => None,
+    }
 }
 
 /// Submission config sourced from env. Worker key is required.

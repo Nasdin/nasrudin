@@ -258,6 +258,21 @@ pub struct DiscoveryConfig {
     /// QM `hbar_omega`) feed target synthesis. `None` falls back to
     /// the hardcoded 8-atom SR baseline (uniform).
     pub atom_pool: Option<Vec<(String, f32)>>,
+    /// Permanent elite chain — when `Some`, this chain is injected as
+    /// individual #0 of every seed population and re-injected as
+    /// offspring[0] of every generation, regardless of fitness. The
+    /// rest of the population still gets random seeds + tournament
+    /// selection + mutation/crossover (which may produce variants of
+    /// this chain that are evaluated normally), but the canonical copy
+    /// is locked in for the entire run.
+    ///
+    /// Milestone 1 mechanism test: set this to
+    /// `Chain::rest_energy_from_upstream()` so the GA's verifier
+    /// pipeline gets at least one chain per generation that lands
+    /// exactly on the sr_rest_energy target. Once a verified row hits
+    /// /api/theorems we clear this and let the steerer + mutations
+    /// rediscover the chain from random seeds (M1.d).
+    pub permanent_elite: Option<Chain>,
 }
 
 /// Per-cluster knob multiplier. Default is identity (1.0× rate, 1.0×
@@ -361,6 +376,7 @@ impl Default for DiscoveryConfig {
             cluster_multipliers: std::collections::HashMap::new(),
             cluster_assignments: vec![],
             atom_pool: None,
+            permanent_elite: None,
         }
     }
 }
@@ -448,7 +464,7 @@ pub fn seed_population(
     rng: &mut impl Rng,
     report: &mut DiscoveryReport,
 ) -> Vec<ChainIndividual> {
-    (0..config.population_size)
+    let mut pop: Vec<ChainIndividual> = (0..config.population_size)
         .map(|_| {
             let chain = random_chain_seed(store, rng, report);
             let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
@@ -458,7 +474,24 @@ pub fn seed_population(
             );
             ChainIndividual::new(chain, fit)
         })
-        .collect()
+        .collect();
+    // Milestone 1: permanent elite is injected at index 0 so it's
+    // guaranteed to be considered for clustering, tournament selection,
+    // and Lake verification. The offspring loop in
+    // `run_discovery_from_population` re-injects it every generation
+    // regardless of fitness, so this seed-time placement is just to
+    // give the cluster summariser something to cluster around.
+    if let Some(elite_chain) = &config.permanent_elite {
+        if !pop.is_empty() {
+            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+                elite_chain,
+                store,
+                config.target.as_ref(),
+            );
+            pop[0] = ChainIndividual::new(elite_chain.clone(), fit);
+        }
+    }
+    pop
 }
 
 pub fn run_discovery(
@@ -510,6 +543,21 @@ pub fn run_discovery_from_population(
         // Generate offspring.
         let mut offspring: Vec<ChainIndividual> = Vec::with_capacity(config.population_size);
 
+        // Milestone 1: permanent elite — locked in as offspring[0] every
+        // generation, regardless of fitness ordering. Always evaluated
+        // against the current target so its fitness components are
+        // fresh. The fitness-based elitism below still gets to run for
+        // the remaining slots.
+        if let Some(elite_chain) = &config.permanent_elite {
+            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+                elite_chain,
+                store,
+                config.target.as_ref(),
+            );
+            offspring.push(ChainIndividual::new(elite_chain.clone(), fit));
+            report.total_candidates += 1;
+        }
+
         // Elitism: copy top-N current population through unchanged
         // before generating the rest as offspring. The population
         // is pre-sorted by composite fitness at the end of the
@@ -517,11 +565,11 @@ pub fn run_discovery_from_population(
         // the seed loop preserves insertion order).
         if elite_count > 0 {
             for ind in population.iter().take(elite_count) {
-                offspring.push(ind.clone());
-                report.total_candidates += 1;
                 if offspring.len() >= config.population_size {
                     break;
                 }
+                offspring.push(ind.clone());
+                report.total_candidates += 1;
             }
         }
 
@@ -1014,6 +1062,7 @@ mod tests {
             cluster_multipliers: std::collections::HashMap::new(),
             cluster_assignments: vec![],
             atom_pool: None,
+            permanent_elite: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -1051,6 +1100,7 @@ mod tests {
             cluster_multipliers: std::collections::HashMap::new(),
             cluster_assignments: vec![],
             atom_pool: None,
+            permanent_elite: None,
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -1061,6 +1111,64 @@ mod tests {
         assert!(
             report.unique_executable > 0,
             "no executable chains in final pop after 20 gens"
+        );
+    }
+
+    #[test]
+    fn permanent_elite_survives_every_generation() {
+        // M1 mechanism test: when permanent_elite is set, the chain
+        // appears in seed_population at index 0 AND is re-injected as
+        // offspring[0] every generation, regardless of fitness. Without
+        // this guarantee, the cluster-steerer's churn or aggressive
+        // mutation can wipe the chain out and leave the GA blind.
+        let store = upstream_store();
+        let elite = nasrudin_derive::Chain::rest_energy_from_upstream();
+        let mut config = DiscoveryConfig {
+            population_size: 16,
+            generations: 5,
+            crossover_rate: 0.6,
+            mutation_rate: 0.7,
+            tournament_size: 3,
+            max_chain_len: 12,
+            prover_root: None,
+            max_lake_verifications: 0,
+            target: None,
+            rejected_canonicals: std::sync::Arc::new(HashSet::new()),
+            cache_ctx: None,
+            novelty_bloom: None,
+            mutation_priors: None,
+            submit_unverified_top_k: 0,
+            dimension_hard_reject: false,
+            dimension_var_dims: std::sync::Arc::new(
+                std::collections::HashMap::new(),
+            ),
+            elaborator: None,
+            suffix_bias: 0.0,
+            elitism_fraction: 0.0,
+            collect_final_population: true,
+            cluster_multipliers: std::collections::HashMap::new(),
+            cluster_assignments: vec![],
+            atom_pool: None,
+            permanent_elite: Some(elite.clone()),
+        };
+        config.collect_final_population = true;
+        let mut rng = rand::rng();
+        let report = run_discovery(&store, &config, &mut rng);
+
+        // Final population must contain the canonical elite chain.
+        let elite_steps_json = serde_json::to_string(&elite.0).unwrap();
+        let mut found = false;
+        for (chain, _comps, _names, _cid) in &report.final_population {
+            let steps_json = serde_json::to_string(&chain.0).unwrap();
+            if steps_json == elite_steps_json {
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "permanent elite was not present in final population after {} gens",
+            config.generations
         );
     }
 

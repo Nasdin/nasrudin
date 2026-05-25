@@ -267,6 +267,40 @@ mod tests {
     }
 
     #[test]
+    fn upstream_rest_energy_chain_emits_lean_with_expected_theorem() {
+        // M1.a sanity: the seed chain must produce a Lean source whose
+        // theorem statement is exactly `E = m * c^2`. If this changes
+        // shape (e.g. the emitter ever decides to wrap the RHS in a
+        // sqrt or extra parens), the elaborator will not match the
+        // sr_rest_energy target and Lake will silently reject.
+        let mut engine = crate::derivation::DerivationEngine::new();
+        engine.store_mut().load_special_relativity_upstream();
+        let chain = Chain::rest_energy_from_upstream();
+        let mut ctx = crate::context::DerivationContext::new();
+        chain.execute(engine.store(), &mut ctx).expect("chain execute");
+        let cfg = crate::lean_emitter::LeanEmitConfig {
+            namespace: "PhysicsGenerator.Derived".into(),
+            theorem_name: "rest_energy_seed_chain".into(),
+            use_mathlib: true,
+        };
+        let lean = crate::lean_emitter::emit_lean_file(&ctx, &cfg);
+        // Final theorem statement contains the target shape.
+        // The emitter parenthesises the RHS as `(m * (c ^ 2))`.
+        assert!(
+            lean.contains(": E = (m * (c ^ 2))"),
+            "emitted Lean missing `E = (m * (c ^ 2))` final goal; got:\n{lean}"
+        );
+        // Standard discharge ladder: nlinarith first, polyrith, then
+        // linear_combination as last-ditch.
+        assert!(lean.contains("nlinarith"), "emitter dropped nlinarith");
+        assert!(lean.contains("Real.sqrt_sq"), "emitter dropped Real.sqrt_sq rewrite");
+        assert!(
+            lean.contains("rest_energy_seed_chain"),
+            "emitted Lean missing theorem name; got:\n{lean}"
+        );
+    }
+
+    #[test]
     fn upstream_rest_energy_chain_executes() {
         // The hand-coded upstream chain runs without error.
         let mut engine = DerivationEngine::new();
