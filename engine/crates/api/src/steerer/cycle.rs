@@ -737,6 +737,75 @@ mod tests {
         assert!(matches!(r, Err(CycleError::Parse(_))));
     }
 
+    /// Acceptance test for the LLM-as-chain-synthesizer wire-up: a
+    /// mocked Kimi K2.6 reply carrying a `proposed_chains` map must
+    /// round-trip through `parse_and_validate` and emit `Vec<RuleStep>`
+    /// values the worker can deserialise. This is the contract surface
+    /// between the steerer cycle (this crate) and the worker
+    /// (nasrudin-ga). If it breaks, no LLM-curated elites ever reach
+    /// the GA.
+    #[test]
+    fn parse_accepts_proposed_chains_payload() {
+        use nasrudin_derive::RuleStep;
+        let mut cfg = default_config();
+        cfg.proposed_chains.insert(
+            "sr_rest_energy".into(),
+            vec![
+                RuleStep::IntroduceAxiom {
+                    axiom_name: "four_momentum_time_component".into(),
+                },
+                RuleStep::IntroduceAxiom {
+                    axiom_name: "minkowski_invariant_def".into(),
+                },
+                RuleStep::IntroduceAxiom {
+                    axiom_name: "invariant_mass_postulate".into(),
+                },
+                RuleStep::AlgebraicSimplify,
+            ],
+        );
+        let json = serde_json::to_string(&cfg).unwrap();
+        // This is exactly the path a Kimi K2.6 reply takes once
+        // stripped of any markdown fence: raw JSON → parse_and_validate.
+        let parsed = parse_and_validate(&json, "C").expect("must accept proposed_chains");
+        assert_eq!(parsed.proposed_chains.len(), 1);
+        let chain = parsed
+            .proposed_chains
+            .get("sr_rest_energy")
+            .expect("target key must round-trip");
+        assert_eq!(chain.len(), 4);
+        // The worker side does `serde_json::from_value::<Vec<RuleStep>>(…)`
+        // against `steering.config.proposed_chains[<target>]`. Replay
+        // that exact deserialisation here so the test fails loudly the
+        // moment the wire shape diverges from the worker's expectation.
+        let wire_val = serde_json::to_value(&parsed.proposed_chains).unwrap();
+        let entry = wire_val.get("sr_rest_energy").unwrap().clone();
+        let steps: Vec<RuleStep> =
+            serde_json::from_value(entry).expect("worker-side deserialisation");
+        assert!(matches!(
+            steps[0],
+            RuleStep::IntroduceAxiom { .. }
+        ));
+        assert!(matches!(steps[3], RuleStep::AlgebraicSimplify));
+    }
+
+    /// Markdown-fenced JSON is the dominant Kimi K2.6 reply shape — the
+    /// strict-mode JSON Schema reduces this but the fallback
+    /// `json_object` path still ships fences. Cover the union:
+    /// proposed_chains must survive both raw and fenced parses.
+    #[test]
+    fn parse_accepts_fenced_proposed_chains_payload() {
+        use nasrudin_derive::RuleStep;
+        let mut cfg = default_config();
+        cfg.proposed_chains.insert(
+            "sr_rest_energy".into(),
+            vec![RuleStep::AlgebraicSimplify],
+        );
+        let json = serde_json::to_string(&cfg).unwrap();
+        let fenced = format!("```json\n{}\n```", json);
+        let parsed = parse_and_validate(&fenced, "C").unwrap();
+        assert_eq!(parsed.proposed_chains["sr_rest_energy"].len(), 1);
+    }
+
     #[test]
     fn parse_overrides_scope() {
         let mut cfg = default_config();
