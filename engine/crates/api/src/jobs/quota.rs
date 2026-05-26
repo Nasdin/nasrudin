@@ -7,8 +7,23 @@
 /// Floor of explorer-fleet lake slots. We never let paid jobs eat the
 /// entire cluster: at minimum, 10% (rounded down) of total slots, but
 /// always ≥2 so a single 8-core box still leaves an explorer alive.
+///
+/// Caveat for tiny clusters: on a cluster of <2 total slots there is
+/// no concurrent explorer to protect — the single worker time-shares
+/// between paid and explorer work via the claim-loop fallthrough, so
+/// the per-claim floor doesn't apply. Without this carve-out the
+/// floor of 2 is unsatisfiable on a 1-worker prod box (e.g. the
+/// nasrudin-prod droplet) and the platform/researcher queue
+/// deadlocks: every claim returns 204 "explorer_floor_protected"
+/// regardless of how many jobs are queued. Cap the floor at
+/// `total - 1` so a tiny cluster can still allocate exactly one
+/// paid slot at a time.
 pub fn min_explorer_slots(total_lake_slots: u32) -> u32 {
-    std::cmp::max(2, (total_lake_slots as f32 * 0.10).floor() as u32)
+    if total_lake_slots == 0 {
+        return 0;
+    }
+    let proposed = std::cmp::max(2, (total_lake_slots as f32 * 0.10).floor() as u32);
+    std::cmp::min(proposed, total_lake_slots.saturating_sub(1))
 }
 
 /// `true` iff awarding the paid load `slots_on_paid_jobs` still
@@ -29,10 +44,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn floor_is_at_least_two() {
-        assert_eq!(min_explorer_slots(0), 2);
+    fn floor_is_at_least_two_on_normal_clusters() {
+        // Empty cluster: floor is 0 (degenerate).
+        assert_eq!(min_explorer_slots(0), 0);
+        // Small but ≥3-slot clusters: floor is 2 (the baseline).
         assert_eq!(min_explorer_slots(5), 2);
         assert_eq!(min_explorer_slots(20), 2);
+    }
+
+    /// Regression: on a single-worker cluster the floor must not
+    /// exceed `total - 1`, otherwise every claim returns 204
+    /// "explorer_floor_protected" and the paid queue deadlocks.
+    /// See the comment on `min_explorer_slots` for the prod
+    /// incident this came out of.
+    #[test]
+    fn floor_does_not_deadlock_tiny_clusters() {
+        // 1-worker cluster: no concurrent explorer to protect.
+        assert_eq!(min_explorer_slots(1), 0);
+        assert!(floor_satisfied(1, 1)); // claim is allowed
+        // 2-worker cluster: reserve 1 explorer, allow 1 paid.
+        assert_eq!(min_explorer_slots(2), 1);
+        assert!(floor_satisfied(2, 1));
+        assert!(!floor_satisfied(2, 2)); // can't take both
     }
 
     #[test]
