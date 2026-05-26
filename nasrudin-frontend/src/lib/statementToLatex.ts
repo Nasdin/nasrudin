@@ -371,6 +371,21 @@ function emitNode(n: Node, ctx: Ctx): string {
       return `${emitNode(a, ctx)} ${op} ${emitNode(b, ctx)}`;
     }
   }
+  // Power `(^ base exp)` — emitted by the GA chain canonicaliser (e.g. the
+  // E = m c^2 result is `(= v:E (* v:m (^ c:c n:2)))`). Render as a^{b};
+  // wrap the base in braces if it's anything other than a single atom so
+  // KaTeX gets a clean compound base.
+  if (n.head === '^' && n.items.length === 3) {
+    const base = n.items[1];
+    const exp = n.items[2];
+    if (base && exp) {
+      const baseLatex = emitNode(base, ctx);
+      const expLatex = emitNode(exp, ctx);
+      const baseWrapped =
+        base.kind === 'atom' ? baseLatex : `\\left(${baseLatex}\\right)`;
+      return `${baseWrapped}^{${expLatex}}`;
+    }
+  }
 
   // Curried application.
   if (n.head === '@' && n.items.length === 3) {

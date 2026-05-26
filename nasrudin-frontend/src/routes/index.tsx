@@ -185,8 +185,8 @@ function Landing() {
           />
           <div className="margin-note" style={{ marginTop: 32, textAlign: 'center' }}>
             {rejectionPct !== null
-              ? `${rejectionPct}% of decided candidates were rejected in the last 24h (${rejected24h.toLocaleString()} of ${decided24h.toLocaleString()}). The wise fool is patient.`
-              : 'No candidates decided in the last 24h yet — the wise fool is patient.'}
+              ? `${rejectionPct}% of Lean-decided submissions were rejected in the last 24h (${rejected24h.toLocaleString()} of ${decided24h.toLocaleString()}). Workers evaluate millions of GA candidates upstream of this — only those passing pre-Lean filters and a successful lake build reach the kernel. The wise fool is patient.`
+              : 'No Lean-decided submissions in the last 24h yet — workers are evaluating GA candidates upstream of this stage. The wise fool is patient.'}
           </div>
         </div>
       </section>

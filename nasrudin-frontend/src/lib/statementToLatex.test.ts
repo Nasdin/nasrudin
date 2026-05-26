@@ -49,6 +49,22 @@ describe('statementToLatex', () => {
     expect(latex).toContain('^2');
   });
 
+  it('renders E = m c^2 from the canonical S-expr the GA emits', () => {
+    // The platform-default queue's `E = m * c^2` hunch produces this
+    // canonical statement when a chain matches. Keep this rendering
+    // human-readable in the corpus row + the theorem detail page:
+    // the user shouldn't see `(= v:E (* v:m (^ c:c n:2)))` in a UI.
+    // c:c is the PhysConst shorthand the test uses; production uses
+    // c:SpeedOfLight — both must render. Test both.
+    for (const c of ['c:c', 'c:SpeedOfLight']) {
+      const r = statementToLatex(`(= v:E (* v:m (^ ${c} n:2)))`);
+      expect(r.latex).toContain('E');
+      expect(r.latex).toContain('=');
+      expect(r.latex).toContain('m');
+      expect(r.latex).toMatch(/\^[\s{]*2/);
+    }
+  });
+
   it('flattens curried applications', () => {
     // Single-letter idents skip \mathit (KaTeX italicises them by default).
     const { latex } = statementToLatex('(@ (@ v:Foo.f v:a) v:b)');

@@ -16,43 +16,56 @@ use std::sync::Arc;
 use crate::state::AppState;
 
 /// Target physics formulas we're searching for in the corpus.
+///
+/// `canonical_patterns` must match substrings of the worker-emitted
+/// canonical S-expression (e.g. `(= v:E (* v:m (^ c:c n:2)))`),
+/// NOT English-word descriptions of the formula. The fuzzy
+/// pattern set is intentionally tight — when *all* of an entry's
+/// patterns appear in a verified theorem's canonical, we mark
+/// the featured row as `found`.
 const TARGET_FORMULAS: &[TargetFormula] = &[
     TargetFormula {
         name: "Mass-energy equivalence",
         latex: "E = mc^2",
         domain: "Special relativity",
-        // Try to match by canonical statement patterns
-        canonical_patterns: &["energy", "mass", "c^2", "speed_of_light"],
+        // Canonical for `E = m c^2` is
+        // `(= v:E (* v:m (^ c:SpeedOfLight n:2)))` — see how the
+        // chain emitter spells PhysConst (`c:SpeedOfLight`, not
+        // `c:c`). The full constant name is the safe substring.
+        canonical_patterns: &["v:E", "(* v:m (^ c:SpeedOfLight n:2)"],
     },
     TargetFormula {
         name: "Newton's second law",
         latex: "F = ma",
         domain: "Classical mechanics",
-        canonical_patterns: &["force", "mass", "acceleration"],
+        // `(= v:F (* v:m v:a))`
+        canonical_patterns: &["v:F", "(* v:m v:a)"],
     },
     TargetFormula {
         name: "Boltzmann entropy",
         latex: "S = k_B \\ln \\Omega",
         domain: "Statistical mechanics",
-        canonical_patterns: &["entropy", "boltzmann", "ln"],
+        // `(= v:S (* v:k_B (ln v:Omega)))` — the GA may emit ln in
+        // either functional or `(@ v:ln ...)` form; allow both.
+        canonical_patterns: &["v:S", "v:k_B"],
     },
     TargetFormula {
         name: "Schrödinger equation",
         latex: "i\\hbar\\dot\\psi = \\hat H \\psi",
         domain: "Quantum mechanics",
-        canonical_patterns: &["schrodinger", "psi", "hamiltonian"],
+        canonical_patterns: &["v:psi", "v:H"],
     },
     TargetFormula {
         name: "Einstein field equations",
         latex: "R_{\\mu\\nu} - \\tfrac12 g_{\\mu\\nu} R = 8\\pi T_{\\mu\\nu}",
         domain: "General relativity",
-        canonical_patterns: &["einstein", "field", "ricci", "tensor"],
+        canonical_patterns: &["v:R_uv", "v:T_uv"],
     },
     TargetFormula {
         name: "Gauss's law",
         latex: "\\nabla\\cdot E = \\rho/\\varepsilon_0",
         domain: "Electromagnetism",
-        canonical_patterns: &["gauss", "electric", "divergence", "charge"],
+        canonical_patterns: &["v:div_E", "v:rho"],
     },
 ];
 
@@ -214,15 +227,18 @@ async fn find_matching_theorem(
                 .add(nasrudin_pg::entity::theorems::Column::VerificationTactic.ne("imported")),
         )
         .filter(nasrudin_pg::entity::theorems::Column::ContributorId.ne("physlean"))
-        // A real GA chain lives at generation ≥ 1; gen 0 means seed/axiom.
-        .filter(nasrudin_pg::entity::theorems::Column::Generation.gt(0i64))
+        // Note: we don't gate on `generation > 0`. A gen-0 row whose
+        // `verification_tactic = 'lake_build'` AND `contributor_id !=
+        // 'physlean'` is the M1.b permanent-elite seed chain — a
+        // real Lean-verified derivation that happens to live at the
+        // GA's bootstrap generation. Excluding it falsely leaves the
+        // landing page in "still searching" forever for E=mc².
         .order_by_desc(nasrudin_pg::entity::theorems::Column::VerifiedAt)
         .limit(200)
         .all(db)
         .await
         .ok()?;
 
-    let mut best: Option<(nasrudin_pg::entity::theorems::Model, usize)> = None;
     for thm in candidates {
         // Belt-and-braces: an axiom with no parents/axioms_used is also
         // not a real derivation, regardless of how it slipped past the
@@ -230,19 +246,21 @@ async fn find_matching_theorem(
         if thm.axioms_used.is_empty() {
             continue;
         }
-        let combined = format!(
-            "{} {}",
-            thm.canonical_statement.to_lowercase(),
-            thm.latex.as_deref().unwrap_or("").to_lowercase(),
-        );
-        let score = target
+        // Match against the canonical S-expr only — the LaTeX field is
+        // optional (NULL for most GA rows) and noisy. The target's
+        // patterns are canonical-form substrings. Require ALL patterns
+        // to match — a stray `v:E` in an unrelated theorem won't false-
+        // positive as the E=mc² rediscovery.
+        let canonical = thm.canonical_statement.as_str();
+        let all_match = target
             .canonical_patterns
             .iter()
-            .filter(|p| combined.contains(*p))
-            .count();
-        if score > 0 && best.as_ref().is_none_or(|(_, s)| score > *s) {
-            best = Some((thm, score));
+            .all(|p| canonical.contains(*p));
+        if all_match {
+            // Candidates are ordered verified_at DESC; first hit is
+            // the most recent matching derivation.
+            return Some(thm);
         }
     }
-    best.map(|(t, _)| t)
+    None
 }

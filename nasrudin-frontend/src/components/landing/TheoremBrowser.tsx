@@ -232,9 +232,16 @@ function BrowserRow({
   setExpanded: (v: string | null) => void;
 }) {
   const importedFrom = importedSource(t.origin_payload);
+  // GA-derived theorems don't have a curated name yet — the
+  // backend schema has no `name`/`title` column, so the row's
+  // identity is its statement (rendered as math by RowStatement)
+  // and its generation. NEVER fall back to verification_tactic
+  // (values like "lake_build" / "trusted_bypass") as the "name":
+  // that's HOW it was verified, not WHAT it is, and showing it
+  // gives the corpus a row called "lake_build" that means nothing.
   const displayName = importedFrom
     ? lastSegment(importedFrom)
-    : (t.verification_tactic ?? `gen ${t.generation ?? '—'}`);
+    : `gen ${t.generation ?? '—'}`;
   return (
     <>
       <button
