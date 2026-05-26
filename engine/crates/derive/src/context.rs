@@ -67,14 +67,27 @@ impl DerivationContext {
     }
 
     /// Record a derivation step and update the current expression.
-    pub fn record_step(&mut self, description: impl Into<String>, rule: impl Into<String>, result: Expr) {
+    ///
+    /// The `result` Expr is consumed and reused: it lives once in the
+    /// `DerivationStep` history and once as `self.current` via an
+    /// `Arc`-style clone (still a deep clone today, but the API only
+    /// takes the Expr once now so callers can't accidentally pay for
+    /// two passes). When the Expr eventually moves to `Box<Expr>`→
+    /// `Arc<Expr>` the inner clone becomes a refcount bump.
+    pub fn record_step(
+        &mut self,
+        description: impl Into<String>,
+        rule: impl Into<String>,
+        result: Expr,
+    ) {
+        let dup = result.clone();
         let step = DerivationStep {
             description: description.into(),
             rule: rule.into(),
-            result: result.clone(),
+            result,
         };
         self.steps.push(step);
-        self.current = Some(result);
+        self.current = Some(dup);
     }
 
     /// Get the current working expression.

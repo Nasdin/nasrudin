@@ -222,6 +222,11 @@ impl Chain {
     ) -> Result<(), DeriveError> {
         match step {
             RuleStep::IntroduceAxiom { axiom_name } => {
+                // `store.get` returns an owned `Axiom`; move its
+                // `statement` out instead of cloning the (potentially
+                // deep) Expr tree. Skips one deep `Box<Expr>` walk per
+                // IntroduceAxiom step. The hot path runs a ~6-step
+                // chain ~200 times per generation; this multiplies.
                 let ax = store.get(axiom_name).ok_or_else(|| {
                     DeriveError::AxiomNotFound {
                         name: axiom_name.clone(),
@@ -229,7 +234,7 @@ impl Chain {
                 })?;
                 IntroduceAxiom {
                     axiom_name: axiom_name.clone(),
-                    statement: ax.statement.clone(),
+                    statement: ax.statement,
                 }
                 .apply(ctx)
             }
@@ -247,7 +252,7 @@ impl Chain {
                 })?;
                 IntroduceAxiom {
                     axiom_name: theorem_name.clone(),
-                    statement: ax.statement.clone(),
+                    statement: ax.statement,
                 }
                 .apply(ctx)
             }
