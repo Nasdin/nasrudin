@@ -86,6 +86,12 @@ pub struct MatchItem {
     pub id: String,
     pub canonical_statement: String,
     pub statement_latex: Option<String>,
+    /// LLM-curated or headline-registry name. NULL during the async
+    /// naming window and for legacy rows the backfill hasn't reached.
+    pub display_name: Option<String>,
+    /// One-sentence prose description; same population pipeline as
+    /// `display_name`.
+    pub description: Option<String>,
     pub domain: String,
     pub dimension: Option<Vec<i32>>,
     pub depth: Option<i32>,
@@ -413,6 +419,8 @@ fn row_to_match(row: theorems::Model, kind: MatchKind) -> MatchItem {
     MatchItem {
         canonical_statement: row.canonical_statement,
         statement_latex: row.latex,
+        display_name: row.display_name,
+        description: row.description,
         domain: row.domain,
         dimension: row.dimension,
         depth: row.depth,
