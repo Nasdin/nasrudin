@@ -41,11 +41,14 @@ function Landing() {
 
   const funnel = landing.data?.funnel_24h;
   const submitted24h = funnel?.submitted_24h ?? 0;
+  const verified24h = funnel?.verified_24h ?? 0;
   const rejected24h = funnel?.rejected_24h ?? 0;
   // Honest rejection rate: rejected / (verified + rejected) over the
   // last 24h. Falls back to "—" when the window is empty so we never
-  // print a fabricated percentage.
-  const decided24h = (funnel?.verified_24h ?? 0) + rejected24h;
+  // print a fabricated percentage. The previous caption ("X% of N
+  // decided were rejected") read as if N was the SUBMISSION count;
+  // we now spell out verified and rejected as separate numbers below.
+  const decided24h = verified24h + rejected24h;
   const rejectionPct = decided24h > 0 ? ((rejected24h / decided24h) * 100).toFixed(1) : null;
 
   return (
@@ -184,9 +187,21 @@ function Landing() {
             submitted24h={submitted24h}
           />
           <div className="margin-note" style={{ marginTop: 32, textAlign: 'center' }}>
-            {rejectionPct !== null
-              ? `${rejectionPct}% of Lean-decided submissions were rejected in the last 24h (${rejected24h.toLocaleString()} of ${decided24h.toLocaleString()}). Workers evaluate millions of GA candidates upstream of this — only those passing pre-Lean filters and a successful lake build reach the kernel. The wise fool is patient.`
-              : 'No Lean-decided submissions in the last 24h yet — workers are evaluating GA candidates upstream of this stage. The wise fool is patient.'}
+            {decided24h > 0 ? (
+              <>
+                Last 24h, the Lean kernel decided on{' '}
+                <strong>{decided24h.toLocaleString()}</strong> submission
+                {decided24h === 1 ? '' : 's'}:{' '}
+                <strong>{verified24h.toLocaleString()}</strong> verified,{' '}
+                <strong>{rejected24h.toLocaleString()}</strong> rejected
+                {rejectionPct !== null && ` (${rejectionPct}% rejection rate)`}.
+                Workers evaluate millions of GA candidates upstream of this — only
+                those passing pre-Lean filters and a successful lake build reach
+                the kernel. The wise fool is patient.
+              </>
+            ) : (
+              'No Lean-decided submissions in the last 24h yet — workers are evaluating GA candidates upstream of this stage. The wise fool is patient.'
+            )}
           </div>
         </div>
       </section>
