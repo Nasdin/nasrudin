@@ -57,7 +57,20 @@ You have FOUR load-bearing levers:\n\
      `photon_energy_def`, `hbar_positive`, etc. Each step's `kind` \
      must be one of: `IntroduceAxiom`, `IntroduceTheorem`, \
      `SubstituteValue`, `AlgebraicSimplify`, `RearrangeEquation`, \
-     `TakePositiveRoot`.\n\n\
+     `TakePositiveRoot`.\n\
+  5. `proposed_targets` — up to 4 new exploration HEADLINES per cycle, \
+     each `{ hunch: <LaTeX>, domain_hint: <snake_case domain>, \
+     rationale: <1-2 sentences> }`. Use this when the existing platform \
+     queue (E=mc², F=ma, S=k_B ln Ω, Schrödinger, EFE, Gauss) is mostly \
+     in `proved` state — otherwise workers fall back to pure-random GA \
+     between cycles. Their current lifecycle states are surfaced in the \
+     prompt under `platform_target_states`. Each accepted entry is \
+     enqueued as a new platform conjecture row at priority=2 (curated \
+     headlines stay at 3 and still win ties). Do NOT propose hunches \
+     that match the no-cheat audit deny-list (rest energy variants, \
+     mass-shell, photon dispersion, Hubble's law, …) — they are dropped \
+     with a warn. This is a curriculum-extension lever, not a \
+     soft-target substitute.\n\n\
 Keep rationale ≤500 chars; rewrite `lessons_learned` each cycle as a \
 rolling indefinite-horizon memory of what works.";
 
@@ -153,6 +166,24 @@ const SCHEMA_HINT: &str = r#"{
                                 anything that pre-encodes the headline.
                                 Empty/missing → worker falls back to its
                                 hardcoded m1_seed_elite_for registry,
+  "proposed_targets": [
+    { "hunch": "<LaTeX>",
+      "domain_hint": "<snake_case domain>",
+      "rationale": "<1-2 sentences>" }, ...
+  ]                           -- up to 4 new exploration headlines per cycle.
+                                Each accepted entry becomes a new
+                                conjecture_jobs row with tier='platform',
+                                provider='steerer-proposed', priority=2.
+                                Use this when platform_target_states shows
+                                most of the curated 6 headlines as `proved`
+                                so workers don't fall back to pure-random
+                                GA. Entries with non-parseable LaTeX,
+                                unknown domain_hint, or canonical-form
+                                matching the no-cheat audit deny-list are
+                                dropped with a warn (the rest of the cycle
+                                still applies). Don't propose hunches
+                                already in the platform queue — the seeder
+                                de-dupes by hunch but you waste a slot,
   "cluster_directives": [
     { "island_domain": "...",
       "centroid_skeleton_hash": <u64>,    -- copy from cluster_summaries above,
@@ -194,6 +225,7 @@ pub fn build_prompt(
     k_per_island_next: &std::collections::HashMap<String, u32>,
     in_flight_targets: &[serde_json::Value],
     previous_lessons_learned: &str,
+    platform_target_states: &[serde_json::Value],
 ) -> String {
     let mode_note = if scope == "B" {
         "Mutation knobs are LOCKED for this cycle (≥1 paid Researcher \
@@ -215,6 +247,7 @@ pub fn build_prompt(
         "bandit_state": bandit_state,
         "k_per_island_next": k_per_island_next,
         "in_flight_targets": in_flight_targets,
+        "platform_target_states": platform_target_states,
         "instructions": format!("scope={scope}. {mode_note} \
             Cluster directives address clusters by `centroid_skeleton_hash` \
             from the cluster_summaries above. The bandit (not you) chose \
@@ -237,6 +270,16 @@ pub fn build_prompt(
             Cover what experiments worked, what didn't (so you don't repeat \
             mistakes), and your current focus. Emit it as the \
             `lessons_learned` field. \
+            \n\nPlatform curriculum extension: platform_target_states lists \
+            the 6 curated headlines (E=mc², F=ma, S=k_B ln Ω, Schrödinger, \
+            EFE, Gauss's law) with their current state — queued / claimed \
+            / running / proved / budget_exhausted / cancelled. When most \
+            entries are terminal (proved or otherwise done) the queue is \
+            running dry; emit up to 4 `proposed_targets` to graft fresh \
+            headlines on so workers stay on directed search instead of \
+            falling back to random GA. Empty/null platform_target_states \
+            means the platform queue hasn't been seeded yet — skip this \
+            lever. \
             \nEmit SteeringConfig JSON only — no prose, no markdown fences."),
     });
     serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into())
@@ -251,18 +294,20 @@ mod tests {
         serde_json::Value,
         std::collections::HashMap<String, u32>,
         Vec<serde_json::Value>,
+        Vec<serde_json::Value>,
     ) {
         (
             vec![],
             serde_json::json!({}),
             std::collections::HashMap::new(),
             vec![],
+            vec![],
         )
     }
 
     #[test]
     fn prompt_includes_scope_and_demand() {
-        let (cs, bs, kp, ift) = empty_extras();
+        let (cs, bs, kp, ift, pts) = empty_extras();
         let p = build_prompt(
             "C",
             &[],
@@ -278,6 +323,7 @@ mod tests {
             &kp,
             &ift,
             "",
+            &pts,
         );
         assert!(p.contains("scope=C"));
         assert!(p.contains("entropy"));
@@ -285,7 +331,7 @@ mod tests {
 
     #[test]
     fn mode_b_signals_pinned_targets() {
-        let (cs, bs, kp, ift) = empty_extras();
+        let (cs, bs, kp, ift, pts) = empty_extras();
         let p = build_prompt(
             "B",
             &[],
@@ -299,6 +345,7 @@ mod tests {
             &kp,
             &ift,
             "",
+            &pts,
         );
         assert!(p.contains("scope=B"));
         assert!(p.contains("LOCKED"));
@@ -307,9 +354,9 @@ mod tests {
 
     #[test]
     fn schema_mentions_required_fields() {
-        let (cs, bs, kp, ift) = empty_extras();
+        let (cs, bs, kp, ift, pts) = empty_extras();
         let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
         for f in &[
             "version",
             "scope",
@@ -323,9 +370,9 @@ mod tests {
 
     #[test]
     fn schema_hint_lists_mutation_priors_and_op_names() {
-        let (cs, bs, kp, ift) = empty_extras();
+        let (cs, bs, kp, ift, pts) = empty_extras();
         let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
         assert!(
             p.contains("mutation_priors"),
             "schema must mention mutation_priors"
@@ -344,7 +391,7 @@ mod tests {
 
     #[test]
     fn prompt_surfaces_previous_lessons_learned() {
-        let (cs, bs, kp, ift) = empty_extras();
+        let (cs, bs, kp, ift, pts) = empty_extras();
         let lessons = "Boost@SR strength=0.5 → 1.5× has worked across 4 of last 6 cycles.";
         let p = build_prompt(
             "C",
@@ -356,6 +403,7 @@ mod tests {
             &kp,
             &ift,
             lessons,
+            &pts,
         );
         assert!(p.contains("previous_lessons_learned"));
         assert!(p.contains("Boost@SR strength=0.5"));
@@ -363,9 +411,9 @@ mod tests {
 
     #[test]
     fn schema_hint_documents_lessons_learned() {
-        let (cs, bs, kp, ift) = empty_extras();
+        let (cs, bs, kp, ift, pts) = empty_extras();
         let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
         assert!(
             p.contains("lessons_learned"),
             "schema must mention lessons_learned"
@@ -399,9 +447,9 @@ mod tests {
 
     #[test]
     fn schema_hint_documents_proposed_chains() {
-        let (cs, bs, kp, ift) = empty_extras();
+        let (cs, bs, kp, ift, pts) = empty_extras();
         let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
         assert!(
             p.contains("proposed_chains"),
             "schema hint must document proposed_chains shape"
@@ -417,10 +465,47 @@ mod tests {
     }
 
     #[test]
+    fn system_prompt_documents_proposed_targets() {
+        assert!(
+            SYSTEM_PROMPT.contains("proposed_targets"),
+            "system prompt must teach the proposed_targets lever"
+        );
+        assert!(
+            SYSTEM_PROMPT.contains("proved"),
+            "system prompt must mention when to propose (most platform headlines proved)"
+        );
+    }
+
+    #[test]
+    fn schema_hint_documents_proposed_targets() {
+        let (cs, bs, kp, ift, pts) = empty_extras();
+        let p = build_prompt(
+            "C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts,
+        );
+        for f in &["proposed_targets", "hunch", "domain_hint", "rationale"] {
+            assert!(p.contains(f), "schema hint must mention proposed_targets field: {f}");
+        }
+    }
+
+    #[test]
+    fn prompt_surfaces_platform_target_states() {
+        let (cs, bs, kp, ift, _) = empty_extras();
+        let pts = vec![serde_json::json!({
+            "hunch": "E = m * c^2",
+            "state": "proved",
+        })];
+        let p = build_prompt(
+            "C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts,
+        );
+        assert!(p.contains("platform_target_states"));
+        assert!(p.contains("E = m * c^2"));
+    }
+
+    #[test]
     fn instructions_explain_rolling_memory() {
-        let (cs, bs, kp, ift) = empty_extras();
+        let (cs, bs, kp, ift, pts) = empty_extras();
         let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
         assert!(
             p.contains("REPLACE the previous version"),
             "instructions must tell the LLM to replace not append"

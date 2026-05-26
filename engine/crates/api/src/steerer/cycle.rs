@@ -361,6 +361,8 @@ pub async fn run_one_cycle(
         .map(|c| c.lessons_learned)
         .unwrap_or_default();
 
+    let platform_target_states = load_platform_target_states(db).await.unwrap_or_default();
+
     let user_prompt = build_prompt(
         scope,
         &history,
@@ -371,6 +373,7 @@ pub async fn run_one_cycle(
         &next_k_per_island,
         &in_flight_targets,
         &previous_lessons,
+        &platform_target_states,
     );
 
     // 5. Call LLM.
@@ -528,6 +531,32 @@ async fn last_known_good(
 ) -> Result<Option<SteeringConfig>, sea_orm::DbErr> {
     let row = nasrudin_pg::query::cluster_steering::last_validated(db).await?;
     Ok(row.and_then(|r| serde_json::from_value(r.config_json).ok()))
+}
+
+/// Pull every `tier='platform'` conjecture_jobs row's (hunch, state)
+/// pair into a tiny JSON list the LLM uses to decide whether to emit
+/// `proposed_targets`. Returning [] means "platform queue empty" —
+/// the LLM treats that case as "skip the proposed_targets lever
+/// because the seeder hasn't run yet" rather than "all proved."
+async fn load_platform_target_states(
+    db: &DatabaseConnection,
+) -> Result<Vec<serde_json::Value>, sea_orm::DbErr> {
+    use nasrudin_pg::entity::conjecture_jobs::{Column, Entity};
+    let rows = Entity::find()
+        .filter(Column::Tier.eq("platform"))
+        .all(db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "hunch": r.hunch,
+                "domain_hint": r.domain_hint,
+                "state": r.state,
+                "candidates_verified": r.candidates_verified,
+            })
+        })
+        .collect())
 }
 
 /// Adapter that calls the Gradient provider through the `LlmCaller`
