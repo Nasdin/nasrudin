@@ -31,12 +31,37 @@
 //! endpoints filter by `tier = 'researcher'` so platform rows
 //! never appear in the user's job listing either.
 
+use crate::steerer::schema::ProposedTarget;
 use nasrudin_pg::sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
 };
 use serde_json::{json, Value};
 use tracing::{info, warn};
 use uuid::Uuid;
+
+/// Priority for steerer-proposed targets. One below the curated
+/// platform baseline of 3 so the hardcoded 6 headlines still win
+/// ties even after the LLM grafts new work onto the queue.
+const STEERER_PROPOSED_PRIORITY: i32 = 2;
+
+/// Recognised `domain_hint` values for steerer-proposed targets.
+/// Mirrors `nasrudin_core::Domain`'s `Display` snake-case strings.
+/// Targets whose hint isn't on this list are dropped at enqueue
+/// time so a hallucinated domain doesn't sit forever in the queue
+/// where workers can't claim it.
+const VALID_DOMAIN_HINTS: &[&str] = &[
+    "pure_math",
+    "classical_mechanics",
+    "electromagnetism",
+    "special_relativity",
+    "general_relativity",
+    "quantum_mechanics",
+    "quantum_field_theory",
+    "statistical_mechanics",
+    "thermodynamics",
+    "optics",
+    "fluid_dynamics",
+];
 
 /// Sentinel owner UUID for platform-owned conjecture rows. Stable
 /// across restarts so the boot-time upsert is idempotent. Never
@@ -261,9 +286,173 @@ pub async fn ensure_platform_targets(pg: &DatabaseConnection) {
     info!(inserted, skipped, "platform target seeding complete");
 }
 
+/// Outcome of a single `ProposedTarget` validation pass. Separated
+/// from the DB-mutating enqueue path so unit tests can exercise the
+/// gates without a Postgres connection.
+#[derive(Debug, PartialEq)]
+pub(crate) enum ProposedTargetCheck {
+    Accept,
+    BadLatex,
+    BadDomain,
+    Forbidden(&'static str),
+}
+
+/// Pure-logic gate: parse, domain whitelist, no-cheat audit.
+/// Existence-check against the DB is performed separately in
+/// `enqueue_proposed_targets`. Lives at module-private visibility
+/// so the public surface stays `enqueue_proposed_targets`.
+pub(crate) fn check_proposed_target(t: &ProposedTarget) -> ProposedTargetCheck {
+    let Ok(parsed) = nasrudin_core::parse::parse_latex(&t.hunch) else {
+        return ProposedTargetCheck::BadLatex;
+    };
+    if !VALID_DOMAIN_HINTS.contains(&t.domain_hint.as_str()) {
+        return ProposedTargetCheck::BadDomain;
+    }
+    let canon = parsed.to_canonical();
+    let forbidden = nasrudin_derive::no_cheat_audit::forbidden_canonical_statements();
+    if let Some((label, _)) = forbidden.iter().find(|(_, c)| *c == canon) {
+        return ProposedTargetCheck::Forbidden(label);
+    }
+    ProposedTargetCheck::Accept
+}
+
+/// Enqueue LLM-proposed exploration targets into the platform queue.
+/// Returns `(accepted, dropped)` counts.
+///
+/// Each `ProposedTarget` passes through four gates:
+///   1. `hunch` must parse via `nasrudin_core::parse::parse_latex`.
+///   2. `domain_hint` must be in `VALID_DOMAIN_HINTS`.
+///   3. The parsed expression's canonical form must NOT match the
+///      no-cheat audit deny-list (E=mc² and friends).
+///   4. No existing `tier='platform'` row may already carry this
+///      exact `hunch` string (any state — proved/cancelled rows
+///      count too, so the LLM can't re-enqueue work that's already
+///      been ruled on).
+///
+/// Failing any gate drops the entry with a warn — the rest of the
+/// cycle still applies. Accepted entries land with priority=2,
+/// provider='steerer-proposed', model='kimi-k2.6' so they're
+/// traceable in audit logs.
+pub async fn enqueue_proposed_targets(
+    pg: &DatabaseConnection,
+    targets: &[ProposedTarget],
+    model_id: &str,
+) -> (usize, usize) {
+    use nasrudin_pg::entity::conjecture_jobs;
+    if targets.is_empty() {
+        return (0, 0);
+    }
+    if let Err(e) = ensure_sentinel_user(pg).await {
+        warn!(error = %e, "platform sentinel user upsert failed; dropping all proposed_targets");
+        return (0, targets.len());
+    }
+    let mut accepted = 0usize;
+    let mut dropped = 0usize;
+    for t in targets {
+        match check_proposed_target(t) {
+            ProposedTargetCheck::Accept => {}
+            ProposedTargetCheck::BadLatex => {
+                warn!(hunch = %t.hunch,
+                    "dropping steerer-proposed target: parse_latex failed");
+                dropped += 1;
+                continue;
+            }
+            ProposedTargetCheck::BadDomain => {
+                warn!(hunch = %t.hunch, domain_hint = %t.domain_hint,
+                    "dropping steerer-proposed target: unknown domain_hint");
+                dropped += 1;
+                continue;
+            }
+            ProposedTargetCheck::Forbidden(label) => {
+                warn!(hunch = %t.hunch, label = %label,
+                    "dropping steerer-proposed target: matches no-cheat audit deny-list");
+                dropped += 1;
+                continue;
+            }
+        }
+        let existing = conjecture_jobs::Entity::find()
+            .filter(conjecture_jobs::Column::Tier.eq("platform"))
+            .filter(conjecture_jobs::Column::Hunch.eq(t.hunch.clone()))
+            .one(pg)
+            .await;
+        match existing {
+            Ok(Some(_)) => {
+                info!(hunch = %t.hunch,
+                    "skipping steerer-proposed target: already in platform queue");
+                dropped += 1;
+                continue;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(hunch = %t.hunch, error = %e,
+                    "dropping steerer-proposed target: existence check failed");
+                dropped += 1;
+                continue;
+            }
+        }
+        let am = conjecture_jobs::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            owner_id: Set(PLATFORM_OWNER_ID),
+            state: Set("queued".into()),
+            outcome: Set(None),
+            hunch: Set(t.hunch.clone()),
+            domain_hint: Set(Some(t.domain_hint.clone())),
+            provider: Set("steerer-proposed".into()),
+            model: Set(model_id.into()),
+            suggestions: Set(None),
+            chosen_index: Set(None),
+            seed: Set(None),
+            budget: Set(json!({
+                "wall_seconds": 86_400_000_i64,
+                "max_candidates": 100_000_000_i64,
+            })),
+            claimed_by: Set(None),
+            claimed_at: Set(None),
+            lease_expires_at: Set(None),
+            last_heartbeat_at: Set(None),
+            candidates_attempted: Set(0),
+            candidates_verified: Set(0),
+            verified_theorem_ids: Set(None),
+            created_at: Set(chrono::Utc::now().into()),
+            completed_at: Set(None),
+            paper_draft: Set(None),
+            lake_slot_hours_quota: Set(PLATFORM_QUOTA_HOURS),
+            lake_slot_hours_consumed: Set(0.0),
+            slice_priority: Set(STEERER_PROPOSED_PRIORITY),
+            tier: Set("platform".into()),
+            allocated_slots: Set(4),
+        };
+        match am.insert(pg).await {
+            Ok(_) => {
+                accepted += 1;
+                info!(
+                    hunch = %t.hunch,
+                    domain = %t.domain_hint,
+                    rationale = %t.rationale,
+                    model = %model_id,
+                    "steerer-proposed platform target enqueued"
+                );
+            }
+            Err(e) => {
+                warn!(hunch = %t.hunch, error = %e,
+                    "steerer-proposed target insert failed");
+                dropped += 1;
+            }
+        }
+    }
+    info!(
+        accepted,
+        dropped,
+        model = %model_id,
+        "steerer-proposed target enqueue cycle complete"
+    );
+    (accepted, dropped)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::platform_targets;
+    use super::{check_proposed_target, platform_targets, ProposedTargetCheck};
+    use crate::steerer::schema::ProposedTarget;
 
     /// Every platform target must parse as LaTeX (or the equivalent
     /// math-mode shorthand `nasrudin_core::parse::parse_latex`
@@ -306,5 +495,74 @@ mod tests {
                 pool.as_object().map(|o| o.keys().collect::<Vec<_>>()),
             );
         }
+    }
+
+    #[test]
+    fn check_accepts_well_formed_target() {
+        let t = ProposedTarget {
+            hunch: "P V = n R T".into(),
+            domain_hint: "thermodynamics".into(),
+            rationale: "ideal gas law".into(),
+        };
+        assert_eq!(check_proposed_target(&t), ProposedTargetCheck::Accept);
+    }
+
+    #[test]
+    fn check_rejects_unparseable_latex() {
+        let t = ProposedTarget {
+            hunch: "this { is not [ valid LaTeX".into(),
+            domain_hint: "pure_math".into(),
+            rationale: "garbage".into(),
+        };
+        assert_eq!(check_proposed_target(&t), ProposedTargetCheck::BadLatex);
+    }
+
+    #[test]
+    fn check_rejects_unknown_domain_hint() {
+        let t = ProposedTarget {
+            hunch: "x = y".into(),
+            domain_hint: "made_up_domain".into(),
+            rationale: "wrong domain".into(),
+        };
+        assert_eq!(check_proposed_target(&t), ProposedTargetCheck::BadDomain);
+    }
+
+    #[test]
+    fn check_rejects_forbidden_headline_emc2() {
+        // The exact canonical form forbidden by no_cheat_audit.
+        let t = ProposedTarget {
+            hunch: "E = m c^2".into(),
+            domain_hint: "special_relativity".into(),
+            rationale: "the cheat-target".into(),
+        };
+        match check_proposed_target(&t) {
+            ProposedTargetCheck::Forbidden(label) => {
+                assert!(
+                    label.contains("emc"),
+                    "expected emc2 label, got {label}"
+                );
+            }
+            other => panic!("expected Forbidden, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_rejects_forbidden_headline_qm_planck_einstein() {
+        // E = ℏ ω. The audit constructs `eq(e(), mul(hbar(), omega()))`
+        // which matches the parser's left-associative implicit-mult
+        // structure for `E = hbar omega`.
+        let t = ProposedTarget {
+            hunch: r"E = \hbar \omega".into(),
+            domain_hint: "quantum_mechanics".into(),
+            rationale: "smuggling Planck-Einstein".into(),
+        };
+        assert!(
+            matches!(
+                check_proposed_target(&t),
+                ProposedTargetCheck::Forbidden(_)
+            ),
+            "expected Forbidden, got {:?}",
+            check_proposed_target(&t)
+        );
     }
 }

@@ -438,6 +438,20 @@ pub async fn run_one_cycle(
         .await;
     }
 
+    if !config.proposed_targets.is_empty() {
+        let (accepted, dropped) = crate::platform_targets::enqueue_proposed_targets(
+            db,
+            &config.proposed_targets,
+            model_id,
+        )
+        .await;
+        tracing::info!(
+            accepted,
+            dropped,
+            "applied proposed_targets from steerer cycle"
+        );
+    }
+
     // Hot-reload the in-process snapshot. Workers see the new config
     // on their next `/api/seed` poll. Seed cache is invalidated
     // explicitly so they don't see a stale pairing of axioms+config.
