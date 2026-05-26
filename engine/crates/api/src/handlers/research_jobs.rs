@@ -27,11 +27,53 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
-use nasrudin_ga::chain_ga::PHYSICS_ATOM_NAMES;
+use nasrudin_ga::chain_ga::{MUTATION_OPS, PHYSICS_ATOM_NAMES};
 
 use crate::auth::AuthOrApiKey;
 use crate::jobs::JobEvent;
 use crate::state::AppState;
+
+/// `GET /api/research/steering_options` — read-only metadata the
+/// `/research` submit form needs to render the Custom Steering disclosure:
+/// the validated atom names (the same `PHYSICS_ATOM_NAMES` table the
+/// server checks against), the mutation-operator names the GA recognises,
+/// the snake_case domain keys the validator accepts inside `atom_pool`,
+/// and the clamp bounds the server applies. Returning this from the API
+/// (instead of hardcoding in the frontend) means adding a new atom is a
+/// one-line backend change — no FE redeploy.
+pub async fn steering_options() -> impl IntoResponse {
+    // Domain keys mirror `Domain::Display` (snake_case). Listed in the
+    // same order as the form's domain-hint dropdown so the UI's
+    // ordering stays consistent.
+    let domains = [
+        "special_relativity",
+        "electromagnetism",
+        "classical_mechanics",
+        "thermodynamics",
+        "quantum_mechanics",
+        "general_relativity",
+        "pure_math",
+    ];
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "atom_names": PHYSICS_ATOM_NAMES,
+            "operator_names": MUTATION_OPS,
+            "domains": domains,
+            "bounds": {
+                "atom_weight": { "min": 0.0, "max": 4.0 },
+                "mutation_prior": { "min": 0.0, "max": 2.0 },
+                "mutation_knobs": {
+                    "rate": { "min": 0.05, "max": 0.30 },
+                    "population_size": { "min": 32, "max": 512, "step": 32 },
+                    "suffix_bias": { "min": 0.0, "max": 1.0 },
+                    "elitism_fraction": { "min": 0.0, "max": 0.2 }
+                }
+            }
+        })),
+    )
+        .into_response()
+}
 
 /// Send a JobEvent on the per-job broadcast channel, lazily creating
 /// it the first time anyone subscribes or emits. No-op on send error

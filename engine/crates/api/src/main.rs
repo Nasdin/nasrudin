@@ -1508,6 +1508,10 @@ async fn main() -> anyhow::Result<()> {
                     .get(handlers::research_jobs::list),
             )
             .route(
+                "/api/research/steering_options",
+                get(handlers::research_jobs::steering_options),
+            )
+            .route(
                 "/api/research/jobs/{id}",
                 get(handlers::research_jobs::detail),
             )
