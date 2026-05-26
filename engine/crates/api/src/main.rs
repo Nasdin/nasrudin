@@ -804,7 +804,22 @@ async fn main() -> anyhow::Result<()> {
     // promotions; the crawler ensures every ChainVerified row eventually
     // graduates to LakeVerified or Rejected even without consumption
     // pressure.
-    if let Some(ref promotion) = state.lake_promotion {
+    //
+    // On the 1-core 2GB droplet the crawler periodically spawns
+    // `lake build PhysicsGenerator` which contends with the GA worker's
+    // own lake-build for that single core + RAM, often hostage-taking
+    // the worker for 30+ min on each iteration. Set
+    // `NASRUDIN_DISABLE_LAKE_PROMOTION=1` to skip both the drain and the
+    // crawler so the worker gets uncontested compute. Off by default.
+    let disable_lake_promotion = std::env::var("NASRUDIN_DISABLE_LAKE_PROMOTION")
+        .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(false);
+    if disable_lake_promotion {
+        tracing::warn!(
+            "NASRUDIN_DISABLE_LAKE_PROMOTION=1 — skipping lake-promotion \
+             drain + crawler so the GA worker has uncontested compute"
+        );
+    } else if let Some(ref promotion) = state.lake_promotion {
         let p = Arc::clone(promotion);
         tokio::spawn(physics_api::lake_promotion::drain_loop(p));
         let p = Arc::clone(promotion);
