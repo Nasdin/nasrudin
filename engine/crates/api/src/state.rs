@@ -262,6 +262,16 @@ pub struct AppState {
     /// endpoint then degrades to returning all non-imported GA
     /// theorems.
     pub catalog_hashes: CatalogHashSet,
+    /// LLM-naming client (Kimi K2.6 via Gradient). `None` when
+    /// `GRADIENT_API_KEY` is unset — the post-verify hook and the
+    /// backfill admin endpoint both degrade to no-op + 503 in that
+    /// state instead of failing the ingest path.
+    pub naming_client: Option<Arc<crate::theorem_naming::NamingClient>>,
+    /// Concurrency cap for LLM-naming calls. Default 3. Shared by the
+    /// post-verify hook (one task per Verified flip) and the backfill
+    /// runner so a 100-row backfill burst can't starve the steerer of
+    /// Gradient bandwidth.
+    pub naming_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 /// Cache key for the `/api/seed` JSON response cache. Distinct

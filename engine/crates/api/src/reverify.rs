@@ -63,6 +63,13 @@ pub struct ReverifyQueue {
     /// `cache_ctx.config.attempts_enabled`, the reverify path goes
     /// through `LakeBuilder::verify_cached` instead of `verify`.
     pub cache_ctx: Option<Arc<crate::cache::CacheCtx>>,
+    /// LLM-naming client (Kimi K2.6). `None` when GRADIENT_API_KEY is
+    /// unset; `flip_verified` then skips the post-verify naming task
+    /// entirely instead of failing the verification flip.
+    pub naming_client: Option<Arc<crate::theorem_naming::NamingClient>>,
+    /// Bounded-concurrency permit for LLM-naming. Shared with the
+    /// admin backfill endpoint via `AppState.naming_semaphore`.
+    pub naming_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 /// SSE event variants broadcast as the reverify queue progresses through a
@@ -459,7 +466,94 @@ impl ReverifyQueue {
             verification_path: path.to_string(),
             duration_ms,
         });
+
+        // Post-verify LLM-naming hook. Fire-and-forget so a slow
+        // Gradient call can't back the reverify drain up. Bounded by
+        // `naming_semaphore` (3 in flight at most).
+        self.spawn_naming(row);
         Ok(())
+    }
+
+    /// Schedule an async LLM-naming task for a freshly-verified row.
+    ///
+    /// Skip conditions (each silent — naming is a UX nicety, never a
+    /// correctness gate):
+    ///   * no `naming_client` (env not configured)
+    ///   * `verification_tactic == "imported"` (Lean qualifier is
+    ///     already a usable name; see headline_registry for the 6
+    ///     curated short-circuit cases that bypass the LLM)
+    ///   * `display_name` is already non-NULL (idempotency: a second
+    ///     flip — e.g. lake-promotion re-running — never re-issues an
+    ///     LLM call)
+    ///   * `headline_registry::match_canonical` returns Some — those
+    ///     6 famous laws get curated names without the LLM
+    fn spawn_naming(&self, row: &nasrudin_pg::entity::theorems::Model) {
+        let Some(client) = self.naming_client.clone() else {
+            return;
+        };
+        match naming_action(row) {
+            NamingAction::Skip => return,
+            NamingAction::UseHeadline { name, description } => {
+                let pg = self.pg.clone();
+                let id = row.id.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = nasrudin_pg::query::theorems::set_display_name(
+                        &pg, &id, &name, &description,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            theorem_id = %hex::encode(&id),
+                            "headline naming write failed"
+                        );
+                    }
+                });
+                return;
+            }
+            NamingAction::CallLlm => {}
+        }
+        let pg = self.pg.clone();
+        let sem = Arc::clone(&self.naming_semaphore);
+        let id = row.id.clone();
+        let canonical = row.canonical_statement.clone();
+        let lean = row.lean_source.clone();
+        let axioms = row.axioms_used.clone();
+        let domain = row.domain.clone();
+        tokio::spawn(async move {
+            let _permit = match sem.acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            match client
+                .name_theorem(&canonical, &lean, &axioms, &domain)
+                .await
+            {
+                Ok(named) => {
+                    if let Err(e) = nasrudin_pg::query::theorems::set_display_name(
+                        &pg,
+                        &id,
+                        &named.display_name,
+                        &named.description,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            theorem_id = %hex::encode(&id),
+                            "llm naming write failed"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        theorem_id = %hex::encode(&id),
+                        "llm naming call failed; leaving display_name NULL"
+                    );
+                }
+            }
+        });
     }
 
     /// Cache-aware lake-build dispatch.
@@ -587,6 +681,35 @@ impl ReverifyQueue {
     }
 }
 
+/// Pure decision function for the LLM-naming post-verify hook —
+/// extracted from `ReverifyQueue::spawn_naming` so it can be unit
+/// tested without spinning up a real Postgres + Gradient stack. See
+/// the `spawn_naming` doc comment for the full skip-condition rationale.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NamingAction {
+    Skip,
+    UseHeadline { name: String, description: String },
+    CallLlm,
+}
+
+pub fn naming_action(row: &nasrudin_pg::entity::theorems::Model) -> NamingAction {
+    if row.display_name.is_some() {
+        return NamingAction::Skip;
+    }
+    if row.verification_tactic.as_deref() == Some("imported") {
+        return NamingAction::Skip;
+    }
+    if let Some(h) =
+        nasrudin_derive::headline_registry::match_canonical(&row.canonical_statement)
+    {
+        return NamingAction::UseHeadline {
+            name: h.name.to_string(),
+            description: h.description.to_string(),
+        };
+    }
+    NamingAction::CallLlm
+}
+
 /// Marker for "chain replay succeeded and canonical matches." P-Task 1
 /// inverted the A-path: chain replay is verification (sound by
 /// construction over the trusted Rust rule library + audited
@@ -595,3 +718,95 @@ impl ReverifyQueue {
 /// payload — the chain replay's success is the entire signal.
 #[allow(dead_code)]
 struct RegeneratedLean;
+
+#[cfg(test)]
+mod naming_action_tests {
+    use super::*;
+    use nasrudin_pg::entity::theorems::Model;
+
+    fn fixture() -> Model {
+        Model {
+            id: vec![0u8; 8],
+            canonical_hash: vec![0u8; 8],
+            canonical_ac_hash: None,
+            canonical_statement: "(= v:X v:Y)".into(),
+            latex: None,
+            lean_source: "theorem t : True := trivial".into(),
+            domain: "sr".into(),
+            axioms_used: vec![],
+            chain_json: serde_json::json!([]),
+            parents: None,
+            origin_kind: "Axiom".into(),
+            origin_payload: None,
+            depth: None,
+            complexity: None,
+            generation: None,
+            fitness_novelty: None,
+            fitness_compactness: None,
+            fitness_dimensional_correctness: None,
+            fitness_domain_coverage: None,
+            fitness_axiom_efficiency: None,
+            fitness_nasrudin_relevance: None,
+            fitness_depth_score: None,
+            dimension: None,
+            engine_git_sha: String::new(),
+            lean_version: String::new(),
+            verification_tactic: Some("chain_replay".into()),
+            verification_duration_ms: None,
+            verification_path: None,
+            status: "Verified".into(),
+            rejected_reason: None,
+            contributor_id: "test".into(),
+            user_email: None,
+            created_at: chrono::Utc::now().fixed_offset(),
+            verified_at: None,
+            worker_verified: false,
+            worker_trusted: false,
+            worker_spot_check_rate: None,
+            display_name: None,
+            description: None,
+        }
+    }
+
+    #[test]
+    fn skips_when_display_name_already_set() {
+        let mut row = fixture();
+        row.display_name = Some("Existing".into());
+        assert_eq!(naming_action(&row), NamingAction::Skip);
+    }
+
+    #[test]
+    fn skips_imported_rows() {
+        let mut row = fixture();
+        row.verification_tactic = Some("imported".into());
+        assert_eq!(naming_action(&row), NamingAction::Skip);
+    }
+
+    #[test]
+    fn idempotent_second_call_after_set() {
+        let mut row = fixture();
+        assert_eq!(naming_action(&row), NamingAction::CallLlm);
+        row.display_name = Some("set by llm".into());
+        row.description = Some("desc".into());
+        assert_eq!(naming_action(&row), NamingAction::Skip);
+    }
+
+    #[test]
+    fn emc2_canonical_uses_headline_not_llm() {
+        let mut row = fixture();
+        row.canonical_statement = "(= v:E (* v:m (^ c:SpeedOfLight n:2)))".into();
+        match naming_action(&row) {
+            NamingAction::UseHeadline { name, .. } => {
+                assert_eq!(name, "Mass-energy equivalence")
+            }
+            other => panic!("expected UseHeadline, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn novel_lemma_routes_to_llm() {
+        let mut row = fixture();
+        row.canonical_statement = "(= (+ n:1 n:1) n:2)".into();
+        assert_eq!(naming_action(&row), NamingAction::CallLlm);
+    }
+}

@@ -560,6 +560,28 @@ async fn main() -> anyhow::Result<()> {
         physics_api::conjecture::ConjectureEvent,
     >(256);
 
+    let naming_client: Option<Arc<physics_api::theorem_naming::NamingClient>> =
+        match physics_api::theorem_naming::NamingClient::from_env() {
+            Ok(c) => {
+                tracing::info!("LLM-naming client wired (Kimi K2.6)");
+                Some(Arc::new(c))
+            }
+            Err(e) => {
+                tracing::info!(
+                    error = %e,
+                    "GRADIENT_API_KEY unset; LLM-naming disabled \
+                     (display_name + description columns stay NULL)"
+                );
+                None
+            }
+        };
+    let naming_semaphore = Arc::new(tokio::sync::Semaphore::new(
+        std::env::var("NAMING_CONCURRENCY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3),
+    ));
+
     let reverify = pg.as_ref().map(|pg_conn| {
         Arc::new(physics_api::reverify::ReverifyQueue {
             rocks: Arc::clone(&db),
@@ -568,6 +590,8 @@ async fn main() -> anyhow::Result<()> {
             axiom_store: axiom_store.clone(),
             discovery_tx: reverify_event_tx.clone(),
             cache_ctx: cache_ctx.clone(),
+            naming_client: naming_client.clone(),
+            naming_semaphore: Arc::clone(&naming_semaphore),
         })
     });
 
@@ -678,6 +702,8 @@ async fn main() -> anyhow::Result<()> {
         trust_invalidation_tx: trust_invalidation_tx.clone(),
         trusted_spot_check_rate,
         catalog_hashes,
+        naming_client,
+        naming_semaphore,
     });
 
     // Reseed CapacityTracker.paid_slots from the DB. The counter is
