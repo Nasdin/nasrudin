@@ -114,15 +114,15 @@ pub fn emit_lean_file(ctx: &DerivationContext, config: &LeanEmitConfig) -> Strin
 
     // ── Heartbeat cap for nlinarith / polyrith / positivity ──
     // Without an explicit cap, nlinarith on a non-provable goal runs
-    // until memory exhaustion. On the 1-core 2GB droplet, that means a
-    // single bad GA candidate can hostage the worker for 30-60 min of
-    // wall time while it swap-thrashes through polynomial search. With
-    // maxHeartbeats=200000 (the Mathlib default for hard tactics),
-    // nlinarith bails in ~1-5s on goals it can't close, so the worker
-    // cycles through ~10-60× more candidates per hour. The seed chain
-    // (M1.c) closes in well under 200k heartbeats so this cap doesn't
-    // regress the known-good path.
-    out.push_str("set_option maxHeartbeats 200000\n\n");
+    // until memory exhaustion. The first try (maxHeartbeats=200000,
+    // Mathlib's default) was still letting bad candidates eat 50+ min
+    // wall on the swap-bound droplet — the 4-tactic `first` cascade
+    // each got its own 200k budget so the total was effectively 800k.
+    // 50000 is aggressive but the M1.c seed chain closed in well under
+    // that limit on the same hardware, so the known-good path doesn't
+    // regress. Any legitimate physics chain we care about should close
+    // in <50k heartbeats; anything slower than that is GA noise.
+    out.push_str("set_option maxHeartbeats 50000\n\n");
     // ── Namespace + opens ────────────────────────────────────
     out.push_str(&format!("namespace {}\n\n", config.namespace));
     out.push_str("open PhysicsGenerator\n\n");
