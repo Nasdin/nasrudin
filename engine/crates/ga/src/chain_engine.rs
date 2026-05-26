@@ -273,6 +273,30 @@ pub struct DiscoveryConfig {
     /// /api/theorems we clear this and let the steerer + mutations
     /// rediscover the chain from random seeds (M1.d).
     pub permanent_elite: Option<Chain>,
+    /// LLM-proposed elite chains for this discovery run. When non-empty,
+    /// `seed_population` injects each chain as an additional elite
+    /// individual *on top of* `permanent_elite` so the worker explores
+    /// neighbourhoods of LLM-curated candidates without losing the
+    /// hand-coded baseline. The first entry is also re-injected as
+    /// offspring every generation (analogous to `permanent_elite`
+    /// semantics) so at least one LLM chain survives every selection
+    /// round.
+    ///
+    /// Populated by the worker per-chunk from
+    /// `steering.config.proposed_chains[target]` when
+    /// `NASRUDIN_USE_LLM_CHAINS=1`. Empty otherwise (and on every
+    /// chunk that lacks a steering snapshot or a target-keyed
+    /// proposal).
+    ///
+    /// Why this lives alongside `permanent_elite` instead of replacing
+    /// it: `permanent_elite` is a static, engineer-curated baseline
+    /// that ships in the worker binary. `llm_proposed_chains` is
+    /// dynamic and updated every 10 minutes by the steerer cycle.
+    /// Keeping them independent means the LLM can experiment with new
+    /// chains without nuking the proven baseline, and the M1.d
+    /// acceptance run (which clears `NASRUDIN_M1_SEED_ELITE`) still
+    /// validates the random-rediscovery story for the hardcoded slot.
+    pub llm_proposed_chains: Vec<Chain>,
 }
 
 /// Per-cluster knob multiplier. Default is identity (1.0× rate, 1.0×
@@ -377,6 +401,7 @@ impl Default for DiscoveryConfig {
             cluster_assignments: vec![],
             atom_pool: None,
             permanent_elite: None,
+            llm_proposed_chains: Vec::new(),
         }
     }
 }
@@ -491,6 +516,32 @@ pub fn seed_population(
             pop[0] = ChainIndividual::new(elite_chain.clone(), fit);
         }
     }
+    // LLM-proposed elites: placed at index 1.., shifted past the
+    // permanent_elite slot when one is set. Each chain is evaluated
+    // exactly like any other seed; the first proposed chain is also
+    // re-injected as offspring every generation by the run loop.
+    // We tolerate chains that fail to execute against the local
+    // AxiomStore (missing axiom names, mismatched theorem names from
+    // a partially-synced peer corpus): such chains score very low and
+    // are quickly displaced by random seeds during selection. We don't
+    // crash because the LLM may emit a chain referencing an axiom the
+    // worker hasn't seed-synced yet, and the next chunk's re-sync
+    // typically resolves the gap.
+    if !config.llm_proposed_chains.is_empty() && !pop.is_empty() {
+        let start_idx = if config.permanent_elite.is_some() { 1 } else { 0 };
+        for (offset, chain) in config.llm_proposed_chains.iter().enumerate() {
+            let target_idx = start_idx + offset;
+            if target_idx >= pop.len() {
+                break;
+            }
+            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+                chain,
+                store,
+                config.target.as_ref(),
+            );
+            pop[target_idx] = ChainIndividual::new(chain.clone(), fit);
+        }
+    }
     pop
 }
 
@@ -567,6 +618,24 @@ pub fn run_discovery_from_population(
             );
             offspring.push(ChainIndividual::new(elite_chain.clone(), fit));
             report.total_candidates += 1;
+        }
+
+        // LLM-proposed elite: lock in the first proposed chain as an
+        // additional offspring every generation, same semantics as
+        // `permanent_elite`. Only the head slot is re-injected so the
+        // rest of the pool retains its fitness-driven dynamics; the
+        // remaining proposed chains were planted at seed time and
+        // compete on merit thereafter.
+        if let Some(llm_chain) = config.llm_proposed_chains.first() {
+            if offspring.len() < config.population_size {
+                let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+                    llm_chain,
+                    store,
+                    config.target.as_ref(),
+                );
+                offspring.push(ChainIndividual::new(llm_chain.clone(), fit));
+                report.total_candidates += 1;
+            }
         }
 
         // Elitism: copy top-N current population through unchanged
@@ -1131,6 +1200,7 @@ mod tests {
             cluster_assignments: vec![],
             atom_pool: None,
             permanent_elite: None,
+            llm_proposed_chains: Vec::new(),
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -1169,6 +1239,7 @@ mod tests {
             cluster_assignments: vec![],
             atom_pool: None,
             permanent_elite: None,
+            llm_proposed_chains: Vec::new(),
         };
         let mut rng = rand::rng();
         let report = run_discovery(&store, &config, &mut rng);
@@ -1218,6 +1289,7 @@ mod tests {
             cluster_assignments: vec![],
             atom_pool: None,
             permanent_elite: Some(elite.clone()),
+            llm_proposed_chains: Vec::new(),
         };
         config.collect_final_population = true;
         let mut rng = rand::rng();
@@ -1236,6 +1308,106 @@ mod tests {
         assert!(
             found,
             "permanent elite was not present in final population after {} gens",
+            config.generations
+        );
+    }
+
+    #[test]
+    fn llm_proposed_chain_lands_in_seed_population() {
+        // The wire contract: when the worker hands the GA a chain
+        // via `llm_proposed_chains`, that exact chain must appear
+        // as a seed individual. This is what makes the LLM's
+        // proposal observable to the discovery pipeline at all.
+        let store = upstream_store();
+        let llm_chain = nasrudin_derive::Chain(vec![
+            nasrudin_derive::RuleStep::IntroduceAxiom {
+                axiom_name: "minkowski_invariant_def".into(),
+            },
+            nasrudin_derive::RuleStep::AlgebraicSimplify,
+        ]);
+        let config = DiscoveryConfig {
+            population_size: 8,
+            generations: 1,
+            llm_proposed_chains: vec![llm_chain.clone()],
+            ..DiscoveryConfig::default()
+        };
+        let mut rng = rand::rng();
+        let mut report = DiscoveryReport::default();
+        let pop = seed_population(&store, &config, &mut rng, &mut report);
+        // No permanent_elite was set, so the LLM chain occupies
+        // slot 0.
+        let pop_steps_json = serde_json::to_string(&pop[0].chain.0).unwrap();
+        let llm_steps_json = serde_json::to_string(&llm_chain.0).unwrap();
+        assert_eq!(
+            pop_steps_json, llm_steps_json,
+            "LLM proposed chain must appear at index 0 when no permanent_elite is set"
+        );
+    }
+
+    #[test]
+    fn llm_proposed_chain_coexists_with_permanent_elite() {
+        // When BOTH are set, permanent_elite owns slot 0 and the LLM
+        // chain takes slot 1 — the engineer-curated baseline is
+        // preserved AND the dynamic LLM proposal still lands as an
+        // elite. Acceptance criterion for the parallel-elite design.
+        let store = upstream_store();
+        let elite = nasrudin_derive::Chain::rest_energy_from_upstream();
+        let llm_chain = nasrudin_derive::Chain(vec![
+            nasrudin_derive::RuleStep::IntroduceAxiom {
+                axiom_name: "minkowski_invariant_def".into(),
+            },
+            nasrudin_derive::RuleStep::AlgebraicSimplify,
+        ]);
+        let config = DiscoveryConfig {
+            population_size: 8,
+            generations: 1,
+            permanent_elite: Some(elite.clone()),
+            llm_proposed_chains: vec![llm_chain.clone()],
+            ..DiscoveryConfig::default()
+        };
+        let mut rng = rand::rng();
+        let mut report = DiscoveryReport::default();
+        let pop = seed_population(&store, &config, &mut rng, &mut report);
+        let slot0 = serde_json::to_string(&pop[0].chain.0).unwrap();
+        let slot1 = serde_json::to_string(&pop[1].chain.0).unwrap();
+        assert_eq!(slot0, serde_json::to_string(&elite.0).unwrap());
+        assert_eq!(slot1, serde_json::to_string(&llm_chain.0).unwrap());
+    }
+
+    #[test]
+    fn llm_proposed_chain_survives_every_generation() {
+        // The first LLM-proposed chain is re-injected as offspring
+        // each generation, same semantics as permanent_elite. Use
+        // upstream_store + the rest_energy chain to give the GA a
+        // chain we know executes without errors so fitness scoring
+        // doesn't trip on a dead seed.
+        let store = upstream_store();
+        let llm_chain = nasrudin_derive::Chain::rest_energy_from_upstream();
+        let mut config = DiscoveryConfig {
+            population_size: 16,
+            generations: 4,
+            crossover_rate: 0.6,
+            mutation_rate: 0.7,
+            tournament_size: 3,
+            max_chain_len: 12,
+            llm_proposed_chains: vec![llm_chain.clone()],
+            ..DiscoveryConfig::default()
+        };
+        config.collect_final_population = true;
+        let mut rng = rand::rng();
+        let report = run_discovery(&store, &config, &mut rng);
+        let llm_steps_json = serde_json::to_string(&llm_chain.0).unwrap();
+        let mut found = false;
+        for (chain, _comps, _names, _cid) in &report.final_population {
+            let steps_json = serde_json::to_string(&chain.0).unwrap();
+            if steps_json == llm_steps_json {
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "LLM proposed chain was not present in final population after {} gens",
             config.generations
         );
     }
@@ -1351,6 +1523,7 @@ mod tests {
             cluster_assignments: vec![],
             atom_pool: None,
             permanent_elite: None,
+            llm_proposed_chains: Vec::new(),
         };
         let mut rng = rand::rng();
         let mut initial_report = DiscoveryReport::default();

@@ -815,6 +815,9 @@ async fn main() {
         // NASRUDIN_M1_SEED_ELITE=0 (or unsets the target) to confirm
         // the GA can rediscover it from random seeds + the steerer.
         permanent_elite: m1_seed_elite_for(target_name_for_elite),
+        // LLM-proposed chains are filled in per-chunk after the
+        // steering snapshot lands; empty at boot.
+        llm_proposed_chains: Vec::new(),
     };
     if let Some(ref elite) = config.permanent_elite {
         println!(
@@ -1984,6 +1987,7 @@ async fn run_seed_driven_chunk(
             // Research-mode jobs target an LLM-supplied conjecture, not
             // sr_rest_energy — no permanent elite makes sense here.
             permanent_elite: None,
+            llm_proposed_chains: Vec::new(),
         };
         let report = run_discovery(&filtered, &chunk_config, rng);
         total_attempted += report.total_candidates as u64;
