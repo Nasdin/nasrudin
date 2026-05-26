@@ -47,6 +47,7 @@ mod m20260430_000029_drop_email_outbox;
 mod m20260501_000020_query_optimization_indexes;
 mod m20260430_000030_user_sponsorships;
 mod m20260525_000013_theorems_imported_source_idx;
+mod m20260526_000001_theorem_display_name;
 
 pub struct Migrator;
 
@@ -101,6 +102,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260430_000030_user_sponsorships::Migration),
             Box::new(m20260501_000020_query_optimization_indexes::Migration),
             Box::new(m20260525_000013_theorems_imported_source_idx::Migration),
+            Box::new(m20260526_000001_theorem_display_name::Migration),
         ]
     }
 }

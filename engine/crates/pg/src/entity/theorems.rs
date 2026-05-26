@@ -72,6 +72,16 @@ pub struct Model {
     /// 1-in-N spot-check rate captured at ingest. NULL means "use the
     /// env default at process_one time".
     pub worker_spot_check_rate: Option<i32>,
+    /// Human-readable name for the theorem. Populated by the LLM-naming
+    /// hook on verify (`theorem_naming::NamingClient`) or — for the 6
+    /// curated headlines — by `headline_registry::match_canonical`. NULL
+    /// for legacy rows and during the async-naming window.
+    #[sea_orm(nullable)]
+    pub display_name: Option<String>,
+    /// One-sentence prose description of the theorem. Same population
+    /// pipeline as `display_name`; NULL during the async-naming window.
+    #[sea_orm(nullable)]
+    pub description: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

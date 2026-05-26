@@ -357,6 +357,7 @@ mod tests {
             namespace: "PhysicsGenerator.Derived".into(),
             theorem_name: "rest_energy_seed_chain".into(),
             use_mathlib: true,
+            description: None,
         };
         let lean = crate::lean_emitter::emit_lean_file(&ctx, &cfg);
         // Final theorem statement contains the target shape.

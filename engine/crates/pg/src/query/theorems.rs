@@ -194,6 +194,8 @@ pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<
         worker_trusted: Set(n.worker_trusted),
         worker_spot_check_rate: Set(n.worker_spot_check_rate),
         user_email: Set(n.user_email),
+        display_name: Set(None),
+        description: Set(None),
     };
 
     active
@@ -333,6 +335,50 @@ pub async fn mark_verified(
     };
     active.update(db).await.context("mark_verified theorem")?;
     Ok(())
+}
+
+/// Set `display_name` + `description` on a theorem row. Used by the
+/// LLM-naming hook after a row flips to Verified. Idempotent — callers
+/// SHOULD pre-filter for NULL `display_name` to avoid clobbering the
+/// curated registry mapping for headlines that flow through the LLM
+/// path later.
+pub async fn set_display_name(
+    db: &impl ConnectionTrait,
+    id: &[u8],
+    display_name: &str,
+    description: &str,
+) -> Result<()> {
+    let active = theorems::ActiveModel {
+        id: Set(id.to_vec()),
+        display_name: Set(Some(display_name.into())),
+        description: Set(Some(description.into())),
+        ..Default::default()
+    };
+    active.update(db).await.context("set_display_name theorem")?;
+    Ok(())
+}
+
+/// List Verified theorems that have NULL `display_name` and are not
+/// imported (verification_tactic != 'imported'), ordered by `verified_at
+/// DESC NULLS LAST`. Used by the `/api/admin/theorems/backfill_names`
+/// admin endpoint to walk the long tail of un-named rows.
+pub async fn list_unnamed_verified(
+    db: &impl ConnectionTrait,
+    limit: u64,
+) -> Result<Vec<theorems::Model>> {
+    theorems::Entity::find()
+        .filter(theorems::Column::Status.eq("Verified"))
+        .filter(theorems::Column::DisplayName.is_null())
+        .filter(
+            theorems::Column::VerificationTactic
+                .ne("imported")
+                .or(theorems::Column::VerificationTactic.is_null()),
+        )
+        .order_by_desc(theorems::Column::VerifiedAt)
+        .limit(limit)
+        .all(db)
+        .await
+        .context("list_unnamed_verified")
 }
 
 /// Flip a pending theorem to `Rejected`, recording a free-form reason.
