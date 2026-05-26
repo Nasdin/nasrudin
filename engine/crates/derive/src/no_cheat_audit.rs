@@ -284,6 +284,41 @@ mod tests {
         );
     }
 
+    /// Defense-in-depth contract for the LLM-as-chain-synthesizer path
+    /// (steerer.proposed_chains → worker.llm_proposed_chains): an
+    /// LLM-emitted chain that names a forbidden-headline axiom cannot
+    /// execute against an audited store, because audited stores by
+    /// construction do not contain such axioms, and the chain's
+    /// `IntroduceAxiom` step looks the name up via `store.get(...)`.
+    /// This is the no-cheat audit's coverage of the LLM elite-injection
+    /// surface: no separate runtime check is needed at the GA seed
+    /// site as long as `audit_or_panic(&store, ...)` ran at boot.
+    #[test]
+    fn llm_chain_referencing_forbidden_axiom_cannot_resolve_on_audited_store() {
+        use crate::chain::{Chain, RuleStep};
+        use crate::context::DerivationContext;
+        use crate::strategies::DerivationStrategy;
+        let mut store = AxiomStore::new();
+        store.load_special_relativity_upstream();
+        // Boot-time audit ran clean (covered by `upstream_sr_passes`),
+        // so a forbidden-headline name like `mass_shell_condition` is
+        // definitively NOT in the store.
+        assert!(audit(&store).is_empty(), "test pre-condition: audit must be clean");
+        let llm_chain = Chain(vec![
+            RuleStep::IntroduceAxiom {
+                axiom_name: "mass_shell_condition".into(),
+            },
+            RuleStep::AlgebraicSimplify,
+        ]);
+        let mut ctx = DerivationContext::new();
+        let r = llm_chain.execute(&store, &mut ctx);
+        assert!(
+            r.is_err(),
+            "chain referencing forbidden axiom must fail on audited store; got: {:?}",
+            r
+        );
+    }
+
     #[test]
     fn registering_emc2_fails_audit() {
         let mut store = AxiomStore::new();
