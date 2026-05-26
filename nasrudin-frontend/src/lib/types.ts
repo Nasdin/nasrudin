@@ -69,6 +69,18 @@ export interface Theorem {
    *  migration — those render as the conservative "Lean-verified
    *  (worker)" pending state. */
   worker_trusted: boolean;
+  /** Curated headline name when the canonical statement matches an
+   *  entry in `crates/api/src/headline_registry.rs` (e.g. "Mass-energy
+   *  equivalence" for `(= v:E (* v:m (^ c:SpeedOfLight n:2)))`). Null
+   *  for non-headline derivations — the UI then falls back to
+   *  `gen N`. */
+  display_name?: string | null;
+  /** One-sentence prose for the curated headline, surfaced in the
+   *  citation block + OG card. */
+  description?: string | null;
+  /** Canonical LaTeX for the headline ("E = m c^{2}"), preferred over
+   *  the per-row `latex` field on the theorem detail page. */
+  display_latex?: string | null;
 }
 
 /** Response shape of `GET /api/theorems` and `GET /api/theorems/recent`. */

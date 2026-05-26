@@ -10,6 +10,7 @@ pub mod cache;
 pub mod conjecture;
 pub mod embed_cron;
 pub mod handlers;
+pub mod headline_registry;
 pub mod hydration;
 pub mod jobs;
 pub mod keygen;

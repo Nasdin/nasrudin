@@ -15,66 +15,7 @@ use std::sync::Arc;
 
 use crate::state::AppState;
 
-/// Target physics formulas we're searching for in the corpus.
-///
-/// `canonical_patterns` must match substrings of the worker-emitted
-/// canonical S-expression (e.g. `(= v:E (* v:m (^ c:c n:2)))`),
-/// NOT English-word descriptions of the formula. The fuzzy
-/// pattern set is intentionally tight — when *all* of an entry's
-/// patterns appear in a verified theorem's canonical, we mark
-/// the featured row as `found`.
-const TARGET_FORMULAS: &[TargetFormula] = &[
-    TargetFormula {
-        name: "Mass-energy equivalence",
-        latex: "E = mc^2",
-        domain: "Special relativity",
-        // Canonical for `E = m c^2` is
-        // `(= v:E (* v:m (^ c:SpeedOfLight n:2)))` — see how the
-        // chain emitter spells PhysConst (`c:SpeedOfLight`, not
-        // `c:c`). The full constant name is the safe substring.
-        canonical_patterns: &["v:E", "(* v:m (^ c:SpeedOfLight n:2)"],
-    },
-    TargetFormula {
-        name: "Newton's second law",
-        latex: "F = ma",
-        domain: "Classical mechanics",
-        // `(= v:F (* v:m v:a))`
-        canonical_patterns: &["v:F", "(* v:m v:a)"],
-    },
-    TargetFormula {
-        name: "Boltzmann entropy",
-        latex: "S = k_B \\ln \\Omega",
-        domain: "Statistical mechanics",
-        // `(= v:S (* v:k_B (ln v:Omega)))` — the GA may emit ln in
-        // either functional or `(@ v:ln ...)` form; allow both.
-        canonical_patterns: &["v:S", "v:k_B"],
-    },
-    TargetFormula {
-        name: "Schrödinger equation",
-        latex: "i\\hbar\\dot\\psi = \\hat H \\psi",
-        domain: "Quantum mechanics",
-        canonical_patterns: &["v:psi", "v:H"],
-    },
-    TargetFormula {
-        name: "Einstein field equations",
-        latex: "R_{\\mu\\nu} - \\tfrac12 g_{\\mu\\nu} R = 8\\pi T_{\\mu\\nu}",
-        domain: "General relativity",
-        canonical_patterns: &["v:R_uv", "v:T_uv"],
-    },
-    TargetFormula {
-        name: "Gauss's law",
-        latex: "\\nabla\\cdot E = \\rho/\\varepsilon_0",
-        domain: "Electromagnetism",
-        canonical_patterns: &["v:div_E", "v:rho"],
-    },
-];
-
-struct TargetFormula {
-    name: &'static str,
-    latex: &'static str,
-    domain: &'static str,
-    canonical_patterns: &'static [&'static str],
-}
+use crate::headline_registry::{Headline, HEADLINES};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeaturedDiscovery {
@@ -115,7 +56,7 @@ pub async fn featured(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
     let mut discoveries = Vec::new();
 
-    for target in TARGET_FORMULAS {
+    for target in HEADLINES {
         // Try to find a matching theorem in the corpus
         let match_result = find_matching_theorem(pg, target).await;
 
@@ -157,7 +98,7 @@ pub async fn featured(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 );
 
                 FeaturedDiscovery {
-                    formula: target.latex.to_string(),
+                    formula: target.display_latex.to_string(),
                     name: target.name.to_string(),
                     domain: target.domain.to_string(),
                     found: true,
@@ -180,7 +121,7 @@ pub async fn featured(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 );
 
                 FeaturedDiscovery {
-                    formula: target.latex.to_string(),
+                    formula: target.display_latex.to_string(),
                     name: target.name.to_string(),
                     domain: target.domain.to_string(),
                     found: false,
@@ -210,7 +151,7 @@ pub async fn featured(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 /// final statement matches.
 async fn find_matching_theorem(
     db: &sea_orm::DatabaseConnection,
-    target: &TargetFormula,
+    target: &Headline,
 ) -> Option<nasrudin_pg::entity::theorems::Model> {
     use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 

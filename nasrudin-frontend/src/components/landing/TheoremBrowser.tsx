@@ -232,16 +232,19 @@ function BrowserRow({
   setExpanded: (v: string | null) => void;
 }) {
   const importedFrom = importedSource(t.origin_payload);
-  // GA-derived theorems don't have a curated name yet — the
-  // backend schema has no `name`/`title` column, so the row's
-  // identity is its statement (rendered as math by RowStatement)
-  // and its generation. NEVER fall back to verification_tactic
-  // (values like "lake_build" / "trusted_bypass") as the "name":
-  // that's HOW it was verified, not WHAT it is, and showing it
-  // gives the corpus a row called "lake_build" that means nothing.
-  const displayName = importedFrom
-    ? lastSegment(importedFrom)
-    : `gen ${t.generation ?? '—'}`;
+  // Identity priority:
+  //   1. Curated headline name from /api/headline_registry — when the
+  //      canonical statement matches an entry (e.g. E=mc²), we show
+  //      "Mass-energy equivalence" instead of "gen 0".
+  //   2. Imported PhysLean qualifier last segment.
+  //   3. `gen N` as a content-free placeholder.
+  // NEVER fall back to verification_tactic — values like "lake_build"
+  // are HOW we verified, not WHAT it is.
+  const displayName = t.display_name
+    ? t.display_name
+    : importedFrom
+      ? lastSegment(importedFrom)
+      : `gen ${t.generation ?? '—'}`;
   return (
     <>
       <button
@@ -259,7 +262,7 @@ function BrowserRow({
         <span className="browser-id">{id.slice(0, 8)}</span>
         <span className="browser-stmt">
           <RowStatement
-            latex={t.latex ?? null}
+            latex={t.display_latex ?? t.latex ?? null}
             canonical={t.canonical_statement ?? ''}
             importedFrom={importedFrom}
           />
@@ -295,7 +298,7 @@ function BrowserRow({
         <div className="browser-detail">
           <div className="browser-detail-block">
             <h5>Statement</h5>
-            <DetailStatement latex={t.latex ?? null} canonical={t.canonical_statement ?? ''} />
+            <DetailStatement latex={t.display_latex ?? t.latex ?? null} canonical={t.canonical_statement ?? ''} />
             {importedFrom && (
               <div
                 style={{

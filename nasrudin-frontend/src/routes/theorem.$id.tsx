@@ -48,11 +48,24 @@ export const Route = createFileRoute('/theorem/$id')({
       ?.Imported?.source ?? null;
     const human = imp ? leanToHumanTitle(imp) : null;
     const idHex = bytesToHex(loaderData.id);
-    const title = human || imp || `thm:${idHex.slice(0, 8)}`;
+    // Priority for the page title:
+    //   1. Curated headline name from the backend's headline_registry
+    //      (e.g. "Mass-energy equivalence") — when the canonical
+    //      matches a famous result, the title reflects that instead of
+    //      `thm:ecac7e03`.
+    //   2. Imported-from-PhysLean human title.
+    //   3. Raw Lean qualifier.
+    //   4. Hash prefix as a last-resort placeholder.
+    const headlineName = (loaderData as { display_name?: string | null }).display_name ?? null;
+    const headlineDesc =
+      (loaderData as { description?: string | null }).description ?? null;
+    const title = headlineName || human || imp || `thm:${idHex.slice(0, 8)}`;
     const fullTitle = `${title} — Nasrudin`;
-    const description = imp
-      ? `Formally verified Lean 4 theorem imported from PhysLean: ${imp}. Domain: ${loaderData.domain}.`
-      : `Genetically discovered theorem in Nasrudin's corpus. Domain: ${loaderData.domain}.`;
+    const description = headlineDesc
+      ? `${headlineDesc} Lean-verified in Nasrudin's corpus, domain: ${loaderData.domain}.`
+      : imp
+        ? `Formally verified Lean 4 theorem imported from PhysLean: ${imp}. Domain: ${loaderData.domain}.`
+        : `Genetically discovered theorem in Nasrudin's corpus. Domain: ${loaderData.domain}.`;
     return {
       meta: [
         { title: fullTitle },
@@ -117,12 +130,18 @@ function TheoremView({ thm }: { thm: Theorem }) {
   const idHex = bytesToHex(thm.id);
   const importedFrom = importedSource(thm.origin_payload);
   const isImported = thm.verification_tactic === 'imported';
-  // The visible page title prefers a humanised reading of the Lean
-  // qualifier ("Timelike vectors dominate space") over the raw last-segment
-  // ("timelike_time_dominates_space"). For GA-derived theorems with no
-  // imported source we still fall back to the theorem id.
+  // The visible page title prefers, in priority:
+  //   1. The curated headline name from /api/headline_registry — when
+  //      the canonical statement matches a famous result (e.g. E=mc²),
+  //      the heading says "Mass-energy equivalence" instead of the
+  //      hash prefix.
+  //   2. A humanised reading of the Lean qualifier
+  //      ("Timelike vectors dominate space").
+  //   3. The raw last-segment ("timelike_time_dominates_space").
+  //   4. The 8-byte hex id (last resort).
   const humanTitle = leanToHumanTitle(importedFrom);
-  const displayHeading = humanTitle || (importedFrom ? lastSegment(importedFrom) : idHex);
+  const displayHeading =
+    thm.display_name || humanTitle || (importedFrom ? lastSegment(importedFrom) : idHex);
   const prose = statementToProse(thm.canonical_statement, {
     importedFrom,
     domain: thm.domain ?? null,
@@ -182,6 +201,19 @@ function TheoremView({ thm }: { thm: Theorem }) {
           >
             {importedFrom}
           </div>
+        )}
+        {thm.description && (
+          <p
+            style={{
+              marginTop: 8,
+              marginBottom: 0,
+              fontSize: 15,
+              lineHeight: 1.5,
+              color: 'var(--ink-700)',
+            }}
+          >
+            {thm.description}
+          </p>
         )}
         {prose && (
           <div className="thm-prose" role="note" aria-label="Plain-English summary">
@@ -333,9 +365,14 @@ function StatementRender({ thm }: { thm: Theorem }) {
   // Probe the segmented renderer to decide whether we can show math at all.
   // If even the segments are empty (truly unparseable), drop straight to
   // the AST fallback.
-  const rendered = thm.latex
-    ? { latex: thm.latex, complete: true }
-    : statementToLatex(thm.canonical_statement);
+  // Priority: curated headline LaTeX (e.g. "E = m c^{2}" for the
+  // E=mc² canonical form) → per-row latex from PhysLean import →
+  // on-the-fly translation of canonical_statement.
+  const rendered = thm.display_latex
+    ? { latex: thm.display_latex, complete: true }
+    : thm.latex
+      ? { latex: thm.latex, complete: true }
+      : statementToLatex(thm.canonical_statement);
   const canShowLatex = rendered.latex.trim().length > 0;
   const rawAst = leanToSymbols(thm.canonical_statement);
 

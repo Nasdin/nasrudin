@@ -124,22 +124,54 @@ pub async fn list(
         include_internal: q.include_internal && admin.is_some(),
     };
     match theorems::list_verified(pg, q.cursor, limit, q.domain, opts).await {
-        Ok(page) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "theorems": page.items,
-                "next_cursor": page.next_cursor,
-                "total": page.total,
-                "total_capped": page.total_capped,
-            })),
-        )
-            .into_response(),
+        Ok(page) => {
+            let items: Vec<serde_json::Value> =
+                page.items.iter().map(annotate_theorem_with_headline).collect();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "theorems": items,
+                    "next_cursor": page.next_cursor,
+                    "total": page.total,
+                    "total_capped": page.total_capped,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
     }
+}
+
+/// Serialise a Theorem model and merge in `display_name`,
+/// `description`, `display_latex` from the headline registry. When the
+/// canonical statement doesn't match a curated headline these are
+/// `null`. Used by /api/theorems list + recent + by_id so the corpus
+/// row, theorem detail page, and OG card all see the same identity.
+fn annotate_theorem_with_headline(
+    t: &nasrudin_pg::entity::theorems::Model,
+) -> serde_json::Value {
+    let headline = crate::headline_registry::match_canonical(&t.canonical_statement);
+    let mut body = match serde_json::to_value(t) {
+        Ok(serde_json::Value::Object(m)) => m,
+        _ => serde_json::Map::new(),
+    };
+    body.insert(
+        "display_name".into(),
+        serde_json::json!(headline.map(|h| h.name)),
+    );
+    body.insert(
+        "description".into(),
+        serde_json::json!(headline.map(|h| h.description)),
+    );
+    body.insert(
+        "display_latex".into(),
+        serde_json::json!(headline.map(|h| h.display_latex)),
+    );
+    serde_json::Value::Object(body)
 }
 
 /// `GET /api/theorems/recent` — same query shape as `list` but the cursor
@@ -178,8 +210,10 @@ pub async fn recent(
     };
     match theorems::list_verified(pg, None, limit, q.domain, opts).await {
         Ok(page) => {
+            let items: Vec<serde_json::Value> =
+                page.items.iter().map(annotate_theorem_with_headline).collect();
             let payload = serde_json::json!({
-                "theorems": page.items,
+                "theorems": items,
                 "next_cursor": page.next_cursor,
                 "total": page.total,
                 "total_capped": page.total_capped,
@@ -250,7 +284,12 @@ pub async fn by_id(
                 )
                     .into_response();
             }
-            (StatusCode::OK, Json(t)).into_response()
+            // Same headline annotation as the list endpoints: a row
+            // matching E=mc² / F=ma / ... gets `display_name`,
+            // `description`, `display_latex` next to the raw Theorem
+            // fields. Backwards-compatible — old clients still see
+            // every original field at the top level.
+            (StatusCode::OK, Json(annotate_theorem_with_headline(&t))).into_response()
         }
         Ok(None) => (
             StatusCode::NOT_FOUND,
