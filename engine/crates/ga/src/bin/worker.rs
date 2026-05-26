@@ -1142,6 +1142,63 @@ async fn main() {
             }
         }
 
+        // ── LLM-proposed chain elite injection ─────────────────────
+        // Pull the chain the steerer proposed for THIS worker's
+        // target name from `steering.config.proposed_chains` and
+        // install it as an elite seed for this chunk. Opt-in via
+        // env so the change is observable in production without a
+        // forced rollout — workers without the flag set keep their
+        // existing pure-random + permanent_elite behaviour.
+        //
+        // Failure modes: missing steering, missing proposed_chains
+        // map, missing entry for this target, malformed RuleStep
+        // payload — all silently fall back to the empty vec so the
+        // chunk proceeds with no LLM elites. Logging fires only on
+        // the success path so noisy chunks don't spam.
+        let use_llm_chains = std::env::var("NASRUDIN_USE_LLM_CHAINS")
+            .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+            .unwrap_or(false);
+        if use_llm_chains {
+            if let (Some(steering_val), Some(target_name)) =
+                (last_steering.as_ref(), target_name_for_elite)
+            {
+                let proposed = steering_val
+                    .get("config")
+                    .and_then(|c| c.get("proposed_chains"))
+                    .and_then(|p| p.get(target_name));
+                if let Some(chain_val) = proposed {
+                    match serde_json::from_value::<Vec<nasrudin_derive::RuleStep>>(
+                        chain_val.clone(),
+                    ) {
+                        Ok(steps) if !steps.is_empty() => {
+                            let chain = nasrudin_derive::Chain(steps);
+                            println!(
+                                "▶ LLM proposed chain ({} steps) for target={} — \
+                                 locked as elite",
+                                chain.len(),
+                                target_name
+                            );
+                            chunk_config.llm_proposed_chains = vec![chain];
+                        }
+                        Ok(_) => {
+                            tracing::debug!(
+                                target = target_name,
+                                "LLM proposed_chains entry was empty; ignored"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target = target_name,
+                                error = %e,
+                                "failed to deserialise LLM proposed chain; \
+                                 falling back to baseline elites"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Test-time compute scaling bandit ───────────────────────
         // Read compute_directives, UCB1-pick a population_size /
         // generations multiplier per matched directive, apply
