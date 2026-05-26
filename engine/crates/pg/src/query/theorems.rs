@@ -621,6 +621,40 @@ pub async fn count_verified(db: &impl ConnectionTrait) -> Result<u64> {
         .context("count_verified")
 }
 
+/// Per-domain breakdown of all `Verified` theorems (no time filter).
+/// Backs the `/browse` sidebar facets — same source of truth as
+/// `count_verified` / `list_verified`, so the sidebar sums and the
+/// page-head total agree exactly. The RocksDB `stats.domain_counts`
+/// alternative is unreliable on this code path: its `increment_stats`
+/// was non-idempotent across boot-time catalog re-imports and inflated
+/// by ~30× before the boot-time recompute landed.
+pub async fn count_verified_by_domain(db: &impl ConnectionTrait) -> Result<Vec<(String, i64)>> {
+    use sea_orm::{DatabaseBackend, FromQueryResult, Statement};
+
+    #[derive(FromQueryResult)]
+    struct Row {
+        domain: String,
+        cnt: i64,
+    }
+
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        SELECT domain, COUNT(*)::BIGINT AS cnt
+          FROM theorems
+         WHERE status = 'Verified'
+         GROUP BY domain
+         ORDER BY cnt DESC
+        "#,
+        [],
+    );
+    let rows = Row::find_by_statement(stmt)
+        .all(db)
+        .await
+        .context("count_verified_by_domain")?;
+    Ok(rows.into_iter().map(|r| (r.domain, r.cnt)).collect())
+}
+
 /// Count `Verified` theorems with `verified_at >= since`. Backs the
 /// landing-page "verified in last N hours" pulse counter — small windows
 /// (1h, 24h) hit the `(status, verified_at)` index range scan and stay

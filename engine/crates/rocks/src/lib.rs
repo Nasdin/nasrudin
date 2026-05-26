@@ -353,6 +353,14 @@ impl TheoremDb {
     }
 
     /// Store a theorem and update all secondary indexes + stats atomically.
+    ///
+    /// Stats are bumped only when the row is genuinely new — an
+    /// upsert of an existing `theorem.id` leaves `total_theorems`,
+    /// `total_verified`, and `domain_counts` untouched. Without the
+    /// `is_new` gate, every boot-time catalog re-import added +1 to
+    /// each counter, inflating `domain_counts` by ~30× in prod (one
+    /// per boot). The pre-write existence check is a single CF point
+    /// lookup; cheap next to the WriteBatch we're about to commit.
     pub fn put_theorem(&self, theorem: &Theorem) -> Result<()> {
         let mut batch = WriteBatch::default();
 
@@ -361,6 +369,11 @@ impl TheoremDb {
             .db
             .cf_handle(CF_THEOREMS)
             .context("Missing theorems CF")?;
+        let is_new = self
+            .db
+            .get_cf(&cf_theorems, theorem.id)
+            .context("Failed to probe theorem existence")?
+            .is_none();
         let value = serde_json::to_vec(theorem).context("Failed to serialize theorem")?;
         batch.put_cf(&cf_theorems, theorem.id, &value);
 
@@ -459,8 +472,12 @@ impl TheoremDb {
             self.forbidden_cache.invalidate(ancestor_id);
         }
 
-        // Update stats (separate write — stats are best-effort)
-        self.increment_stats(theorem)?;
+        // Update stats (separate write — stats are best-effort).
+        // Skip on upsert so the counters reflect distinct rows rather
+        // than the running write count.
+        if is_new {
+            self.increment_stats(theorem)?;
+        }
 
         Ok(())
     }
@@ -640,6 +657,53 @@ impl TheoremDb {
             }
             None => Ok(DbStats::default()),
         }
+    }
+
+    /// Recompute `DbStats` from scratch by scanning `CF_THEOREMS` once
+    /// and overwriting the persisted blob.
+    ///
+    /// Used at API boot to reset prod's accumulated drift from the
+    /// pre-idempotent `increment_stats`. After this returns, the counters
+    /// equal the actual row population. The scan is O(rows); roughly
+    /// 1–2 seconds on a ~50 k corpus and bounded above by RocksDB's
+    /// iterator throughput.
+    pub fn recompute_stats(&self) -> Result<DbStats> {
+        let cf = self
+            .db
+            .cf_handle(CF_THEOREMS)
+            .context("Missing theorems CF")?;
+        let mut stats = DbStats::default();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        for item in iter {
+            let (_key, bytes) = item.context("Failed to iterate theorems for recompute")?;
+            let theorem: Theorem = match serde_json::from_slice(&bytes) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!("recompute_stats: skipping corrupt row ({e})");
+                    continue;
+                }
+            };
+            stats.total_theorems += 1;
+            match &theorem.verified {
+                VerificationStatus::Verified { .. } => stats.total_verified += 1,
+                VerificationStatus::Rejected { .. } => stats.total_rejected += 1,
+                VerificationStatus::Pending => stats.total_pending += 1,
+                VerificationStatus::Timeout => stats.total_pending += 1,
+            }
+            if matches!(&theorem.origin, nasrudin_core::TheoremOrigin::Axiom) {
+                stats.total_axioms += 1;
+            }
+            if theorem.depth > stats.max_depth {
+                stats.max_depth = theorem.depth;
+            }
+            if theorem.generation > stats.max_generation {
+                stats.max_generation = theorem.generation;
+            }
+            let domain_key = domain_to_key(&theorem.domain);
+            *stats.domain_counts.entry(domain_key).or_insert(0) += 1;
+        }
+        self.put_stats(&stats)?;
+        Ok(stats)
     }
 
     /// Persist stats to the stats CF.
