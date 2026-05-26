@@ -8,10 +8,24 @@
 //! that forgot a constraint emits something rejectable rather than
 //! something that quietly causes drift.
 
+use nasrudin_derive::RuleStep;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
+
+/// Maximum number of `RuleStep`s allowed in a single LLM-proposed
+/// chain. Chains beyond this are rejected by the validator. The
+/// canonical `rest_energy_from_upstream` baseline is 8 steps; we
+/// allow generous headroom for multi-domain derivations but cap so a
+/// hallucinated 200-step chain can't bloat the GA's seed slot or
+/// burn lake-build budget on a doomed candidate.
+pub const MAX_PROPOSED_CHAIN_STEPS: usize = 24;
+
+/// Maximum number of LLM-proposed chains the steerer may emit per
+/// cycle (one per target, typically). Caps the worker's per-chunk
+/// elite-injection cost.
+pub const MAX_PROPOSED_CHAINS_PER_CYCLE: usize = 8;
 
 /// Top-level steering payload. Workers read `mutation_knobs` and the
 /// fitness weights every chunk; targets and emphasis affect chain
@@ -110,6 +124,37 @@ pub struct SteeringConfig {
     /// dynamic, history-aware curriculum.
     #[serde(default)]
     pub atom_pool: HashMap<String, Vec<AtomWeight>>,
+    /// LLM-proposed full derivation chains, keyed by target name
+    /// (e.g. `sr_rest_energy`, `qm_planck_einstein`). Each value is an
+    /// ordered `Vec<RuleStep>` that, when replayed against the
+    /// worker's `AxiomStore`, produces a candidate proof. When opted
+    /// in via `NASRUDIN_USE_LLM_CHAINS=1`, the worker injects the
+    /// proposed chain for its current target as an elite individual
+    /// at the start of every chunk so the chain-search GA explores
+    /// neighbourhoods of LLM-curated candidates instead of pure
+    /// random seeds.
+    ///
+    /// Why this lever: project_phase6_search_gap memory notes that
+    /// pure-random GA over the 195k axiom store statistically cannot
+    /// compose an 8-step chain like `rest_energy_from_upstream`.
+    /// Kimi K2.6 has the physics knowledge to enumerate the upstream
+    /// chain in one shot; this field is the wire format that lets
+    /// the LLM dictate elite seeds to thousands of workers.
+    ///
+    /// Skipped from strict-mode JSON schema because `RuleStep`'s
+    /// recursive `Expr` payload doesn't round-trip through schemars
+    /// cleanly. Validation is post-hoc: each step's `kind` must
+    /// deserialise to a known `RuleStep` variant, chain length is
+    /// capped at `MAX_PROPOSED_CHAIN_STEPS`, and the no-cheat audit
+    /// gate (which runs at AxiomStore load) still catches any chain
+    /// that would compose from a forbidden headline axiom — the
+    /// chain can only reference axioms registered in the local store,
+    /// and forbidden axioms can't be there or boot fails.
+    /// Empty/missing → worker falls back to its hardcoded
+    /// `m1_seed_elite_for(target)` registry (the existing baseline).
+    #[serde(default)]
+    #[schemars(skip)]
+    pub proposed_chains: HashMap<String, Vec<RuleStep>>,
 }
 
 /// One LLM-proposed atom for `random_physics_compound`. The `name`
@@ -268,6 +313,15 @@ pub enum SteeringValidationError {
     LessonsTooLong,
     #[error("atom_pool weights must be finite and in [0.0, 4.0]")]
     BadAtomWeight,
+    #[error("proposed_chains may contain at most {} entries", MAX_PROPOSED_CHAINS_PER_CYCLE)]
+    TooManyProposedChains,
+    #[error(
+        "proposed_chains[{target}] has {steps} steps; max is {max}",
+        max = MAX_PROPOSED_CHAIN_STEPS
+    )]
+    ProposedChainTooLong { target: String, steps: usize },
+    #[error("proposed_chains[{target}] is empty")]
+    ProposedChainEmpty { target: String },
 }
 
 impl SteeringConfig {
@@ -357,6 +411,22 @@ impl SteeringConfig {
                 }
             }
         }
+        if self.proposed_chains.len() > MAX_PROPOSED_CHAINS_PER_CYCLE {
+            return Err(SteeringValidationError::TooManyProposedChains);
+        }
+        for (target, steps) in &self.proposed_chains {
+            if steps.is_empty() {
+                return Err(SteeringValidationError::ProposedChainEmpty {
+                    target: target.clone(),
+                });
+            }
+            if steps.len() > MAX_PROPOSED_CHAIN_STEPS {
+                return Err(SteeringValidationError::ProposedChainTooLong {
+                    target: target.clone(),
+                    steps: steps.len(),
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -392,6 +462,7 @@ pub fn default_config() -> SteeringConfig {
         lessons_learned: String::new(),
         rationale: "default cold-start config".into(),
         atom_pool: HashMap::new(),
+        proposed_chains: HashMap::new(),
     }
 }
 
@@ -646,5 +717,99 @@ mod tests {
         let parsed: SteeringConfig = serde_json::from_value(value).unwrap();
         assert!(parsed.atom_pool.is_empty());
         parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn proposed_chains_round_trip() {
+        let mut c = default_config();
+        c.proposed_chains.insert(
+            "sr_rest_energy".into(),
+            vec![
+                RuleStep::IntroduceAxiom {
+                    axiom_name: "four_momentum_time_component".into(),
+                },
+                RuleStep::IntroduceAxiom {
+                    axiom_name: "minkowski_invariant_def".into(),
+                },
+                RuleStep::AlgebraicSimplify,
+            ],
+        );
+        let json = serde_json::to_string(&c).unwrap();
+        let parsed: SteeringConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.proposed_chains.len(), 1);
+        assert_eq!(parsed.proposed_chains["sr_rest_energy"].len(), 3);
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn proposed_chains_missing_field_deserialises_to_empty() {
+        let cfg = default_config();
+        let mut value = serde_json::to_value(&cfg).unwrap();
+        value.as_object_mut().unwrap().remove("proposed_chains");
+        let parsed: SteeringConfig = serde_json::from_value(value).unwrap();
+        assert!(parsed.proposed_chains.is_empty());
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn proposed_chains_empty_chain_rejected() {
+        let mut c = default_config();
+        c.proposed_chains.insert("sr_rest_energy".into(), vec![]);
+        assert!(matches!(
+            c.validate(),
+            Err(SteeringValidationError::ProposedChainEmpty { .. })
+        ));
+    }
+
+    #[test]
+    fn proposed_chains_too_long_rejected() {
+        let mut c = default_config();
+        let too_long: Vec<RuleStep> = (0..MAX_PROPOSED_CHAIN_STEPS + 1)
+            .map(|_| RuleStep::AlgebraicSimplify)
+            .collect();
+        c.proposed_chains.insert("x".into(), too_long);
+        assert!(matches!(
+            c.validate(),
+            Err(SteeringValidationError::ProposedChainTooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn proposed_chains_too_many_rejected() {
+        let mut c = default_config();
+        for i in 0..MAX_PROPOSED_CHAINS_PER_CYCLE + 1 {
+            c.proposed_chains.insert(
+                format!("t{i}"),
+                vec![RuleStep::AlgebraicSimplify],
+            );
+        }
+        assert!(matches!(
+            c.validate(),
+            Err(SteeringValidationError::TooManyProposedChains)
+        ));
+    }
+
+    #[test]
+    fn proposed_chains_kind_tagged_wire_format() {
+        // The wire shape MUST be the `#[serde(tag = "kind")]` variant
+        // so the LLM emits human-readable JSON. Regression guard
+        // against accidentally switching to untagged or adjacent-tagged
+        // serde representations on RuleStep.
+        let mut c = default_config();
+        c.proposed_chains.insert(
+            "sr_rest_energy".into(),
+            vec![RuleStep::IntroduceAxiom {
+                axiom_name: "minkowski_invariant_def".into(),
+            }],
+        );
+        let json = serde_json::to_string(&c.proposed_chains).unwrap();
+        assert!(
+            json.contains("\"kind\":\"IntroduceAxiom\""),
+            "expected `kind` tag in serialised RuleStep; got {json}"
+        );
+        assert!(
+            json.contains("minkowski_invariant_def"),
+            "axiom name should be on the wire; got {json}"
+        );
     }
 }
