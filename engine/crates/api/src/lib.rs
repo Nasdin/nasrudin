@@ -10,8 +10,12 @@ pub mod cache;
 pub mod conjecture;
 pub mod embed_cron;
 pub mod handlers;
-pub mod headline_registry;
 pub mod hydration;
+/// Re-export of the headline registry from `nasrudin-derive` so all
+/// API call sites that used `crate::headline_registry::match_canonical`
+/// keep working. The single source of truth now lives in the derive
+/// crate so the Lean emitter can use the same names + descriptions.
+pub use nasrudin_derive::headline_registry;
 pub mod jobs;
 pub mod keygen;
 pub mod lake_builder;

@@ -155,9 +155,14 @@ async fn find_matching_theorem(
 ) -> Option<nasrudin_pg::entity::theorems::Model> {
     use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 
+    // Domain filter intentionally OMITTED: the worker emits
+    // `domain = "sr"` (snake-case short) while the headline registry
+    // stores the human form `"Special relativity"`. Maintaining two
+    // mappings is fragile; the canonical_patterns below already pin
+    // the theorem uniquely. Cross-domain false positives are
+    // implausible given the all-patterns requirement.
     let candidates = nasrudin_pg::entity::theorems::Entity::find()
         .filter(nasrudin_pg::entity::theorems::Column::Status.eq("Verified"))
-        .filter(nasrudin_pg::entity::theorems::Column::Domain.eq(target.domain))
         // Exclude imported axioms: they are the seeds the GA composes
         // from, not derivations themselves. `verification_tactic` is
         // NULL for in-process GA discoveries and 'imported' for

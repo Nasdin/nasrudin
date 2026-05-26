@@ -37,6 +37,7 @@ fn main() {
         namespace: "PhysicsGenerator.Derived".into(),
         theorem_name: "rest_energy_seed_chain_local".into(),
         use_mathlib: true,
+        description: None,
     };
     let lean_source = emit_lean_file(&ctx, &cfg);
     println!("▶ Emitted {} bytes of Lean source.", lean_source.len());

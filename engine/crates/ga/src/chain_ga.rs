@@ -1374,6 +1374,7 @@ pub fn verify_chain_cached_full(
         namespace: "PhysicsGenerator.Derived".into(),
         theorem_name: theorem_name.to_string(),
         use_mathlib: true,
+        description: None,
     };
     let lean_source = emit_lean_file(&ctx, &cfg);
     let module_path = format!("PhysicsGenerator.Derived.{module_basename}");

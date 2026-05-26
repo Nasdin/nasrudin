@@ -25,6 +25,12 @@ pub struct LeanEmitConfig {
     pub theorem_name: String,
     /// Whether to import Mathlib.
     pub use_mathlib: bool,
+    /// Optional one-sentence description used as the theorem's
+    /// docstring. When the chain proves a curated headline (E=mc²,
+    /// F=ma, ...) the caller sets this from
+    /// `headline_registry::Headline::description`; emitters fall back
+    /// to the generic "Auto-derived theorem" line when None.
+    pub description: Option<String>,
 }
 
 impl Default for LeanEmitConfig {
@@ -33,6 +39,7 @@ impl Default for LeanEmitConfig {
             namespace: "PhysicsGenerator.Derived".into(),
             theorem_name: "rest_energy".into(),
             use_mathlib: true,
+            description: None,
         }
     }
 }
@@ -180,10 +187,24 @@ fn emit_chain_theorem(out: &mut String, ctx: &DerivationContext, config: &LeanEm
     // `c` is a defined constant in the prover, not a free var.
     all_vars.remove("c");
 
-    out.push_str(&format!(
-        "/-- Auto-derived theorem (chain length {}). -/\n",
-        ctx.steps().len()
-    ));
+    // Docstring: prefer the curated headline description when the
+    // caller supplied one (chain proves a known result), fall back to
+    // the generic auto-derived line otherwise.
+    match &config.description {
+        Some(desc) => {
+            out.push_str(&format!(
+                "/-- {} (chain length {}, auto-derived). -/\n",
+                desc,
+                ctx.steps().len()
+            ));
+        }
+        None => {
+            out.push_str(&format!(
+                "/-- Auto-derived theorem (chain length {}). -/\n",
+                ctx.steps().len()
+            ));
+        }
+    }
     out.push_str(&format!("theorem {}\n", config.theorem_name));
 
     // Free vars over ℝ.

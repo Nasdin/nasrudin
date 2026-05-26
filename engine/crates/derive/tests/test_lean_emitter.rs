@@ -123,6 +123,7 @@ fn test_emit_lean_file_custom_config() {
         namespace: "MyProject.Physics".into(),
         theorem_name: "emc2".into(),
         use_mathlib: true,
+        description: None,
     };
     let lean = emit_lean_file(&ctx, &config);
 

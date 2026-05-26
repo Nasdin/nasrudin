@@ -70,6 +70,7 @@ fn main() {
         namespace: "PhysicsGenerator.Derived".into(),
         theorem_name: "rest_energy_upstream".into(),
         use_mathlib: true,
+        description: None,
     };
     let lean_source = emit_lean_file(&ctx, &config);
     println!("▶ Generated {} bytes of Lean4 source.", lean_source.len());

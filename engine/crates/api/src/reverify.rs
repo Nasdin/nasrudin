@@ -324,6 +324,7 @@ impl ReverifyQueue {
             namespace: String::new(),
             theorem_name: String::new(),
             use_mathlib: false,
+            description: None,
         };
         let _ = emit_lean_file;
         ChainCheck::Regenerated(RegeneratedLean)

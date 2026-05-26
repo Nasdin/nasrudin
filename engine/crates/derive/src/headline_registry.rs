@@ -39,6 +39,11 @@ pub struct Headline {
     /// post-mortem in featured.rs for why pattern lists must be
     /// canonical-form tokens.
     pub canonical_patterns: &'static [&'static str],
+    /// Snake-case Lean identifier — used as `theorem <name>` in the
+    /// emitted .lean file when the chain's final canonical matches
+    /// this headline. Keep it valid Lean (lowercase letters, digits,
+    /// underscore) so the emitter doesn't need to sanitise.
+    pub lean_name: &'static str,
 }
 
 /// The curated set. Order is the landing-page display order.
@@ -50,6 +55,7 @@ pub const HEADLINES: &[Headline] = &[
         domain: "Special relativity",
         // `(= v:E (* v:m (^ c:SpeedOfLight n:2)))`
         canonical_patterns: &["v:E", "(* v:m (^ c:SpeedOfLight n:2)"],
+        lean_name: "mass_energy_equivalence",
     },
     Headline {
         name: "Newton's second law",
@@ -57,6 +63,7 @@ pub const HEADLINES: &[Headline] = &[
         display_latex: "F = m a",
         domain: "Classical mechanics",
         canonical_patterns: &["v:F", "(* v:m v:a)"],
+        lean_name: "newtons_second_law",
     },
     Headline {
         name: "Boltzmann entropy",
@@ -64,6 +71,7 @@ pub const HEADLINES: &[Headline] = &[
         display_latex: "S = k_B \\ln \\Omega",
         domain: "Statistical mechanics",
         canonical_patterns: &["v:S", "v:k_B"],
+        lean_name: "boltzmann_entropy",
     },
     Headline {
         name: "Schrödinger equation",
@@ -71,6 +79,7 @@ pub const HEADLINES: &[Headline] = &[
         display_latex: "i\\hbar\\dot\\psi = \\hat H \\psi",
         domain: "Quantum mechanics",
         canonical_patterns: &["v:psi", "v:H"],
+        lean_name: "schrodinger_equation",
     },
     Headline {
         name: "Einstein field equations",
@@ -78,6 +87,7 @@ pub const HEADLINES: &[Headline] = &[
         display_latex: "R_{\\mu\\nu} - \\tfrac12 g_{\\mu\\nu} R = 8\\pi T_{\\mu\\nu}",
         domain: "General relativity",
         canonical_patterns: &["v:R_uv", "v:T_uv"],
+        lean_name: "einstein_field_equations",
     },
     Headline {
         name: "Gauss's law",
@@ -85,6 +95,7 @@ pub const HEADLINES: &[Headline] = &[
         display_latex: "\\nabla\\cdot E = \\rho/\\varepsilon_0",
         domain: "Electromagnetism",
         canonical_patterns: &["v:div_E", "v:rho"],
+        lean_name: "gauss_law",
     },
 ];
 

@@ -838,6 +838,7 @@ pub fn run_discovery_from_population(
                     namespace: "PhysicsGenerator.Derived".into(),
                     theorem_name: theorem_name.clone(),
                     use_mathlib: true,
+                    description: None,
                 };
                 let lean_source = nasrudin_derive::lean_emitter::emit_lean_file(&ctx, &cfg);
                 report.verified.push(VerifiedDiscovery {
