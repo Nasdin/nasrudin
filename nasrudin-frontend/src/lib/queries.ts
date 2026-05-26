@@ -37,6 +37,7 @@ import type {
   SearchRequest,
   SearchResponse,
   StartConjectureRequest,
+  SteeringOptions,
   Theorem,
   TheoremListResponse,
   UserProfileFields,
@@ -758,6 +759,22 @@ export function useCreateResearchJob() {
       // covers /api/me/profile which doesn't carry the credit balance.
       qc.invalidateQueries({ queryKey: meQueryKey });
     },
+  });
+}
+
+/**
+ * Read-only metadata for the advanced-steering disclosure: the atom
+ * names the backend validator accepts, the GA's operator names, the
+ * snake_case domain keys, and the clamp bounds. Cached for the session
+ * — the contract is a backend constant; it doesn't drift mid-tab.
+ */
+export function useSteeringOptions(enabled = true) {
+  return useQuery<SteeringOptions>({
+    queryKey: ['research', 'steering-options'],
+    queryFn: () => apiFetch<SteeringOptions>('/api/research/steering_options'),
+    enabled,
+    staleTime: 60 * 60_000, // 1 hour
+    refetchOnWindowFocus: false,
   });
 }
 

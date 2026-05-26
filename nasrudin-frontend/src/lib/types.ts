@@ -449,6 +449,62 @@ export interface CreateResearchJobRequest {
   credits_budget?: number;
   /** When true, costs +1 credit and raises queue priority by 1. */
   rush?: boolean;
+  /** Optional per-job custom steering. Costs +1 credit. Shape matches
+   *  `validate_and_canonicalize_steering` in
+   *  `engine/crates/api/src/handlers/research_jobs.rs` — at least one of
+   *  the three subkeys must be a non-empty object. */
+  steering?: ResearchJobSteering;
+}
+
+/** Per-operator weight bias for the GA's mutation operator picker.
+ *  Operator names come from `GET /api/research/steering_options.operator_names`
+ *  (which mirrors `nasrudin_ga::chain_ga::MUTATION_OPS`). */
+export type MutationPriors = Record<string, number>;
+
+/** One entry in the per-domain atom pool. `name` MUST be a member of
+ *  `PHYSICS_ATOM_NAMES` (fetched live via `steering_options`); unknown
+ *  names cause the backend validator to 400. */
+export interface AtomPoolEntry {
+  name: string;
+  weight: number;
+}
+
+/** Per-domain atom-pool override, keyed by the snake_case Domain key
+ *  (e.g. `special_relativity`). Domain keys are returned by
+ *  `GET /api/research/steering_options.domains`. */
+export type AtomPool = Record<string, AtomPoolEntry[]>;
+
+export interface ResearchMutationKnobs {
+  rate?: number;
+  population_size?: number;
+  suffix_bias?: number;
+  elitism_fraction?: number;
+}
+
+export interface ResearchJobSteering {
+  mutation_knobs?: ResearchMutationKnobs;
+  mutation_priors?: MutationPriors;
+  atom_pool?: AtomPool;
+}
+
+/** Response from `GET /api/research/steering_options`. The atom names +
+ *  operator names + domain keys are the canonical lists the backend
+ *  validator accepts; rendering the form from this response means a
+ *  backend schema bump never strands the UI. */
+export interface SteeringOptions {
+  atom_names: string[];
+  operator_names: string[];
+  domains: string[];
+  bounds: {
+    atom_weight: { min: number; max: number };
+    mutation_prior: { min: number; max: number };
+    mutation_knobs: {
+      rate: { min: number; max: number };
+      population_size: { min: number; max: number; step: number };
+      suffix_bias: { min: number; max: number };
+      elitism_fraction: { min: number; max: number };
+    };
+  };
 }
 
 export interface CreateResearchJobResponse {
