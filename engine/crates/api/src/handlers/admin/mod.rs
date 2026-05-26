@@ -11,4 +11,5 @@ pub mod jobs;
 pub mod refund;
 pub mod stats;
 pub mod steering;
+pub mod theorems;
 pub mod users;

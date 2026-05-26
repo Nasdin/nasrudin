@@ -1315,6 +1315,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/admin/audit", get(handlers::admin::audit_log::list))
         .route("/api/admin/stats", get(handlers::admin::stats::stats))
+        .route(
+            "/api/admin/theorems/backfill_names",
+            post(handlers::admin::theorems::backfill_names),
+        )
         // Reject every admin route while an impersonation session is in
         // flight. The marker is set by `impersonation_layer`; when present,
         // this guard returns 403 before RequireAdmin even runs.
