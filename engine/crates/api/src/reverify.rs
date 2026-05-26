@@ -128,11 +128,39 @@ impl ReverifyQueue {
         let row = match theorem_q::get_by_id(&self.pg, &job.theorem_id).await? {
             Some(r) => r,
             None => {
-                tracing::warn!(
-                    theorem_id = %hex::encode(job.theorem_id),
-                    "reverify: theorem missing from PG, dequeueing"
-                );
-                self.rocks.dequeue_reverify(&job.theorem_id).ok();
+                // Race window: /api/ingest's PG enqueue is write-behind via
+                // pg_drain (runs every ~100ms). The reverify drain ticks every
+                // 500ms and CAN pop a job before pg_drain has flushed the
+                // corresponding theorem row. Permanently dequeueing here
+                // strands the theorem in Pending forever (this was the M1.c
+                // bug — E=mc² landed in PG with status=Pending after the
+                // drain dequeued the reverify job, and only a manual UPDATE
+                // moved it to Verified). Re-enqueue with a bumped attempts
+                // counter; pg_drain almost always catches up within a few
+                // ticks. After MAX_PG_RACE_ATTEMPTS without the row showing,
+                // we accept that the submission was lost upstream and
+                // dequeue.
+                const MAX_PG_RACE_ATTEMPTS: u8 = 20;
+                if job.attempts + 1 < MAX_PG_RACE_ATTEMPTS {
+                    let new_job = ReverifyJob {
+                        theorem_id: job.theorem_id,
+                        attempts: job.attempts + 1,
+                        enqueued_at_micros: chrono::Utc::now().timestamp_micros(),
+                    };
+                    tracing::debug!(
+                        theorem_id = %hex::encode(job.theorem_id),
+                        attempts = new_job.attempts,
+                        "reverify: theorem not yet in PG (write-behind race), re-enqueueing"
+                    );
+                    self.rocks.enqueue_reverify(&new_job)?;
+                } else {
+                    tracing::warn!(
+                        theorem_id = %hex::encode(job.theorem_id),
+                        attempts = job.attempts,
+                        "reverify: theorem missing from PG after MAX_PG_RACE_ATTEMPTS, dequeueing"
+                    );
+                    self.rocks.dequeue_reverify(&job.theorem_id).ok();
+                }
                 return Ok(());
             }
         };
