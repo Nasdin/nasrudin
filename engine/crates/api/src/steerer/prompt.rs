@@ -22,7 +22,7 @@ valid JSON matching the schema. Honor the scope: in scope B (paid \
 jobs running) set hard_targets=[] and mutation_knobs=null; in scope C \
 you have full authority.\n\n\
 The GA discovers theorems by chaining axioms and mutating the chain. \
-You have three load-bearing levers:\n\
+You have FOUR load-bearing levers:\n\
   1. `mutation_priors` — bias which mutation operators run more often. \
      Boost `append_productive_suffix` when chains are reaching novel \
      equations; boost `mutate_axiom_name` when chains are stagnating.\n\
@@ -40,7 +40,24 @@ You have three load-bearing levers:\n\
      `X² = Y²` targets. Recognised atom names: `m_c_sq`, `c_p0`, \
      `p0_sq`, `m_sq_c_sq`, `e_sq`, `p0_sq_minus_psq`, `m_c`, `c_sq` \
      (SR baseline); workers fall back to the baseline when you don't \
-     emit a pool.\n\n\
+     emit a pool.\n\
+  4. `proposed_chains` — full derivation chains, keyed by target name. \
+     Each chain is an ordered list of RuleStep objects. When a worker \
+     is running the target you've named, it injects your chain as an \
+     elite individual at chunk start so the GA explores neighbourhoods \
+     of your candidate. Use this when you can enumerate the upstream \
+     derivation directly: a pure-random GA over 195k axioms cannot \
+     compose an 8-step chain like `rest_energy_from_upstream`, but you \
+     can write it out in one shot. Do NOT reference forbidden \
+     headline axioms (e.g. `mass_shell_condition`, `emc_squared`) — \
+     the no-cheat audit gates these at boot and the chain will be \
+     rejected. Compose from upstream POSTULATES only: \
+     `four_momentum_time_component`, `minkowski_invariant_def`, \
+     `invariant_mass_postulate`, `rest_frame_psq_zero`, \
+     `photon_energy_def`, `hbar_positive`, etc. Each step's `kind` \
+     must be one of: `IntroduceAxiom`, `IntroduceTheorem`, \
+     `SubstituteValue`, `AlgebraicSimplify`, `RearrangeEquation`, \
+     `TakePositiveRoot`.\n\n\
 Keep rationale ≤500 chars; rewrite `lessons_learned` each cycle as a \
 rolling indefinite-horizon memory of what works.";
 
@@ -110,6 +127,32 @@ const SCHEMA_HINT: &str = r#"{
                                 Use this to give EM/QM/GR domains their own
                                 physics-shape pool so the suffix mechanism
                                 can synthesise non-SR productive targets,
+  "proposed_chains": {
+    "<target_id>": [
+      { "kind": "IntroduceAxiom", "axiom_name": "four_momentum_time_component" },
+      { "kind": "IntroduceAxiom", "axiom_name": "minkowski_invariant_def" },
+      { "kind": "IntroduceAxiom", "axiom_name": "invariant_mass_postulate" },
+      { "kind": "IntroduceAxiom", "axiom_name": "rest_frame_psq_zero" },
+      { "kind": "AlgebraicSimplify" }
+    ], ...
+  }                          -- full LLM-proposed derivation chains keyed by
+                                target_id (e.g. sr_rest_energy). Workers
+                                injecting this as an elite seed at chunk
+                                start when NASRUDIN_USE_LLM_CHAINS=1. The
+                                example above is the (truncated) skeleton of
+                                rest_energy_from_upstream — adapt for the
+                                target you're proposing. Variants: `kind` ∈
+                                {IntroduceAxiom (uses axiom_name),
+                                 IntroduceTheorem (uses theorem_name for
+                                 peer-verified results),
+                                 SubstituteValue (var, value, reason),
+                                 AlgebraicSimplify,
+                                 RearrangeEquation (description, target),
+                                 TakePositiveRoot}. Forbidden axioms (no-cheat
+                                gate): mass_shell_condition, emc_squared,
+                                anything that pre-encodes the headline.
+                                Empty/missing → worker falls back to its
+                                hardcoded m1_seed_elite_for registry,
   "cluster_directives": [
     { "island_domain": "...",
       "centroid_skeleton_hash": <u64>,    -- copy from cluster_summaries above,
@@ -326,6 +369,50 @@ mod tests {
         assert!(
             p.contains("lessons_learned"),
             "schema must mention lessons_learned"
+        );
+    }
+
+    #[test]
+    fn system_prompt_documents_proposed_chains() {
+        assert!(
+            SYSTEM_PROMPT.contains("proposed_chains"),
+            "system prompt must document the proposed_chains lever"
+        );
+        // The four allowed RuleStep variants must be enumerated so the
+        // LLM knows what `kind` strings to emit.
+        for variant in &[
+            "IntroduceAxiom",
+            "IntroduceTheorem",
+            "AlgebraicSimplify",
+            "RearrangeEquation",
+        ] {
+            assert!(
+                SYSTEM_PROMPT.contains(variant),
+                "system prompt must mention RuleStep variant {variant}"
+            );
+        }
+        assert!(
+            SYSTEM_PROMPT.contains("forbidden"),
+            "system prompt must warn about forbidden headline axioms"
+        );
+    }
+
+    #[test]
+    fn schema_hint_documents_proposed_chains() {
+        let (cs, bs, kp, ift) = empty_extras();
+        let p =
+            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "");
+        assert!(
+            p.contains("proposed_chains"),
+            "schema hint must document proposed_chains shape"
+        );
+        // The example chain in the schema hint should reference at
+        // least one real upstream axiom so the LLM has a concrete
+        // anchor to imitate.
+        assert!(
+            p.contains("four_momentum_time_component")
+                || p.contains("IntroduceAxiom"),
+            "schema hint should include a worked RuleStep example"
         );
     }
 
