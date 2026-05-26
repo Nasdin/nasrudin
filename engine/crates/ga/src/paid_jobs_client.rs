@@ -37,6 +37,14 @@ pub struct PaidJob {
     pub hunch: String,
     pub domain_hint: Option<String>,
     pub suggestions: Option<serde_json::Value>,
+    /// Per-job steering overrides set by the researcher at submit
+    /// time (or by the platform target seeder when the cluster
+    /// hunts a featured target with no paying owner). Shape mirrors
+    /// the LLM-emitted cluster payload's `config.*` so the same
+    /// applier (`apply_steering_knobs_for_domain`) consumes both.
+    /// `None` → fall through to the live cluster-steerer snapshot.
+    #[serde(default)]
+    pub seed: Option<serde_json::Value>,
     pub lake_slot_hours_remaining: f32,
     pub lease_expires_at: Option<String>,
     pub heartbeat_url: String,

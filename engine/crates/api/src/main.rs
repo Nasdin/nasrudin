@@ -87,6 +87,22 @@ async fn main() -> anyhow::Result<()> {
     let db = Arc::new(TheoremDb::new(&db_path)?);
     tracing::info!("RocksDB opened at {db_path}");
 
+    // Stats blob in `CF_STATS` accumulates +1 per write — pre-fix this
+    // ran on every boot-time catalog re-import and inflated
+    // `domain_counts` / `total_theorems` by ~30× in prod. Now that
+    // `put_theorem` only bumps stats for genuinely new rows we have
+    // to rebuild the persisted blob once: scan `CF_THEOREMS` and
+    // overwrite. The scan is O(rows) and bounded by the row store —
+    // ~1-2 s on a 50 k corpus.
+    match db.recompute_stats() {
+        Ok(stats) => tracing::info!(
+            total_theorems = stats.total_theorems,
+            total_verified = stats.total_verified,
+            "RocksDB stats recomputed from row store"
+        ),
+        Err(e) => tracing::warn!("RocksDB stats recompute failed: {e}; continuing"),
+    }
+
     // Phase 9 disaster-recovery: if Postgres is connected and RocksDB is empty,
     // repopulate the embedded store from the relational mirror. Runs exactly
     // once before the Axum router starts. Hydration failures are logged and
@@ -939,6 +955,22 @@ async fn main() -> anyhow::Result<()> {
         } else {
             tracing::info!("Compute LinUCB sufficient-statistics rows ensured");
         }
+
+        // Seed the platform-tier conjecture_jobs rows so workers
+        // default to hunting the curated headline targets (E=mc²,
+        // F=ma, S=k_B ln Ω, ...) when no paying researcher job is
+        // queued. Idempotent — only inserts rows that don't already
+        // exist in a non-terminal state. The atomic_claim_paid SQL
+        // picks these up after researcher-tier jobs are exhausted
+        // because slice_priority=3 (researcher baseline is 5).
+        let pg_for_platform_seed = pg.clone();
+        tokio::spawn(async move {
+            // Tiny delay so the FK / pool is fully warm before the
+            // first insert; not strictly necessary, but matches the
+            // pattern used elsewhere in the boot sequence.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            physics_api::platform_targets::ensure_platform_targets(&pg_for_platform_seed).await;
+        });
 
         // Hourly purge of cluster_reports older than 7 days. Bandit
         // arms hold the long-running statistics; the per-chunk rows
@@ -2111,7 +2143,35 @@ async fn delete_theorem_handler(
 }
 
 /// List all domains with their theorem counts.
+///
+/// Sourced from PostgreSQL (`status = 'Verified'`) so it matches the
+/// page-head total from `/api/theorems`. The RocksDB
+/// `count_by_domain()` alternative is unreliable here: its underlying
+/// `increment_stats` was non-idempotent across boot-time catalog
+/// re-imports and inflated the counters by ~30× before the boot-time
+/// `recompute_stats` landed. Even after the fix, PG is the user-facing
+/// source of truth — RocksDB stats stay scoped to the Prometheus
+/// surface where the operator wants the raw row-store view.
 async fn list_domains(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    if let Some(pg) = state.pg.as_ref() {
+        match nasrudin_pg::query::theorems::count_verified_by_domain(pg).await {
+            Ok(rows) => {
+                let map: serde_json::Map<String, serde_json::Value> = rows
+                    .into_iter()
+                    .map(|(domain, cnt)| {
+                        (domain, serde_json::Value::Number(serde_json::Number::from(cnt)))
+                    })
+                    .collect();
+                return Json(serde_json::Value::Object(map));
+            }
+            Err(e) => {
+                tracing::warn!("list_domains: PG count_verified_by_domain failed: {e}");
+                return Json(serde_json::json!({ "error": format!("{e}") }));
+            }
+        }
+    }
+    // PG-unconfigured fall-through: keep the legacy RocksDB-stat
+    // shape so the sidebar still renders rather than 500-ing.
     match state.db.count_by_domain() {
         Ok(counts) => Json(serde_json::to_value(counts).unwrap_or_default()),
         Err(e) => Json(serde_json::json!({ "error": format!("{e}") })),

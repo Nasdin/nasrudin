@@ -64,6 +64,7 @@ use crate::chain_engine::{run_discovery, DiscoveryConfig, DiscoveryReport};
 use crate::paid_jobs_client::{
     HeartbeatBody, MarkProvedBody, PaidJob, PaidJobsClient,
 };
+use crate::steering_knobs::apply_steering_knobs_for_domain;
 
 /// Heartbeat cadence — 30 s aligns with the server's 5-minute lease
 /// (10 heartbeats per lease window provides plenty of jitter
@@ -273,11 +274,26 @@ pub async fn run_paid_slice(
         .unwrap_or(DEFAULT_SLOTS_PER_JOB)
         .max(1.0);
 
+    // Per-job steering payload — set by the researcher at submit
+    // time or by the platform target seeder. Shape matches the
+    // LLM-emitted cluster payload's `config.*`, so we wrap it in
+    // `{ "config": <seed> }` before handing to apply_steering_knobs
+    // (which expects to find knobs under `.config`).
+    let steering_wrapper: Option<serde_json::Value> = job
+        .seed
+        .as_ref()
+        .map(|s| serde_json::json!({ "config": s }));
+    let steering_domain_key: &str = job
+        .domain_hint
+        .as_deref()
+        .unwrap_or("");
+
     tracing::info!(
         %job_id,
         hunch = job.hunch.chars().take(80).collect::<String>(),
         remaining_h = job.lake_slot_hours_remaining,
         target_compiled = target_hash.is_some(),
+        steered = steering_wrapper.is_some(),
         slot_count,
         "starting paid GA slice"
     );
@@ -286,6 +302,14 @@ pub async fn run_paid_slice(
         // Run one short chunk under the slice's config.
         let mut chunk_cfg = base_config.clone();
         chunk_cfg.generations = GENS_PER_CHUNK;
+        // Apply per-job steering on top of the base config every
+        // chunk (cheap; idempotent under clamping). Researcher-
+        // supplied knobs override anything the live cluster steerer
+        // would inject — paying users get explicit priority over
+        // automatic LLM bias.
+        if let Some(s) = steering_wrapper.as_ref() {
+            apply_steering_knobs_for_domain(&mut chunk_cfg, s, steering_domain_key);
+        }
         let report: DiscoveryReport = run_discovery(&scoped_store, &chunk_cfg, &mut rng);
         cum_attempted += report.total_candidates as i32;
         cum_verified += report.verified.len() as i32;

@@ -115,6 +115,7 @@ pub async fn claim(
                     "hunch": job.hunch,
                     "domain_hint": job.domain_hint,
                     "suggestions": job.suggestions,
+                    "seed": job.seed,
                     "lake_slot_hours_remaining": remaining,
                     "lease_expires_at": job.lease_expires_at,
                     "allocated_slots": job.allocated_slots,

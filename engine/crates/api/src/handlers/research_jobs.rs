@@ -22,9 +22,12 @@ use axum::{
 };
 use futures::Stream;
 use serde::Deserialize;
+use serde_json::Value;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
+
+use nasrudin_ga::chain_ga::PHYSICS_ATOM_NAMES;
 
 use crate::auth::AuthOrApiKey;
 use crate::jobs::JobEvent;
@@ -55,10 +58,219 @@ pub struct CreateBody {
     /// the job claims ahead of normal-priority work.
     #[serde(default)]
     pub rush: bool,
+    /// Optional per-job steering overrides applied to the GA's
+    /// DiscoveryConfig at chunk-prepare time. Shape mirrors the
+    /// LLM-emitted cluster steering payload so the same applier
+    /// (`apply_steering_knobs_for_domain`) can consume it:
+    ///
+    /// ```jsonc
+    /// {
+    ///   "mutation_knobs": { "rate": 0.20, "population_size": 128,
+    ///                        "suffix_bias": 0.6, "elitism_fraction": 0.1 },
+    ///   "mutation_priors": { "append_productive_suffix": 2.0 },
+    ///   "atom_pool": { "special_relativity": [
+    ///     { "name": "m_c_sq", "weight": 4.0 } ]}
+    /// }
+    /// ```
+    ///
+    /// Costs +1 credit (signals intent + revenue). Validated server-
+    /// side: atom names must be in PHYSICS_ATOM_NAMES, weights /
+    /// priors / rates bounded to the same ranges the LLM-applier
+    /// already clamps. Persisted to `conjecture_jobs.seed` JSONB and
+    /// surfaced to the worker via the claim response.
+    #[serde(default)]
+    pub steering: Option<Value>,
 }
 
 fn default_credits_budget() -> i32 {
     1
+}
+
+/// Validate the researcher-supplied steering payload. Returns
+/// `Ok(canonical_value)` on success — the canonical form is what we
+/// persist to `seed` JSONB and what the worker re-applies (atom names
+/// outside PHYSICS_ATOM_NAMES are stripped, weights clamped). On any
+/// shape violation returns `Err(error_message)` for the 400 response.
+///
+/// Why canonicalise here instead of trusting `apply_steering_knobs`
+/// to clamp at apply-time: we want the researcher to *see* what
+/// they actually bought — when they steer with weight=99 and we
+/// silently clamp to 4.0, the response payload + the persisted seed
+/// both reflect the clamped value. No surprise discovery on next
+/// chunk.
+pub fn validate_and_canonicalize_steering(v: &Value) -> Result<Value, String> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| "steering must be a JSON object".to_string())?;
+    let mut out = serde_json::Map::new();
+
+    if let Some(knobs) = obj.get("mutation_knobs") {
+        let mut canon_knobs = serde_json::Map::new();
+        let k = knobs
+            .as_object()
+            .ok_or_else(|| "steering.mutation_knobs must be an object".to_string())?;
+        if let Some(r) = k.get("rate").and_then(Value::as_f64) {
+            if !r.is_finite() {
+                return Err("steering.mutation_knobs.rate must be finite".into());
+            }
+            canon_knobs.insert("rate".into(), serde_json::json!(r.clamp(0.05, 0.30)));
+        }
+        if let Some(p) = k.get("population_size").and_then(Value::as_u64) {
+            canon_knobs.insert("population_size".into(), serde_json::json!(p.clamp(32, 512)));
+        }
+        if let Some(b) = k.get("suffix_bias").and_then(Value::as_f64) {
+            if !b.is_finite() {
+                return Err("steering.mutation_knobs.suffix_bias must be finite".into());
+            }
+            canon_knobs.insert("suffix_bias".into(), serde_json::json!(b.clamp(0.0, 1.0)));
+        }
+        if let Some(e) = k.get("elitism_fraction").and_then(Value::as_f64) {
+            if !e.is_finite() {
+                return Err("steering.mutation_knobs.elitism_fraction must be finite".into());
+            }
+            canon_knobs.insert("elitism_fraction".into(), serde_json::json!(e.clamp(0.0, 0.2)));
+        }
+        if !canon_knobs.is_empty() {
+            out.insert("mutation_knobs".into(), Value::Object(canon_knobs));
+        }
+    }
+
+    if let Some(priors) = obj.get("mutation_priors") {
+        let p = priors
+            .as_object()
+            .ok_or_else(|| "steering.mutation_priors must be an object".to_string())?;
+        let mut canon = serde_json::Map::new();
+        for (op_name, w) in p {
+            let f = w
+                .as_f64()
+                .ok_or_else(|| format!("mutation_priors.{op_name} must be a number"))?;
+            if !f.is_finite() {
+                return Err(format!("mutation_priors.{op_name} must be finite"));
+            }
+            canon.insert(op_name.clone(), serde_json::json!(f.clamp(0.0, 2.0)));
+        }
+        if !canon.is_empty() {
+            out.insert("mutation_priors".into(), Value::Object(canon));
+        }
+    }
+
+    if let Some(pool) = obj.get("atom_pool") {
+        let p = pool
+            .as_object()
+            .ok_or_else(|| "steering.atom_pool must be an object keyed by domain".to_string())?;
+        let mut canon_pool = serde_json::Map::new();
+        for (domain, entries) in p {
+            let arr = entries.as_array().ok_or_else(|| {
+                format!("atom_pool.{domain} must be an array of {{name,weight}}")
+            })?;
+            let mut canon_arr = Vec::with_capacity(arr.len());
+            for entry in arr {
+                let name = entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("atom_pool.{domain}[].name is required"))?;
+                if !PHYSICS_ATOM_NAMES.contains(&name) {
+                    return Err(format!(
+                        "atom_pool.{domain}: unknown atom `{name}` (allowed: {})",
+                        PHYSICS_ATOM_NAMES.join(", ")
+                    ));
+                }
+                let weight = entry
+                    .get("weight")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| format!("atom_pool.{domain}[{name}].weight is required"))?;
+                if !weight.is_finite() {
+                    return Err(format!("atom_pool.{domain}[{name}].weight must be finite"));
+                }
+                canon_arr.push(serde_json::json!({
+                    "name": name,
+                    "weight": weight.clamp(0.0, 4.0),
+                }));
+            }
+            if !canon_arr.is_empty() {
+                canon_pool.insert(domain.clone(), Value::Array(canon_arr));
+            }
+        }
+        if !canon_pool.is_empty() {
+            out.insert("atom_pool".into(), Value::Object(canon_pool));
+        }
+    }
+
+    if out.is_empty() {
+        return Err("steering is present but contains no recognised fields".into());
+    }
+    Ok(Value::Object(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_and_canonicalize_steering;
+    use serde_json::json;
+
+    #[test]
+    fn rejects_non_object_root() {
+        assert!(validate_and_canonicalize_steering(&json!("hi")).is_err());
+        assert!(validate_and_canonicalize_steering(&json!([1, 2])).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_atom_name() {
+        let v = json!({
+            "atom_pool": {
+                "special_relativity": [
+                    { "name": "not_an_atom", "weight": 1.0 }
+                ]
+            }
+        });
+        let err = validate_and_canonicalize_steering(&v).unwrap_err();
+        assert!(err.contains("not_an_atom"), "got: {err}");
+    }
+
+    #[test]
+    fn clamps_weight_to_max_four() {
+        let v = json!({
+            "atom_pool": {
+                "special_relativity": [ { "name": "m_c_sq", "weight": 99.0 } ]
+            }
+        });
+        let out = validate_and_canonicalize_steering(&v).unwrap();
+        let w = out["atom_pool"]["special_relativity"][0]["weight"]
+            .as_f64()
+            .unwrap();
+        assert!((w - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rejects_nan_weight() {
+        let v = json!({
+            "atom_pool": {
+                "sr": [ { "name": "m_c_sq", "weight": f64::NAN } ]
+            }
+        });
+        assert!(validate_and_canonicalize_steering(&v).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_steering_object() {
+        assert!(validate_and_canonicalize_steering(&json!({})).is_err());
+    }
+
+    #[test]
+    fn round_trips_realistic_payload() {
+        let v = json!({
+            "mutation_knobs": { "rate": 0.2, "population_size": 128 },
+            "mutation_priors": { "append_productive_suffix": 1.5 },
+            "atom_pool": {
+                "special_relativity": [ { "name": "m_c_sq", "weight": 4.0 } ]
+            }
+        });
+        let out = validate_and_canonicalize_steering(&v).expect("valid");
+        assert!(out["mutation_knobs"]["rate"].as_f64().unwrap() > 0.0);
+        assert_eq!(
+            out["atom_pool"]["special_relativity"][0]["name"].as_str(),
+            Some("m_c_sq")
+        );
+    }
 }
 
 /// `POST /api/research/jobs` — atomically debit
@@ -85,12 +297,37 @@ pub async fn create(
         )
             .into_response();
     }
+
+    // Validate optional steering payload before charging the user. We
+    // canonicalise here so the persisted seed and the response body
+    // show the actual clamped values the worker will apply — no
+    // silent renegotiation at apply-time.
+    let canonical_steering = match body.steering.as_ref() {
+        Some(s) => match validate_and_canonicalize_steering(s) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "invalid_steering", "detail": e })),
+                )
+                    .into_response();
+            }
+        },
+        None => None,
+    };
+
     let pg = match &state.pg {
         Some(p) => p,
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
     let user_id = auth.user.id;
-    let total_cost: i32 = body.credits_budget + if body.rush { 1 } else { 0 };
+    // Steering carries a +1 credit premium on top of any rush charge —
+    // signals real intent (random tinkerers don't pay) and prices the
+    // higher-quality outcome appropriately. Mirrors the rush surcharge
+    // pattern so the surface is consistent.
+    let steering_surcharge: i32 = if canonical_steering.is_some() { 1 } else { 0 };
+    let total_cost: i32 =
+        body.credits_budget + if body.rush { 1 } else { 0 } + steering_surcharge;
     let quota: i32 = 96 * body.credits_budget;
     let priority: i32 = 5 + if body.rush { 1 } else { 0 };
 
@@ -156,7 +393,10 @@ pub async fn create(
         model: Set("ga".into()),
         suggestions: Set(None),
         chosen_index: Set(None),
-        seed: Set(None),
+        // Persist the canonical steering blob (post-clamp). The
+        // worker reads this back via the claim response and feeds it
+        // straight to `apply_steering_knobs_for_domain` each chunk.
+        seed: Set(canonical_steering.clone()),
         budget: Set(serde_json::json!({
             "wall_seconds": 86400,
             "max_candidates": 10_000_000,
@@ -202,6 +442,7 @@ pub async fn create(
         credits = total_cost,
         budget = body.credits_budget,
         rush = body.rush,
+        steered = canonical_steering.is_some(),
         remaining = new_remaining,
         "submit_decremented",
     );
@@ -213,6 +454,12 @@ pub async fn create(
             "state": "queued",
             "credits_spent": total_cost,
             "credits_remaining": new_remaining,
+            "steering_applied": canonical_steering,
+            "price_breakdown": {
+                "base": body.credits_budget,
+                "rush": if body.rush { 1 } else { 0 },
+                "steering": steering_surcharge,
+            },
         })),
     )
         .into_response()
