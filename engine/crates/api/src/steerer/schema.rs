@@ -27,6 +27,14 @@ pub const MAX_PROPOSED_CHAIN_STEPS: usize = 24;
 /// elite-injection cost.
 pub const MAX_PROPOSED_CHAINS_PER_CYCLE: usize = 8;
 
+/// Maximum number of LLM-proposed new exploration *targets* the
+/// steerer may emit per cycle. Each accepted target lands as a new
+/// `conjecture_jobs` row with `tier='platform'`, so an unbounded
+/// stream would let one bad cycle bloat the platform queue. 4 is
+/// generous (one per major open domain) but small enough that even
+/// every cycle proposing the cap only adds ~24 rows/hour.
+pub const MAX_PROPOSED_TARGETS_PER_CYCLE: usize = 4;
+
 /// Top-level steering payload. Workers read `mutation_knobs` and the
 /// fitness weights every chunk; targets and emphasis affect chain
 /// composition and seed selection.
@@ -155,6 +163,34 @@ pub struct SteeringConfig {
     #[serde(default)]
     #[schemars(skip)]
     pub proposed_chains: HashMap<String, Vec<RuleStep>>,
+    /// LLM-proposed brand-new exploration targets. Used when the
+    /// existing platform queue is mostly proved/exhausted and the
+    /// steerer wants to graft fresh headlines onto the cluster's
+    /// curriculum instead of letting workers fall back to pure-random
+    /// GA. Each accepted entry is inserted into `conjecture_jobs`
+    /// with `tier='platform'`, `provider='steerer-proposed'`, and
+    /// `slice_priority=2` (below the curated headline baseline of 3
+    /// so curated work still wins ties). Capped at
+    /// `MAX_PROPOSED_TARGETS_PER_CYCLE`; entries with malformed
+    /// fields, unparseable LaTeX, or canonical statements that match
+    /// the no-cheat headline deny-list are dropped with a warn log
+    /// — a bad emission never poisons the queue or fails the cycle.
+    #[serde(default)]
+    pub proposed_targets: Vec<ProposedTarget>,
+}
+
+/// One LLM-proposed exploration target. The `hunch` is a LaTeX
+/// expression the worker will parse via `nasrudin_core::parse::parse_latex`
+/// when claiming the resulting `conjecture_jobs` row; `domain_hint`
+/// matches the snake-case `Domain::Display` strings the rest of the
+/// system uses (`special_relativity`, `quantum_mechanics`, …). The
+/// `rationale` is captured in the audit log when the row is enqueued
+/// so operators can trace why a given target appeared.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct ProposedTarget {
+    pub hunch: String,
+    pub domain_hint: String,
+    pub rationale: String,
 }
 
 /// One LLM-proposed atom for `random_physics_compound`. The `name`
@@ -322,6 +358,11 @@ pub enum SteeringValidationError {
     ProposedChainTooLong { target: String, steps: usize },
     #[error("proposed_chains[{target}] is empty")]
     ProposedChainEmpty { target: String },
+    #[error(
+        "proposed_targets may contain at most {} entries",
+        MAX_PROPOSED_TARGETS_PER_CYCLE
+    )]
+    TooManyProposedTargets,
 }
 
 impl SteeringConfig {
@@ -414,6 +455,9 @@ impl SteeringConfig {
         if self.proposed_chains.len() > MAX_PROPOSED_CHAINS_PER_CYCLE {
             return Err(SteeringValidationError::TooManyProposedChains);
         }
+        if self.proposed_targets.len() > MAX_PROPOSED_TARGETS_PER_CYCLE {
+            return Err(SteeringValidationError::TooManyProposedTargets);
+        }
         for (target, steps) in &self.proposed_chains {
             if steps.is_empty() {
                 return Err(SteeringValidationError::ProposedChainEmpty {
@@ -463,6 +507,7 @@ pub fn default_config() -> SteeringConfig {
         rationale: "default cold-start config".into(),
         atom_pool: HashMap::new(),
         proposed_chains: HashMap::new(),
+        proposed_targets: vec![],
     }
 }
 
@@ -786,6 +831,47 @@ mod tests {
         assert!(matches!(
             c.validate(),
             Err(SteeringValidationError::TooManyProposedChains)
+        ));
+    }
+
+    #[test]
+    fn proposed_targets_round_trip() {
+        let mut c = default_config();
+        c.proposed_targets.push(ProposedTarget {
+            hunch: "P V = n R T".into(),
+            domain_hint: "thermodynamics".into(),
+            rationale: "ideal gas law not in platform queue yet".into(),
+        });
+        let json = serde_json::to_string(&c).unwrap();
+        let parsed: SteeringConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.proposed_targets.len(), 1);
+        assert_eq!(parsed.proposed_targets[0].hunch, "P V = n R T");
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn proposed_targets_missing_field_deserialises_to_empty() {
+        let cfg = default_config();
+        let mut value = serde_json::to_value(&cfg).unwrap();
+        value.as_object_mut().unwrap().remove("proposed_targets");
+        let parsed: SteeringConfig = serde_json::from_value(value).unwrap();
+        assert!(parsed.proposed_targets.is_empty());
+        parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn proposed_targets_too_many_rejected() {
+        let mut c = default_config();
+        for i in 0..MAX_PROPOSED_TARGETS_PER_CYCLE + 1 {
+            c.proposed_targets.push(ProposedTarget {
+                hunch: format!("x_{i} = y_{i}"),
+                domain_hint: "pure_math".into(),
+                rationale: "test".into(),
+            });
+        }
+        assert!(matches!(
+            c.validate(),
+            Err(SteeringValidationError::TooManyProposedTargets)
         ));
     }
 
