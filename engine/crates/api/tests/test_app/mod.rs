@@ -264,6 +264,8 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         trust_invalidation_tx: tokio::sync::broadcast::channel(16).0,
         trusted_spot_check_rate: 50,
         catalog_hashes: physics_api::state::CatalogHashSet::empty(),
+        naming_client: None,
+        naming_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
     });
 
     // Auth layer: needed by the `/api/me/*` routes which use the

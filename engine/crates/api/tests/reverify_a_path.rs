@@ -147,6 +147,8 @@ async fn b_path_verified_flips_status_and_increments_contributor() {
         axiom_store,
         discovery_tx: tx,
         cache_ctx: None,
+        naming_client: None,
+        naming_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
     });
 
     let job = rocks

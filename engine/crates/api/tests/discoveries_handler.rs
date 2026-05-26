@@ -258,5 +258,7 @@ fn override_catalog_set(
         trust_invalidation_tx: s.trust_invalidation_tx.clone(),
         trusted_spot_check_rate: s.trusted_spot_check_rate,
         catalog_hashes: physics_api::state::CatalogHashSet::from_vec(hashes),
+        naming_client: s.naming_client.clone(),
+        naming_semaphore: Arc::clone(&s.naming_semaphore),
     })
 }
