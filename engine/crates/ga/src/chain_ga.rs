@@ -836,6 +836,11 @@ pub struct ChainIndividual {
     /// default (and acts as the "unclustered" id since the GA
     /// runs unmodified when `cluster_multipliers` is empty).
     pub cluster_id: u32,
+    /// Canonical form of the chain's final expression, captured at
+    /// fitness-evaluation time so downstream stages (fitness sharing,
+    /// dedup, lake-verify pick) don't have to re-run `chain.execute`
+    /// just to recompute it. `None` for chains that didn't execute.
+    pub canonical: Option<String>,
 }
 
 impl ChainIndividual {
@@ -846,6 +851,7 @@ impl ChainIndividual {
             pareto_rank: usize::MAX,
             crowding_distance: 0.0,
             cluster_id: 0,
+            canonical: None,
         }
     }
 
@@ -856,6 +862,27 @@ impl ChainIndividual {
             pareto_rank: usize::MAX,
             crowding_distance: 0.0,
             cluster_id,
+            canonical: None,
+        }
+    }
+
+    /// Constructor used by the offspring hot path:
+    /// `evaluate_chain_with_canonical` returns the canonical as a
+    /// by-product of the same `chain.execute` it already ran for
+    /// fitness, so cache it on the individual.
+    pub fn with_cluster_and_canonical(
+        chain: Chain,
+        fitness: FitnessScore,
+        cluster_id: u32,
+        canonical: Option<String>,
+    ) -> Self {
+        Self {
+            chain,
+            fitness,
+            pareto_rank: usize::MAX,
+            crowding_distance: 0.0,
+            cluster_id,
+            canonical,
         }
     }
 }
@@ -948,7 +975,32 @@ pub fn evaluate_chain_fitness_with_target(
     store: &AxiomStore,
     target: Option<&crate::target::TargetSpec>,
 ) -> FitnessScore {
+    evaluate_chain_with_canonical(chain, store, target).0
+}
+
+/// Same as [`evaluate_chain_fitness_with_target`] but also returns the
+/// final expression's canonical form (when the chain executes and ends in
+/// an Eq the GA can hash for fitness sharing). Callers on the offspring
+/// hot path use this to amortise a second `chain.execute` they would
+/// otherwise pay for canonical-only purposes; the chain runs exactly
+/// once and both the fitness score and the canonical fall out of the
+/// same `ChainEvalResult`.
+pub fn evaluate_chain_with_canonical(
+    chain: &Chain,
+    store: &AxiomStore,
+    target: Option<&crate::target::TargetSpec>,
+) -> (FitnessScore, Option<String>) {
     let eval = evaluate_chain(chain, store);
+    let canonical = eval.final_expr.as_ref().map(|e| e.to_canonical());
+    let fitness = fitness_from_eval(&eval, chain, target);
+    (fitness, canonical)
+}
+
+fn fitness_from_eval(
+    eval: &ChainEvalResult,
+    chain: &Chain,
+    target: Option<&crate::target::TargetSpec>,
+) -> FitnessScore {
     let executes = if eval.executes { 1.0 } else { 0.0 };
     let steps = eval.steps_run as f64;
     let depth_score = (steps / 8.0).min(1.0);

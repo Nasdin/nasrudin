@@ -492,12 +492,12 @@ pub fn seed_population(
     let mut pop: Vec<ChainIndividual> = (0..config.population_size)
         .map(|_| {
             let chain = random_chain_seed(store, rng, report);
-            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+            let (fit, canonical) = crate::chain_ga::evaluate_chain_with_canonical(
                 &chain,
                 store,
                 config.target.as_ref(),
             );
-            ChainIndividual::new(chain, fit)
+            ChainIndividual::with_cluster_and_canonical(chain, fit, 0, canonical)
         })
         .collect();
     // Milestone 1: permanent elite is injected at index 0 so it's
@@ -508,12 +508,17 @@ pub fn seed_population(
     // give the cluster summariser something to cluster around.
     if let Some(elite_chain) = &config.permanent_elite {
         if !pop.is_empty() {
-            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+            let (fit, canonical) = crate::chain_ga::evaluate_chain_with_canonical(
                 elite_chain,
                 store,
                 config.target.as_ref(),
             );
-            pop[0] = ChainIndividual::new(elite_chain.clone(), fit);
+            pop[0] = ChainIndividual::with_cluster_and_canonical(
+                elite_chain.clone(),
+                fit,
+                0,
+                canonical,
+            );
         }
     }
     // LLM-proposed elites: placed at index 1.., shifted past the
@@ -611,12 +616,17 @@ pub fn run_discovery_from_population(
         // fresh. The fitness-based elitism below still gets to run for
         // the remaining slots.
         if let Some(elite_chain) = &config.permanent_elite {
-            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+            let (fit, canonical) = crate::chain_ga::evaluate_chain_with_canonical(
                 elite_chain,
                 store,
                 config.target.as_ref(),
             );
-            offspring.push(ChainIndividual::new(elite_chain.clone(), fit));
+            offspring.push(ChainIndividual::with_cluster_and_canonical(
+                elite_chain.clone(),
+                fit,
+                0,
+                canonical,
+            ));
             report.total_candidates += 1;
         }
 
@@ -702,12 +712,17 @@ pub fn run_discovery_from_population(
                 if child.is_empty() || child.len() > config.max_chain_len {
                     continue;
                 }
-                let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+                let (fit, canonical) = crate::chain_ga::evaluate_chain_with_canonical(
                     &child,
                     store,
                     config.target.as_ref(),
                 );
-                offspring.push(ChainIndividual::with_cluster(child, fit, child_cluster));
+                offspring.push(ChainIndividual::with_cluster_and_canonical(
+                    child,
+                    fit,
+                    child_cluster,
+                    canonical,
+                ));
                 report.total_candidates += 1;
                 if offspring.len() >= config.population_size {
                     break;
@@ -721,9 +736,20 @@ pub fn run_discovery_from_population(
         // duplicates get penalised. Without this, the GA converges on
         // ~7-8 simple multi-axiom chains whose final-expr is the last
         // loaded axiom (iter 11 finding).
+        //
+        // The canonical was cached on the individual at evaluate time
+        // (offspring built via `with_cluster_and_canonical`). For
+        // pre-existing seed/elite paths that still construct via the
+        // legacy `with_cluster`/`new` ctor the canonical is None — fall
+        // back to re-running the chain so the sharing count stays
+        // accurate. The offspring hot path is the load-bearing one;
+        // the fallback only fires for the handful of elites per gen.
         let canonicals: Vec<Option<String>> = offspring
             .iter()
-            .map(|ind| run_chain_for_final(&ind.chain, store).map(|e| e.to_canonical()))
+            .map(|ind| match &ind.canonical {
+                Some(c) => Some(c.clone()),
+                None => run_chain_for_final(&ind.chain, store).map(|e| e.to_canonical()),
+            })
             .collect();
         let mut counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
@@ -1141,7 +1167,14 @@ fn pick_top_for_verify<'a>(
                 );
                 continue;
             }
-            let canon = expr.to_canonical();
+            // Prefer the cached canonical (populated by
+            // `evaluate_chain_with_canonical` on the offspring hot
+            // path). The legacy fallback only fires for individuals
+            // that pre-date the cache wiring.
+            let canon = ind
+                .canonical
+                .clone()
+                .unwrap_or_else(|| expr.to_canonical());
             // Skip canonicals we've verified this run, AND canonicals
             // any peer worker has already rejected via lake build.
             // Bloom pre-check: when present, a bloom miss means
@@ -1600,6 +1633,81 @@ mod tests {
         assert!((m.elitism_mult - 1.0).abs() < 1e-9);
         assert!((m.kill_fraction - 0.0).abs() < 1e-9);
         assert!((m.diversify_fraction - 0.0).abs() < 1e-9);
+    }
+
+    /// Microbenchmark for the per-candidate fitness path. Compares the
+    /// legacy "fitness + re-execute for canonical" cost (what the
+    /// fitness-sharing loop used to do) against the new
+    /// `evaluate_chain_with_canonical` that returns both from a single
+    /// `chain.execute`. Run with:
+    ///
+    ///   cargo test -p nasrudin-ga --release \
+    ///     --lib chain_engine::tests::bench_redundant_execute_elimination \
+    ///     -- --nocapture --ignored
+    ///
+    /// Ignored by default so it doesn't slow the gate; gated `--release`
+    /// because the numbers in debug are dominated by `Expr` clone
+    /// overhead the optimizer collapses.
+    #[ignore]
+    #[test]
+    fn bench_redundant_execute_elimination() {
+        use std::time::Instant;
+        let store = upstream_store();
+        let elite = nasrudin_derive::Chain::rest_energy_from_upstream();
+        // ~6-step elite chain; representative of the offspring the GA
+        // produces once the LLM-curated atom pool is wired in.
+        let n: usize = 5_000;
+
+        // --- Path A (legacy): fitness eval, then a second chain.execute
+        // to recover the canonical for fitness-sharing.
+        let t0 = Instant::now();
+        let mut sink_a: u64 = 0;
+        for _ in 0..n {
+            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+                &elite, &store, None,
+            );
+            sink_a = sink_a.wrapping_add((fit.depth * 1_000.0) as u64);
+            // Recompute canonical the way the pre-cache code did.
+            if let Some(expr) = run_chain_for_final(&elite, &store) {
+                let c = expr.to_canonical();
+                sink_a = sink_a.wrapping_add(c.len() as u64);
+            }
+        }
+        let elapsed_a = t0.elapsed();
+
+        // --- Path B (new): single eval that produces both.
+        let t1 = Instant::now();
+        let mut sink_b: u64 = 0;
+        for _ in 0..n {
+            let (fit, canonical) = crate::chain_ga::evaluate_chain_with_canonical(
+                &elite, &store, None,
+            );
+            sink_b = sink_b.wrapping_add((fit.depth * 1_000.0) as u64);
+            if let Some(c) = canonical {
+                sink_b = sink_b.wrapping_add(c.len() as u64);
+            }
+        }
+        let elapsed_b = t1.elapsed();
+
+        // Sinks consumed so dead-code elimination can't drop the loops.
+        assert_ne!(sink_a, sink_b.wrapping_add(1));
+
+        let per_a_us = elapsed_a.as_micros() as f64 / n as f64;
+        let per_b_us = elapsed_b.as_micros() as f64 / n as f64;
+        let speedup = elapsed_a.as_secs_f64() / elapsed_b.as_secs_f64();
+        println!(
+            "bench n={n}  legacy={:?} ({:.1} µs/cand)  cached={:?} ({:.1} µs/cand)  speedup={:.2}x",
+            elapsed_a, per_a_us, elapsed_b, per_b_us, speedup,
+        );
+        // Sanity assertion: the new path must not be slower. We don't
+        // assert a hard "2x" floor here because CI machines vary; the
+        // printed line is what we actually look at.
+        assert!(
+            elapsed_b <= elapsed_a,
+            "cached path regressed: {:?} > legacy {:?}",
+            elapsed_b,
+            elapsed_a
+        );
     }
 }
 
