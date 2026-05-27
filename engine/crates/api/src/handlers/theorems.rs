@@ -304,6 +304,97 @@ pub async fn by_id(
     }
 }
 
+/// `GET /api/theorems/by_ac_hash/{hex}` — look up the first verified
+/// theorem whose AC-canonical hash matches `hex` (8-byte hex). Returns
+/// `{ theorem_id_hex, canonical_statement, generation, verification_tactic }`
+/// on hit, 404 on miss.
+///
+/// Powers the paid-slice fast path: when a worker claims a paid job
+/// whose hunch compiles to a canonical_ac_hash that ALREADY exists in
+/// the corpus, the worker shouldn't waste 96 slot-hours re-deriving
+/// it — it should mark_proved immediately with the existing id. This
+/// endpoint lets the worker check in one round-trip.
+///
+/// Implementation: iterates verified theorems (capped at 5000) and
+/// recomputes ac_hash on the fly. Acceptable cost (~50ms at current
+/// scale, dominated by canonical_statement parse). When the corpus
+/// grows past ~10k rows this should move behind a backfilled
+/// `canonical_ac_hash` column with an index — see the schema TODO
+/// note alongside.
+pub async fn by_ac_hash(
+    State(state): State<Arc<AppState>>,
+    Path(hex): Path<String>,
+) -> impl IntoResponse {
+    let pg = match &state.pg {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "pg_unavailable" })),
+            )
+                .into_response();
+        }
+    };
+    let target_bytes = match hex::decode(&hex) {
+        Ok(b) if b.len() == 8 => b,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "bad_hex_or_length" })),
+            )
+                .into_response();
+        }
+    };
+    let mut target = [0u8; 8];
+    target.copy_from_slice(&target_bytes);
+
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+    let candidates = match nasrudin_pg::entity::theorems::Entity::find()
+        .filter(nasrudin_pg::entity::theorems::Column::Status.eq("Verified"))
+        .order_by_desc(nasrudin_pg::entity::theorems::Column::VerifiedAt)
+        .limit(5000)
+        .all(pg)
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    for t in candidates {
+        // Re-parse the canonical_statement back into an Expr, then
+        // hash AC-canonically. Workers compute ac_hash from the
+        // parsed-LaTeX hunch the same way, so this lookup matches
+        // exactly what paid_slice's run-time check would compare.
+        let expr = match nasrudin_core::parse::parse_sexpr(&t.canonical_statement) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if nasrudin_core::canonical_ac_hash(&expr) == target {
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "theorem_id_hex": hex::encode(&t.id),
+                    "canonical_statement": t.canonical_statement,
+                    "generation": t.generation,
+                    "verification_tactic": t.verification_tactic,
+                })),
+            )
+                .into_response();
+        }
+    }
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({ "error": "not_found_in_corpus" })),
+    )
+        .into_response()
+}
+
 /// `GET /api/theorems/{id}/dependents` — list theorems that build on
 /// this one (reverse lineage).
 ///

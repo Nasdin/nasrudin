@@ -170,4 +170,36 @@ impl PaidJobsClient {
         }
         Ok(())
     }
+
+    /// Look up whether any verified theorem in the corpus already
+    /// matches the given AC-canonical hash. Used by the paid-slice
+    /// fast path so a job whose hunch is already proved completes
+    /// in one round-trip instead of burning 96 slot-hours
+    /// re-deriving an existing theorem (e.g. researcher submits
+    /// `E = m * c^2` when the seed-elite has already proved it).
+    ///
+    /// Returns `Ok(Some(theorem_id_hex))` on hit, `Ok(None)` on
+    /// 404. Auth uses the same Bearer key as the rest of the
+    /// paid-jobs endpoints.
+    pub async fn lookup_by_ac_hash(&self, hex: &str) -> Result<Option<String>> {
+        let auth = self.auth();
+        let headers = [("authorization", auth.as_str())];
+        let (status, body) = self
+            .http
+            .get_bytes(&format!("/api/theorems/by_ac_hash/{hex}"), &headers)
+            .await
+            .context("GET by_ac_hash")?;
+        if status == 404 {
+            return Ok(None);
+        }
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("by_ac_hash lookup failed: {status}"));
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&body).context("decode by_ac_hash response")?;
+        Ok(parsed
+            .get("theorem_id_hex")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()))
+    }
 }

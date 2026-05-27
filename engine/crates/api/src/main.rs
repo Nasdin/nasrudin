@@ -1172,6 +1172,10 @@ async fn main() -> anyhow::Result<()> {
             get(handlers::theorems::lean_download),
         )
         .route("/api/theorems/recent", get(handlers::theorems::recent))
+        .route(
+            "/api/theorems/by_ac_hash/{hex}",
+            get(handlers::theorems::by_ac_hash),
+        )
         .route("/api/theorems/{id}/lineage", get(get_lineage))
         .route("/api/theorems/{id}/proof", get(get_proof))
         // Reverse lineage — list theorems whose `parents` array contains

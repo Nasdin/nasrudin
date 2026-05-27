@@ -306,6 +306,46 @@ pub async fn run_paid_slice(
         "starting paid GA slice"
     );
 
+    // Fast path: when the hunch parses cleanly to a canonical_ac_hash
+    // that ALREADY exists in the corpus, mark_proved immediately
+    // instead of burning the budget re-deriving a known theorem.
+    // Closes the gap where researcher hunches like "E = m * c^2"
+    // would loop forever even though the seed-elite proof has been
+    // in the corpus since gen 0. Best-effort: any lookup error
+    // falls through to the normal GA slice (no regression).
+    if let Some(target) = target_hash {
+        let hex_hash = hex::encode(target);
+        match client.lookup_by_ac_hash(&hex_hash).await {
+            Ok(Some(theorem_id_hex)) => {
+                tracing::info!(
+                    %job_id,
+                    theorem_id_hex,
+                    "paid slice fast-path: target canonical already in corpus, marking proved without GA work"
+                );
+                if let Err(e) = client
+                    .mark_proved(
+                        job_id,
+                        &MarkProvedBody {
+                            theorem_id_hex: theorem_id_hex.clone(),
+                            statement_latex: Some(job.hunch.clone()),
+                        },
+                    )
+                    .await
+                {
+                    tracing::warn!(%job_id, error = %e, "fast-path mark_proved failed; falling through to GA slice");
+                } else {
+                    return Ok(());
+                }
+            }
+            Ok(None) => {
+                // Hunch is novel — proceed with the GA slice as normal.
+            }
+            Err(e) => {
+                tracing::debug!(%job_id, error = %e, "by_ac_hash lookup failed; proceeding with GA slice");
+            }
+        }
+    }
+
     loop {
         // Run one short chunk under the slice's config.
         let mut chunk_cfg = base_config.clone();
