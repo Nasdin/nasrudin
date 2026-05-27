@@ -91,6 +91,27 @@ function tierStyle(tier: SponsorTier | string | null): {
   }
 }
 
+/// Renders the profile head's tier pill, sourced from `/api/billing/me`'s
+/// `plan_tier`. Previously hardcoded to "★ Researcher" — a free-tier
+/// user saw the paid badge while the BillingCard's "Plan: Free" line
+/// said the opposite. Free returns null (no pill); paid tiers get a
+/// labelled pill so the badge and the plan line always agree.
+function tierPillForPlan(planTier: string) {
+  switch (planTier) {
+    case 'researcher':
+      return <div className="tier-pill">★ Researcher</div>;
+    case 'institution':
+      return <div className="tier-pill">★ Institution</div>;
+    case 'enterprise':
+      return <div className="tier-pill">★ Enterprise</div>;
+    case 'platform':
+      return null;
+    case 'free':
+    default:
+      return null;
+  }
+}
+
 function fmtUsd(cents: number): string {
   const dollars = cents / 100;
   if (dollars >= 100) return `$${Math.round(dollars).toLocaleString()}`;
@@ -165,6 +186,10 @@ function ProfilePage() {
   const { data: profile } = useMeProfile();
   const { data: myWorkers } = useMyWorkers();
   const { data: sponsorship } = useUserSponsorship(me?.id ?? null);
+  // Drives the tier pill in the profile head. Previously hardcoded to
+  // "★ Researcher" for everyone, so a free-tier user saw the paid
+  // badge while the "Plan: Free" line below said the opposite.
+  const { data: billing } = useBillingMe();
   const logout = useLogout();
 
   if (isPending)
@@ -221,7 +246,7 @@ function ProfilePage() {
             )}
           </div>
           <div className="profile-tier">
-            <div className="tier-pill">★ Researcher</div>
+            {tierPillForPlan(billing?.plan_tier ?? 'free')}
             <div style={{ marginTop: 12, fontSize: 12, color: 'var(--ink-500)' }}>
               Member since {new Date(me.created_at).toLocaleDateString()}
             </div>
