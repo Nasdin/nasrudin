@@ -98,9 +98,17 @@ const ALWAYS_KEEP_AXIOMS: &[&str] = &[
 ];
 
 /// Per-chunk generation count. Small chunks keep heartbeat granularity
-/// high without GA overhead (each chunk is ~few seconds of work on a
-/// 32-pop, 10-gen chunk).
-const GENS_PER_CHUNK: usize = 10;
+/// high without GA overhead. Dropped from 10 → 3 in v0.2.1 because
+/// the elaborator-backed Lean verify per candidate can take many
+/// minutes on a worst-case nlinarith search; with 10 gens a single
+/// slow chain stalled the inline heartbeat past the lease window
+/// and the server reaper released the job back to queued. Worker
+/// kept grinding with a stale lease but no progress was visible
+/// server-side. 3 gens × 32 pop ≈ 96 candidates per chunk = ~0.3 s
+/// best case, leaves plenty of room for one slow chain inside the
+/// 30-min lease window (raised from 5 min on the server side in the
+/// same release). See task #41.
+const GENS_PER_CHUNK: usize = 3;
 
 /// Walk an `Expr` and collect every `Var(name)`. Used by the axiom-
 /// subsetting pass to find which identifiers the user's hunch

@@ -190,7 +190,7 @@ pub async fn claim_next(
         UPDATE conjecture_jobs
         SET claimed_by = $1,
             claimed_at = NOW(),
-            lease_expires_at = NOW() + INTERVAL '5 minutes',
+            lease_expires_at = NOW() + INTERVAL '30 minutes',
             last_heartbeat_at = NOW(),
             state = 'Running'
         WHERE id = (
@@ -238,7 +238,7 @@ pub async fn update_heartbeat_progress(
         r#"
         UPDATE conjecture_jobs
         SET last_heartbeat_at = NOW(),
-            lease_expires_at = NOW() + INTERVAL '5 minutes',
+            lease_expires_at = NOW() + INTERVAL '30 minutes',
             candidates_attempted = $3,
             candidates_verified = $4
         WHERE id = $1 AND claimed_by = $2 AND state = 'Running'
@@ -270,7 +270,7 @@ pub async fn append_verified_theorem(
         SET verified_theorem_ids = COALESCE(verified_theorem_ids, ARRAY[]::BYTEA[]) || ARRAY[$3::BYTEA],
             candidates_verified = candidates_verified + 1,
             last_heartbeat_at = NOW(),
-            lease_expires_at = NOW() + INTERVAL '5 minutes'
+            lease_expires_at = NOW() + INTERVAL '30 minutes'
         WHERE id = $1 AND claimed_by = $2 AND state = 'Running'
         "#,
         [id.into(), worker_id.into(), theorem_id.into()],
@@ -391,7 +391,7 @@ pub async fn atomic_claim_paid(
         UPDATE conjecture_jobs SET
             claimed_by = $1,
             claimed_at = NOW(),
-            lease_expires_at = NOW() + INTERVAL '5 minutes',
+            lease_expires_at = NOW() + INTERVAL '30 minutes',
             last_heartbeat_at = NOW(),
             state = 'claimed',
             allocated_slots = $2
@@ -463,7 +463,7 @@ pub async fn heartbeat_paid(
         DatabaseBackend::Postgres,
         r#"UPDATE conjecture_jobs SET
             last_heartbeat_at = NOW(),
-            lease_expires_at = NOW() + INTERVAL '5 minutes',
+            lease_expires_at = NOW() + INTERVAL '30 minutes',
             state = 'running',
             candidates_attempted = candidates_attempted + $2,
             candidates_verified = candidates_verified + $3,
