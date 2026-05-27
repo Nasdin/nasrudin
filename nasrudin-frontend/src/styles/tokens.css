@@ -18,6 +18,14 @@
      Named for warmth & place. All earthy, all from nature.           */
 
   /* Cream / paper — our base canvas. Pages feel like parchment. */
+  --paper-0:   #FFFFFF;  /* card / chip lifted above the cream — must
+                            stay pure white because 14+ search-page
+                            and form-builder rules use it both as
+                            a background AND inverse text colour
+                            (active tab pill text = paper-0 on
+                            ink-900). When unset, those tabs render
+                            black-on-black because the var() falls
+                            through to currentColor. */
   --paper-50:  #FBF7EF;  /* lightest — app bg */
   --paper-100: #F5EFE2;  /* card bg on dark surfaces, secondary bg */
   --paper-200: #EADFC9;  /* dividers, rules, faint panels */

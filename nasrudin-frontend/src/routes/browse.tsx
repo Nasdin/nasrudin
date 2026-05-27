@@ -1,6 +1,6 @@
 import { infiniteQueryOptions, useInfiniteQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useRef, useState } from 'react';
 import { FacetSidebar } from '~/components/browse/FacetSidebar';
 import { ResultCard } from '~/components/browse/ResultCard';
@@ -56,15 +56,20 @@ function BrowsePage() {
   const counts = useDomains();
   const list = useInfiniteQuery(browseInfiniteOptions(domain, includeRejected));
 
+  // The virtualizer attaches to the window, not an inner div, so the
+  // user scrolls the whole page — sidebar sticks, results flow under
+  // the header, no double-scroll trap. parentRef anchors the
+  // translate offset (virtualizer needs to know where the list starts
+  // in document space).
   const parentRef = useRef<HTMLDivElement>(null);
   const theorems = list.data?.pages.flatMap((p) => p.theorems) ?? [];
   // First page carries the capped total — use it for the page-head
   // count even after subsequent pages have loaded.
   const total = list.data?.pages[0]?.total ?? 0;
 
-  const virtualizer = useVirtualizer({
+  const virtualizer = useWindowVirtualizer({
     count: theorems.length,
-    getScrollElement: () => parentRef.current,
+    scrollMargin: parentRef.current?.offsetTop ?? 0,
     // Imported-from-PhysLean rows render with: theorem name + qualified
     // path + statement preview + id + meta + contributor. That's 6 lines
     // of text plus padding; the original 120 only fit the GA-discovered
@@ -143,13 +148,7 @@ function BrowsePage() {
               </div>
               {list.isPending && <p style={{ color: 'var(--ink-500)' }}>loading…</p>}
               {!list.isPending && theorems.length > 0 && (
-                <div
-                  ref={parentRef}
-                  style={{
-                    height: 'calc(100vh - 300px)',
-                    overflow: 'auto',
-                  }}
-                >
+                <div ref={parentRef}>
                   <div
                     style={{
                       height: `${virtualizer.getTotalSize()}px`,
@@ -160,6 +159,12 @@ function BrowsePage() {
                     {virtualizer.getVirtualItems().map((virtualItem) => {
                       const theorem = theorems[virtualItem.index];
                       if (!theorem) return null;
+                      // Subtract scrollMargin (= parentRef.offsetTop) so
+                      // rows line up under the header instead of at the
+                      // very top of the document. translateY is relative
+                      // to the parentRef's own coordinate space.
+                      const top =
+                        virtualItem.start - (virtualizer.options.scrollMargin ?? 0);
                       return (
                         <div
                           key={bytesToHex(theorem.id)}
@@ -168,7 +173,7 @@ function BrowsePage() {
                             top: 0,
                             left: 0,
                             width: '100%',
-                            transform: `translateY(${virtualItem.start}px)`,
+                            transform: `translateY(${top}px)`,
                           }}
                         >
                           <ResultCard thm={theorem} />

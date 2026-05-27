@@ -37,7 +37,15 @@ export function FacetSidebar({
   onChange: (d: Domain | null) => void;
 }) {
   return (
-    <aside>
+    <aside
+      style={{
+        position: 'sticky',
+        top: 24,
+        alignSelf: 'start',
+        maxHeight: 'calc(100vh - 48px)',
+        overflowY: 'auto',
+      }}
+    >
       <div className="facet-group">
         <h5>Domain</h5>
         <ul className="facet-list">
