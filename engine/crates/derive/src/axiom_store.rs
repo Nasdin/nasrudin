@@ -604,6 +604,24 @@ impl AxiomStore {
         // top-level object key by key. Future work if first-boot
         // memory ever becomes a concern; the meta-key short-circuit
         // makes this a pay-once cost.)
+        // If we're (re-)hydrating, the cold tier may already hold
+        // entries indexed under a stale domain rule set. Wipe them
+        // before re-streaming so `CF_CORPUS_DOMAIN` only carries the
+        // current `{domain}|{name}` keys. The check uses the
+        // pre-version-bump `count()` because `is_hydrated()` is
+        // already `false` by the time the boot path calls us. We
+        // skip the wipe when the cold tier is empty (first boot —
+        // nothing to delete, nothing to corrupt).
+        let stale = cold.count().unwrap_or(0);
+        if stale > 0 {
+            tracing::warn!(
+                stale,
+                "Cold-tier had {stale} stale entries — wiping before re-hydration"
+            );
+            cold.wipe_for_rehydration()
+                .map_err(|e| anyhow::anyhow!("wipe cold tier for rehydration: {e}"))?;
+        }
+
         let f = std::fs::File::open(corpus_path)?;
         let reader = std::io::BufReader::new(f);
         let mut deser = serde_json::Deserializer::from_reader(reader);
@@ -962,22 +980,21 @@ impl AxiomStore {
 /// math-corpus, cold tier) — same wire shape, same parse rules.
 fn parse_catalog_theorem(thm: &serde_json::Value, ast_count: &mut usize) -> Axiom {
     let name = thm.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
-    let domain_str = thm.get("domain").and_then(|d| d.as_str()).unwrap_or("PureMath");
+    let physlean_name = thm.get("physlean_name").and_then(|n| n.as_str());
+    let domain_str = thm.get("domain").and_then(|d| d.as_str());
     let doc = thm
         .get("doc_string")
         .and_then(|d| d.as_str())
         .unwrap_or("")
         .to_string();
 
-    let domain = match domain_str {
-        "ClassicalMechanics" => Domain::ClassicalMechanics,
-        "SpecialRelativity" => Domain::SpecialRelativity,
-        "Electromagnetism" => Domain::Electromagnetism,
-        "QuantumMechanics" => Domain::QuantumMechanics,
-        "Thermodynamics" => Domain::Thermodynamics,
-        "StatisticalMechanics" => Domain::StatisticalMechanics,
-        _ => Domain::PureMath,
-    };
+    // Re-classify the domain locally rather than trusting the JSON
+    // tag. The Lean `DomainTagger` only recognises `PhysLean.<Area>`
+    // prefixes; flat-namespace PhysLean entries (e.g.
+    // `ClassicalMechanics.HarmonicOscillator.k_pos`,
+    // `Cosmology.FLRW.FriedmannEquation.foo`) leaked through as
+    // `PureMath`. See `crate::domain_tagger` for the full prefix list.
+    let domain = crate::domain_tagger::resolve_domain(physlean_name, name, domain_str);
 
     // Prefer the structured `expr_ast` field (emitted by the
     // updated PhysLean extractor); fall back to a `Var`
@@ -1089,6 +1106,11 @@ mod tests {
         }
         fn finish_hydration(&self, _total: u64) -> anyhow::Result<()> {
             *self.hydrated.lock().unwrap() = true;
+            Ok(())
+        }
+        fn wipe_for_rehydration(&self) -> anyhow::Result<()> {
+            self.axioms.lock().unwrap().clear();
+            *self.hydrated.lock().unwrap() = false;
             Ok(())
         }
         fn snapshot_names(&self) -> anyhow::Result<Vec<String>> {

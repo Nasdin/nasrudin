@@ -210,17 +210,19 @@ pub async fn ensure_platform_targets(pg: &DatabaseConnection) {
     let mut skipped = 0usize;
 
     for target in targets {
-        // Existence check: any non-terminal platform row for this
-        // hunch counts as "already enqueued." Terminal rows (proved /
-        // budget_exhausted / cancelled) mean the hunt was completed
-        // or abandoned and we DON'T re-enqueue automatically — that's
-        // the steerer-proposed-target path's job.
+        // Existence check: any in-flight OR completed platform row for
+        // this hunch counts as "don't re-seed." Without `proved` in the
+        // filter, every API reboot would re-insert a fresh queued row
+        // for already-finished targets (e.g. E=mc², which the
+        // auto-complete fast-path resolves instantly because it's
+        // already in the corpus) — producing an ever-growing pile of
+        // duplicate proved rows that visually masks all other progress.
         let existing = conjecture_jobs::Entity::find()
             .filter(conjecture_jobs::Column::Tier.eq("platform"))
             .filter(conjecture_jobs::Column::Hunch.eq(target.hunch))
             .filter(
                 conjecture_jobs::Column::State
-                    .is_in(["queued", "claimed", "running"]),
+                    .is_in(["queued", "claimed", "running", "proved"]),
             )
             .one(pg)
             .await;

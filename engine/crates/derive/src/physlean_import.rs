@@ -325,19 +325,17 @@ fn parse_entry(thm: &serde_json::Value) -> Option<CatalogEntry> {
         .and_then(|v| v.as_str())
         .unwrap_or(&name)
         .to_string();
-    let domain_str = thm
-        .get("domain")
-        .and_then(|v| v.as_str())
-        .unwrap_or("PureMath");
-    let domain = match domain_str {
-        "ClassicalMechanics" => Domain::ClassicalMechanics,
-        "SpecialRelativity" => Domain::SpecialRelativity,
-        "Electromagnetism" => Domain::Electromagnetism,
-        "QuantumMechanics" => Domain::QuantumMechanics,
-        "Thermodynamics" => Domain::Thermodynamics,
-        "StatisticalMechanics" => Domain::StatisticalMechanics,
-        _ => Domain::PureMath,
-    };
+    let domain_str = thm.get("domain").and_then(|v| v.as_str());
+    // Re-classify locally. The JSON `domain` tag is unreliable —
+    // PhysLean's flat-namespace theorems (`ClassicalMechanics.…`,
+    // `Cosmology.…`, `FieldSpecification.…`) all leaked through as
+    // `PureMath` under the Lean `DomainTagger`'s rules. See
+    // `crate::domain_tagger` for the canonical mapping.
+    let domain = crate::domain_tagger::resolve_domain(
+        Some(physlean_name.as_str()),
+        name.as_str(),
+        domain_str,
+    );
     let doc_string = thm
         .get("doc_string")
         .and_then(|v| v.as_str())

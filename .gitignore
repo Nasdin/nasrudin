@@ -42,6 +42,10 @@ LOCK
 .tldr/
 .claude/cache/
 
+# Claude agent runtime state — per-machine, not source
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+
 .env
 physlean-extract/output/math_corpus_full.json
 # Generated artifacts produced by `just extract-physlean` /

@@ -539,12 +539,22 @@ pub fn seed_population(
             if target_idx >= pop.len() {
                 break;
             }
-            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+            // Use the canonical-caching evaluator — same reason as the
+            // run-loop's llm_chain re-injection: harvest dedup keys
+            // off `ChainIndividual.canonical`, so leaving it None
+            // silently excludes LLM seeds from the unverified
+            // submission stream even when they pass fitness gates.
+            let (fit, canonical) = crate::chain_ga::evaluate_chain_with_canonical(
                 chain,
                 store,
                 config.target.as_ref(),
             );
-            pop[target_idx] = ChainIndividual::new(chain.clone(), fit);
+            pop[target_idx] = ChainIndividual::with_cluster_and_canonical(
+                chain.clone(),
+                fit,
+                0,
+                canonical,
+            );
         }
     }
     pop
@@ -638,12 +648,24 @@ pub fn run_discovery_from_population(
         // compete on merit thereafter.
         if let Some(llm_chain) = config.llm_proposed_chains.first() {
             if offspring.len() < config.population_size {
-                let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
+                // Use the canonical-caching evaluator so the harvest
+                // path can short-circuit dedup on the LLM elite without
+                // re-running `chain.execute`. Previously this elite
+                // was constructed via the legacy `new` ctor, leaving
+                // `canonical = None`, which silently excluded it from
+                // the cheap unverified-submission stream after the
+                // harvest path switched to `ind.canonical`-based dedup.
+                let (fit, canonical) = crate::chain_ga::evaluate_chain_with_canonical(
                     llm_chain,
                     store,
                     config.target.as_ref(),
                 );
-                offspring.push(ChainIndividual::new(llm_chain.clone(), fit));
+                offspring.push(ChainIndividual::with_cluster_and_canonical(
+                    llm_chain.clone(),
+                    fit,
+                    0,
+                    canonical,
+                ));
                 report.total_candidates += 1;
             }
         }
@@ -797,16 +819,76 @@ pub fn run_discovery_from_population(
         // drain takes over.
         if config.submit_unverified_top_k > 0 {
             let mut harvested = 0usize;
+            // M3.b: lower the harvest gate. The prior gate
+            // (`novelty == 1.0 && relevance == 1.0`) required ALL five
+            // meaningfulness predicates to hit simultaneously — almost
+            // nothing in early GA chunks passes. The cluster's "0
+            // theorems in 24h" symptom traced back to this: the
+            // unverified-submission stream was effectively closed for
+            // every chunk that hadn't yet converged. The server-side
+            // chain-replay path is the final gate; a partially-
+            // meaningful Eq with novelty≥0.5 still gets kernel-checked
+            // and de-duped (`canonical_hash`) at ingest, and a
+            // genuinely trivial chain costs the server ~50µs of
+            // chain-replay before bouncing. Letting them through
+            // raises the discovery rate without compromising kernel
+            // soundness.
+            const HARVEST_NOVELTY_MIN: f64 = 0.5;
+            const HARVEST_RELEVANCE_MIN: f64 = 0.5;
             for ind in &offspring {
                 if harvested >= config.submit_unverified_top_k {
                     break;
                 }
-                if ind.fitness.novelty < 1.0 || ind.fitness.nasrudin_relevance < 1.0 {
+                if ind.fitness.novelty < HARVEST_NOVELTY_MIN
+                    || ind.fitness.nasrudin_relevance < HARVEST_RELEVANCE_MIN
+                {
                     continue;
                 }
-                let final_expr = match run_chain_for_final(&ind.chain, store) {
-                    Some(e) => e,
+                // Speed: the cached canonical from
+                // `evaluate_chain_with_canonical` skips the second
+                // `chain.execute` we used to pay here just to recompute
+                // it. The execute below populates the
+                // `DerivationContext` for `emit_lean_file` and
+                // returns the final `Expr`, so it's the *single*
+                // execute remaining in this harvest path.
+                let canonical_cached = match ind.canonical.as_ref() {
+                    Some(c) => c.clone(),
                     None => continue,
+                };
+                let canon_hash = nasrudin_core::canonical_hash(&canonical_cached);
+                // Cheap dedup checks first — both are HashSet/Arc
+                // lookups, no Expr walks. Skip the entire execute +
+                // dim check when the candidate is already known.
+                if !verified_canonicals.insert(canonical_cached.clone()) {
+                    continue;
+                }
+                if config.rejected_canonicals.contains(&canon_hash) {
+                    continue;
+                }
+                if let Some(bloom) = config.novelty_bloom.as_deref() {
+                    if bloom.check(canon_hash.as_slice()) {
+                        // Bloom-hit means "definitely-known *or* false
+                        // positive" — the HashSet was just probed
+                        // above so a positive Bloom past it is FP only
+                        // for legacy `rejected_canonicals` entries.
+                        // Skip submission either way; the catalog/
+                        // engine-memo dedup at ingest is the same
+                        // outcome and saves the server a chain-replay.
+                        continue;
+                    }
+                }
+                // Execute once — populates the context AND yields
+                // the final expression. Replaces the prior pattern
+                // (`run_chain_for_final` then a second `execute` for
+                // the emitter).
+                use nasrudin_derive::DerivationStrategy;
+                let mut ctx = nasrudin_derive::DerivationContext::new();
+                let final_expr = match ind.chain.execute(store, &mut ctx) {
+                    Ok(e) => e,
+                    Err(_) => {
+                        verified_canonicals.remove(&canonical_cached);
+                        continue;
+                    }
                 };
                 if config.dimension_hard_reject
                     && nasrudin_derive::equation_definitely_inconsistent(
@@ -815,22 +897,10 @@ pub fn run_discovery_from_population(
                     )
                 {
                     report.dim_rejected += 1;
+                    verified_canonicals.remove(&canonical_cached);
                     continue;
                 }
-                let canonical = final_expr.to_canonical();
-                if !verified_canonicals.insert(canonical.clone()) {
-                    continue;
-                }
-                let canon_hash = nasrudin_core::canonical_hash(&canonical);
-                if config.rejected_canonicals.contains(&canon_hash) {
-                    continue;
-                }
-                // Emit Lean source — no lake build, just the text.
-                let mut ctx = nasrudin_derive::DerivationContext::new();
-                use nasrudin_derive::DerivationStrategy;
-                if ind.chain.execute(store, &mut ctx).is_err() {
-                    continue;
-                }
+                let canonical = canonical_cached;
                 let theorem_name = format!("submit_gen{gen_idx}_{harvested}");
                 let module_path =
                     format!("PhysicsGenerator.Derived.SubmitGen{gen_idx}_{harvested}");

@@ -59,7 +59,21 @@ use nasrudin_rocks::ReverifyJob;
 
 /// Reject batches when the reverify queue holds more than this many jobs.
 /// Workers see 503 and back off until the drain catches up.
-const QUEUE_DEPTH_THROTTLE: usize = 200;
+///
+/// **Tuned for the discovery-rate target.** The user-set goal is
+/// ≥1 verified theorem per 6h. At a default `submit_unverified_top_k = 4`
+/// across N workers, the unverified-submission stream can briefly burst
+/// to a few hundred jobs. Bound was 200; raised to 1000 so a moderate
+/// fleet of workers doesn't trip 503s while the chain-replay drain is
+/// catching up. Override via `NASRUDIN_INGEST_QUEUE_THROTTLE` — if the
+/// drain is genuinely stuck the operator should investigate, not just
+/// raise the bound further.
+fn queue_depth_throttle() -> usize {
+    std::env::var("NASRUDIN_INGEST_QUEUE_THROTTLE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1000)
+}
 /// Hard upper bound on a submitted Lean source body (256 KiB). Anything
 /// larger almost certainly indicates a runaway emitter or worker bug.
 const MAX_LEAN_SOURCE_BYTES: usize = 256 * 1024;
@@ -176,7 +190,7 @@ pub async fn ingest(
     }
 
     // === Global queue depth throttle ===
-    if state.db.reverify_queue_depth().unwrap_or(0) > QUEUE_DEPTH_THROTTLE {
+    if state.db.reverify_queue_depth().unwrap_or(0) > queue_depth_throttle() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": "queue_full" })),

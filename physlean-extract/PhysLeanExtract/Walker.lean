@@ -53,20 +53,82 @@ structure ExtractedType where
 
 /-- PhysLean-side namespace prefixes (PhysLean opens these via
     `namespace`/`open` so definitions appear under these prefixes
-    rather than under `PhysLean.*`). -/
+    rather than under `PhysLean.*`).
+
+    Kept in sync with `DomainTagger.tagDomain` and the Rust-side
+    `nasrudin_derive::domain_tagger`. Whenever you add a new
+    physics-namespace prefix here you should also tag it there so
+    extracted entries get classified instead of falling into
+    `Unknown`. -/
 private def physLeanTopNamespaces : List String :=
-  [ "PhysLean."
+  [ -- Top-level PhysLean module path
+    "PhysLean."
+    -- Special relativity
   , "Lorentz."
   , "LorentzGroup."
   , "SpaceTime."
-  , "Electromagnetism."
+  , "Spacetime."
   , "minkowskiMatrix."
   , "complexLorentzTensor."
   , "realLorentzTensor."
-  , "Fermion."
-  , "Higgs."
-  , "StandardModel."
   , "CliffordAlgebra."
+  , "Space."
+    -- General relativity / cosmology
+  , "Cosmology."
+  , "FLRW."
+  , "FriedmannEquation."
+  , "GeneralRelativity."
+    -- Classical mechanics
+  , "ClassicalMechanics."
+  , "HarmonicOscillator."
+  , "Pendulum."
+  , "RigidBody."
+  , "Scattering."
+  , "WaveEquation."
+  , "Vibrations."
+    -- Electromagnetism
+  , "Electromagnetism."
+    -- Optics
+  , "Optics."
+    -- Thermodynamics
+  , "Thermodynamics."
+  , "Temperature."
+  , "TemperatureUnit."
+  , "BlackBody."
+  , "ThermalSystem."
+  , "Entropy."
+    -- Statistical mechanics & condensed matter
+  , "StatisticalMechanics."
+  , "CondensedMatter."
+  , "TightBindingChain."
+  , "CanonicalEnsemble."
+    -- Quantum mechanics
+  , "QuantumMechanics."
+  , "InnerProductSpace."
+  , "Hilbert."
+  , "SchwartzMap."
+    -- QFT & particle physics
+  , "QFT."
+  , "QuantumFieldTheory."
+  , "FieldSpecification."
+  , "WickContraction."
+  , "TensorSpecies."
+  , "PureU1."
+  , "StandardModel."
+  , "Higgs."
+  , "Fermion."
+  , "SuperSymmetry."
+  , "FTheory."
+  , "SMRHN."
+  , "Action."
+  , "AnomalyCancellation."
+  , "BeyondTheStandardModel."
+  , "FlavorPhysics."
+  , "NeutrinoPhysics."
+  , "Particles."
+  , "StringTheory."
+    -- Fluid dynamics
+  , "FluidDynamics."
   ]
 
 /-- Default Mathlib whitelist when `--whitelist=` includes the magic

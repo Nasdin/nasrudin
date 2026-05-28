@@ -25,6 +25,7 @@ pub mod chain;
 pub mod context;
 pub mod derivation;
 pub mod dimension_checker;
+pub mod domain_tagger;
 pub mod error;
 pub mod headline_registry;
 pub mod lean_emitter;

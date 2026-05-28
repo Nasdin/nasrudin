@@ -120,8 +120,25 @@ async fn main() {
         );
         eprintln!("  and may produce cascade-rejects on bogus chains.");
     }
+    // Default to 4 unverified candidates per gen, regardless of whether
+    // local Lake verification is on. The server-side chain-replay
+    // drain handles fast verification (microseconds via the
+    // pre-loaded Mathlib elaborator) and the lake-promotion drain
+    // handles kernel confirmation lazily. Decoupling the two means a
+    // worker can emit cheap discoveries while ALSO running the slow
+    // local-Lake path on its top-fitness picks — they no longer
+    // compete for the same budget. Local lake stays the verification
+    // backbone for "definitely-kernel-checked" status; the unverified
+    // stream feeds the discovery rate at 50–100× the per-chunk
+    // throughput. Override with `--submit-top-k 0` or
+    // `NASRUDIN_SUBMIT_TOP_K=0` for the legacy "lake-only emit" mode.
     let submit_top_k: usize = arg_value(&args, "--submit-top-k")
-        .unwrap_or(if no_local_lake { 4 } else { 0 });
+        .or_else(|| {
+            std::env::var("NASRUDIN_SUBMIT_TOP_K")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+        })
+        .unwrap_or(4);
     let prover_root: Option<PathBuf> = args
         .iter()
         .position(|a| a == "--verify")

@@ -41,6 +41,20 @@ use super::{
     compute_block_cache_bytes, domain_to_key, CF_CORPUS_AXIOM, CF_CORPUS_DOMAIN, CF_CORPUS_META,
 };
 
+/// Schema/tagger version stamped into `CF_CORPUS_META` at the end of
+/// hydration. Bumped to invalidate cold-tier data that was tagged
+/// under a stale set of domain-prefix rules.
+///
+/// History:
+/// - `"1"`: original Lean-side `DomainTagger` only (most PhysLean
+///   flat-namespace theorems wrongly tagged `PureMath`; 0
+///   ClassicalMechanics / Thermodynamics / etc).
+/// - `"2"`: Rust-side `nasrudin_derive::domain_tagger::resolve_domain`
+///   now overrides the JSON tag. Catches the full PhysLean v4.26.0
+///   namespace surface (ClassicalMechanics, Cosmology→GR,
+///   Thermodynamics, StatisticalMechanics, QFT family, etc).
+pub const CORPUS_HYDRATION_VERSION: &[u8] = b"2";
+
 /// Abstract cold-tier corpus interface used by
 /// `nasrudin_derive::AxiomStore`. The derive crate doesn't see
 /// RocksDB directly — it holds an `Arc<dyn CorpusBackend>` so unit
@@ -132,6 +146,19 @@ pub trait CorpusBackend: Send + Sync {
     /// Called by the hydrator at end-of-stream so subsequent boots
     /// short-circuit the JSON parse.
     fn finish_hydration(&self, total: u64) -> Result<()>;
+
+    /// Delete every row in `CF_CORPUS_AXIOM` and `CF_CORPUS_DOMAIN`
+    /// (and clear the relevant meta keys) to prepare for a fresh
+    /// re-hydration. Used when `CORPUS_HYDRATION_VERSION` bumps and
+    /// the stored data is tagged under a stale rule set.
+    ///
+    /// **Why this exists:** `put`/`put_many` only write the new
+    /// `{new_domain}|{name}` key into `CF_CORPUS_DOMAIN`. If the
+    /// same `name` previously had a different domain, the old
+    /// `{old_domain}|{name}` row sticks around and pollutes
+    /// `iter_by_domain` queries. A clean wipe before re-hydration
+    /// guarantees the index reflects only the current tags.
+    fn wipe_for_rehydration(&self) -> Result<()>;
 
     /// Snapshot every axiom name into a `Vec<String>`. Used by the
     /// AxiomStore's mutation hot path: `store.iter().choose(rng)` on
@@ -371,11 +398,36 @@ impl CorpusBackend for CorpusDb {
             .db
             .cf_handle(CF_CORPUS_META)
             .context("Missing corpus_meta CF")?;
-        Ok(self
+        let hydrated_at = self
             .db
             .get_cf(&cf, b"hydrated_at")
-            .context("get corpus_meta hydrated_at")?
-            .is_some())
+            .context("get corpus_meta hydrated_at")?;
+        if hydrated_at.is_none() {
+            return Ok(false);
+        }
+        // Version check — re-hydrate if the stored schema/tagger
+        // version is older than what this binary expects. See
+        // `CORPUS_HYDRATION_VERSION` for the changelog.
+        let version = self
+            .db
+            .get_cf(&cf, b"version")
+            .context("get corpus_meta version")?;
+        match version {
+            Some(v) if v.as_slice() == CORPUS_HYDRATION_VERSION => Ok(true),
+            other => {
+                let observed = other
+                    .as_ref()
+                    .and_then(|v| std::str::from_utf8(v).ok())
+                    .unwrap_or("<none>");
+                let expected = std::str::from_utf8(CORPUS_HYDRATION_VERSION).unwrap_or("?");
+                tracing::warn!(
+                    observed,
+                    expected,
+                    "Cold-tier corpus version mismatch — re-hydration required"
+                );
+                Ok(false)
+            }
+        }
     }
 
     fn put(&self, axiom: &Axiom) -> Result<()> {
@@ -477,10 +529,58 @@ impl CorpusBackend for CorpusDb {
             .put_cf(&cf, b"hydrated_at", now.as_bytes())
             .context("put corpus_meta hydrated_at")?;
         // Bump the version key so future schema migrations can
-        // detect a downlevel cold tier and re-hydrate.
+        // detect a downlevel cold tier and re-hydrate. See
+        // `CORPUS_HYDRATION_VERSION` for the changelog.
         self.db
-            .put_cf(&cf, b"version", b"1")
+            .put_cf(&cf, b"version", CORPUS_HYDRATION_VERSION)
             .context("put corpus_meta version")?;
+        Ok(())
+    }
+
+    fn wipe_for_rehydration(&self) -> Result<()> {
+        let axiom_cf = self
+            .db
+            .cf_handle(CF_CORPUS_AXIOM)
+            .context("Missing corpus_axiom CF")?;
+        let domain_cf = self
+            .db
+            .cf_handle(CF_CORPUS_DOMAIN)
+            .context("Missing corpus_domain CF")?;
+        let meta_cf = self
+            .db
+            .cf_handle(CF_CORPUS_META)
+            .context("Missing corpus_meta CF")?;
+        // Bound the empty range with the largest u8 prefix so
+        // `delete_range_cf` covers all keys (RocksDB's delete-range
+        // is `[from, to)`). Two CFs, no row-by-row iteration —
+        // O(SST-file metadata) instead of O(N).
+        let lo: [u8; 0] = [];
+        let hi: [u8; 16] = [0xFF; 16];
+        let mut batch = WriteBatch::default();
+        batch.delete_range_cf(&axiom_cf, &lo[..], &hi[..]);
+        batch.delete_range_cf(&domain_cf, &lo[..], &hi[..]);
+        // Clear meta markers so `is_hydrated()` stays `false` until
+        // `finish_hydration` re-stamps them at end-of-stream.
+        batch.delete_cf(&meta_cf, b"hydrated_at");
+        batch.delete_cf(&meta_cf, b"count");
+        batch.delete_cf(&meta_cf, b"version");
+        self.db
+            .write(batch)
+            .context("wipe corpus_axiom + corpus_domain + corpus_meta markers")?;
+        // Force a flush so the deletes hit disk before the
+        // re-hydration's writes start — otherwise a crash during
+        // re-hydration could leave a CF in a half-deleted state
+        // that the next boot reads as "live but stale".
+        self.db
+            .flush_cf(&axiom_cf)
+            .context("flush corpus_axiom after wipe")?;
+        self.db
+            .flush_cf(&domain_cf)
+            .context("flush corpus_domain after wipe")?;
+        self.db
+            .flush_cf(&meta_cf)
+            .context("flush corpus_meta after wipe")?;
+        tracing::warn!("Cold-tier corpus wiped for re-hydration under new tagger version");
         Ok(())
     }
 
