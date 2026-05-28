@@ -63,3 +63,5 @@ backups/
 # Playwright MCP scratch + per-session UX audit screenshots
 .playwright-mcp/
 audit-*.png
+# Root-level session screenshots (Claude/QA scratch — don't track)
+/*.png
