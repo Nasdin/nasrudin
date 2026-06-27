@@ -34,7 +34,7 @@ pub struct WorkerRlEpisodeRecord {
     pub reward: f64,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PolicyStats {
     pub pulls: usize,
     pub weighted_pulls: f64,
@@ -48,7 +48,7 @@ pub struct PolicyStats {
     pub latest_unix_secs: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RankedPolicy {
     pub key: String,
     pub stats: PolicyStats,
@@ -60,7 +60,7 @@ pub struct RankedPolicy {
     pub low_sample: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationSnapshot {
     pub generated_at_unix_secs: i64,
     pub episodes: usize,

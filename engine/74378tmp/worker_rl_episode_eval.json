@@ -1,0 +1,83 @@
+{
+  "generated_at_unix_secs": 1782571840,
+  "episodes": 1,
+  "domains": [
+    "qm"
+  ],
+  "targets": [
+    "qm_planck_einstein"
+  ],
+  "latest_unix_secs": 1782571840,
+  "half_life_hours": 168.0,
+  "min_pulls": 3,
+  "ga_policies": [
+    {
+      "key": "steady_verify",
+      "stats": {
+        "pulls": 1,
+        "weighted_pulls": 1.0,
+        "reward_sum": 1.0,
+        "weighted_reward_sum": 1.0,
+        "lake_attempts": 1,
+        "lake_passed": 1,
+        "verified_chunks": 1,
+        "verified_count": 1,
+        "replay_uses": 0,
+        "latest_unix_secs": 1782571840
+      },
+      "mean_reward": 1.0,
+      "weighted_mean_reward": 1.0,
+      "ucb_score": 2.177410022515475,
+      "conservative_score": -0.17741002251547466,
+      "lake_pass_rate": 1.0,
+      "low_sample": true
+    }
+  ],
+  "target_selector_policies": [
+    {
+      "key": "verifier_ucb",
+      "stats": {
+        "pulls": 1,
+        "weighted_pulls": 1.0,
+        "reward_sum": 1.0,
+        "weighted_reward_sum": 1.0,
+        "lake_attempts": 1,
+        "lake_passed": 1,
+        "verified_chunks": 1,
+        "verified_count": 1,
+        "replay_uses": 0,
+        "latest_unix_secs": 1782571840
+      },
+      "mean_reward": 1.0,
+      "weighted_mean_reward": 1.0,
+      "ucb_score": 2.177410022515475,
+      "conservative_score": -0.17741002251547466,
+      "lake_pass_rate": 1.0,
+      "low_sample": true
+    }
+  ],
+  "strategy_genomes": [],
+  "domain_targets": [
+    {
+      "key": "qm:qm_planck_einstein",
+      "stats": {
+        "pulls": 1,
+        "weighted_pulls": 1.0,
+        "reward_sum": 1.0,
+        "weighted_reward_sum": 1.0,
+        "lake_attempts": 1,
+        "lake_passed": 1,
+        "verified_chunks": 1,
+        "verified_count": 1,
+        "replay_uses": 0,
+        "latest_unix_secs": 1782571840
+      },
+      "mean_reward": 1.0,
+      "weighted_mean_reward": 1.0,
+      "ucb_score": 2.177410022515475,
+      "conservative_score": -0.17741002251547466,
+      "lake_pass_rate": 1.0,
+      "low_sample": true
+    }
+  ]
+}

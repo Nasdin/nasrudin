@@ -251,6 +251,7 @@ fn compact_cluster_summary_for_llm(value: &serde_json::Value) -> serde_json::Val
                 "verified_count",
                 "lake_attempts",
                 "lake_passed",
+                "rl_policy_evidence",
                 "target_progress",
                 "novelty",
                 "generation",
@@ -367,6 +368,7 @@ fn keep_cluster_evidence_key(key: &str) -> bool {
         "unique",
         "generation",
         "operator",
+        "policy",
         "mutation",
         "qd",
         "archive",
@@ -428,7 +430,7 @@ pub fn build_prompt(
         "cluster_summaries": cluster_summaries_compact,
         "cluster_summary_compaction": {
             "policy": "lossy evidence condenser",
-            "kept": "domain/cluster ids, fitness/reward, verifier, target progress, novelty, QD, mutation/operator stats",
+            "kept": "domain/cluster ids, fitness/reward, verifier, target progress, novelty, QD, mutation/operator stats, compact RL policy evidence",
             "dropped": "raw populations, example chains, Lean source, stdout/stderr/log blobs",
             "max_summary_bytes": COMPACT_MAX_SUMMARY_BYTES
         },
@@ -441,6 +443,14 @@ pub fn build_prompt(
             from the cluster_summaries above. The bandit (not you) chose \
             k_per_island_next; cross-reference bandit_state to understand \
             why. \
+            \n\nRL/GA division of labor: cluster_summaries may contain \
+            `rl_policy_evidence` from the local worker episode evaluator. \
+            Treat it as condensed evidence about which GA workhorse and \
+            target-selector policies are paying off. Do not request raw logs, \
+            populations, Lean source, or per-step micromanagement. Use this \
+            evidence only for sparse high-level moves: domain weights, \
+            mutation priors, atom pools, soft targets, and compact strategy \
+            genomes. The worker RL layer owns per-chunk policy choice. \
             \n\nSelf-curriculum: in_flight_targets lists targets you've \
             proposed in past cycles that are still open or proving. Inspect \
             recent verified theorems in the cycle outcomes; if any matches \
@@ -577,6 +587,12 @@ mod tests {
             "lake_passed": 1,
             "target_progress": 0.75,
             "mutation_operator_stats": { "append_productive_suffix": { "pulls": 9, "reward": 1.2 } },
+            "rl_policy_evidence": {
+                "ga_policy": "lake_focus",
+                "ga_policy_conservative_score": 0.81,
+                "ga_policy_lake_pass_rate": 0.50,
+                "target_selector_policy": "verifier_ucb"
+            },
             "example_chains": [{ "kind": "IntroduceAxiom", "axiom_name": "huge" }],
             "lean_source": "theorem huge := by sorry",
             "stderr": "x".repeat(5000),
@@ -597,6 +613,11 @@ mod tests {
         assert!(p.contains("lake_passed"));
         assert!(p.contains("target_progress"));
         assert!(p.contains("append_productive_suffix"));
+        assert!(p.contains("rl_policy_evidence"));
+        assert!(p.contains("lake_focus"));
+        assert!(p.contains("ga_policy_conservative_score"));
+        assert!(p.contains("RL/GA division of labor"));
+        assert!(p.contains("The worker RL layer owns per-chunk policy choice"));
         assert!(!p.contains("example_chains"));
         assert!(!p.contains("theorem huge"));
         assert!(!p.contains("\"stderr\""));

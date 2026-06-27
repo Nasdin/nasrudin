@@ -302,6 +302,13 @@ fn worker_rl_episode_eval_min_pulls() -> usize {
         .unwrap_or(3)
 }
 
+fn worker_rl_episode_log_max_lines() -> usize {
+    std::env::var("NASRUDIN_RL_EPISODE_LOG_MAX_LINES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100_000)
+}
+
 fn path_modified_unix_secs(path: &Path) -> Option<i64> {
     let modified = std::fs::metadata(path).ok()?.modified().ok()?;
     let duration = modified
@@ -334,7 +341,16 @@ fn maybe_refresh_worker_rl_episode_eval(
         worker_rl_episode_eval_min_pulls(),
         now_unix_secs,
     )?;
+    compact_worker_rl_episode_log(episode_path, worker_rl_episode_log_max_lines())?;
     Ok(Some(snapshot))
+}
+
+fn load_worker_rl_episode_eval(
+    worker_rl_state_path: &Path,
+) -> Option<nasrudin_ga::rl_episode_eval::EvaluationSnapshot> {
+    let path = worker_rl_episode_eval_path(worker_rl_state_path);
+    let body = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&body).ok()
 }
 
 fn append_worker_rl_episode(path: &Path, episode: &WorkerRlEpisode) -> anyhow::Result<()> {
@@ -348,6 +364,33 @@ fn append_worker_rl_episode(path: &Path, episode: &WorkerRlEpisode) -> anyhow::R
     serde_json::to_writer(&mut file, episode)?;
     use std::io::Write;
     file.write_all(b"\n")?;
+    Ok(())
+}
+
+fn compact_worker_rl_episode_log(path: &Path, max_lines: usize) -> anyhow::Result<()> {
+    if max_lines == 0 || !path.exists() {
+        return Ok(());
+    }
+    let body = std::fs::read_to_string(path)?;
+    let lines: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if lines.len() <= max_lines {
+        return Ok(());
+    }
+    let keep_from = lines.len().saturating_sub(max_lines);
+    let tmp_path = path.with_extension("jsonl.tmp");
+    {
+        let mut file = std::fs::File::create(&tmp_path)?;
+        for line in &lines[keep_from..] {
+            use std::io::Write;
+            file.write_all(line.as_bytes())?;
+            file.write_all(b"\n")?;
+        }
+        file.sync_all()?;
+    }
+    std::fs::rename(tmp_path, path)?;
     Ok(())
 }
 
@@ -542,12 +585,34 @@ fn strategy_genome_evo_sigma(stats: &StrategyGenomeStats) -> f64 {
     }
 }
 
-fn strategy_genome_select_weight(stats: Option<&StrategyGenomeStats>) -> f64 {
+fn strategy_genome_eval_prior(
+    fingerprint: &str,
+    eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
+) -> Option<f64> {
+    let snapshot = eval_snapshot?;
+    snapshot
+        .strategy_genomes
+        .iter()
+        .find(|row| row.key == fingerprint)
+        .map(|row| {
+            let score = if row.low_sample {
+                row.weighted_mean_reward
+            } else {
+                row.conservative_score
+            };
+            (0.5 + score).clamp(0.25, 1.75)
+        })
+}
+
+fn strategy_genome_select_weight(
+    stats: Option<&StrategyGenomeStats>,
+    eval_prior: Option<f64>,
+) -> f64 {
     let Some(stats) = stats else {
-        return 1.0;
+        return eval_prior.unwrap_or(1.0).clamp(0.25, 1.75);
     };
     if stats.pulls == 0 {
-        return 1.0;
+        return eval_prior.unwrap_or(1.0).clamp(0.25, 1.75);
     }
     let reward_weight = strategy_genome_weight(Some(stats));
     let mean = strategy_genome_evo_mean(stats);
@@ -561,7 +626,12 @@ fn strategy_genome_select_weight(stats: Option<&StrategyGenomeStats>) -> f64 {
         2 => 0.5,
         _ => -0.5,
     };
-    (0.65 * mean + 0.35 * reward_weight + perturb * sigma).clamp(0.25, 1.75)
+    let local_weight = (0.65 * mean + 0.35 * reward_weight + perturb * sigma).clamp(0.25, 1.75);
+    if let Some(eval_prior) = eval_prior {
+        (0.75 * local_weight + 0.25 * eval_prior.clamp(0.25, 1.75)).clamp(0.25, 1.75)
+    } else {
+        local_weight
+    }
 }
 
 fn strategy_genome_update(stats: &mut StrategyGenomeStats, weight: f64, reward: f64) {
@@ -668,6 +738,7 @@ fn target_selector_policy_key(domain: &str, policy: &str) -> String {
 fn select_target_selector_policy(
     domain: &str,
     stats: &std::collections::BTreeMap<String, TargetSelectorPolicyStats>,
+    eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
 ) -> &'static str {
     for policy in TARGET_SELECTOR_POLICIES {
         let key = target_selector_policy_key(domain, policy);
@@ -697,13 +768,33 @@ fn select_target_selector_policy(
                 let reward_ema = st.map(|s| s.reward_ema).unwrap_or(mean);
                 let best = st.map(|s| s.best_reward).unwrap_or(0.0);
                 let exploration = (2.0 * total / pulls).sqrt();
-                0.35 * mean + 0.45 * reward_ema + 0.20 * best + exploration
+                let eval_prior =
+                    target_selector_eval_prior(policy, eval_snapshot).unwrap_or(reward_ema);
+                0.30 * mean + 0.35 * reward_ema + 0.15 * best + 0.20 * eval_prior + exploration
             };
             score(a)
                 .partial_cmp(&score(b))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .unwrap_or("verifier_ucb")
+}
+
+fn target_selector_eval_prior(
+    policy: &str,
+    eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
+) -> Option<f64> {
+    let snapshot = eval_snapshot?;
+    snapshot
+        .target_selector_policies
+        .iter()
+        .find(|row| row.key == policy)
+        .map(|row| {
+            if row.low_sample {
+                row.weighted_mean_reward
+            } else {
+                row.conservative_score
+            }
+        })
 }
 
 fn update_target_selector_policy(stats: &mut TargetSelectorPolicyStats, reward: f64) {
@@ -735,6 +826,7 @@ fn ga_workhorse_policy_key(scope: &str, policy: &str) -> String {
 fn select_ga_workhorse_policy(
     scope: &str,
     stats: &std::collections::BTreeMap<String, GaWorkhorsePolicyStats>,
+    eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
 ) -> &'static str {
     for policy in GA_WORKHORSE_POLICIES {
         let key = ga_workhorse_policy_key(scope, policy);
@@ -764,13 +856,106 @@ fn select_ga_workhorse_policy(
                 let reward_ema = st.map(|s| s.reward_ema).unwrap_or(mean);
                 let best = st.map(|s| s.best_reward).unwrap_or(0.0);
                 let exploration = (2.0 * total / pulls).sqrt();
-                0.30 * mean + 0.50 * reward_ema + 0.20 * best + exploration
+                let eval_prior = ga_policy_eval_prior(policy, eval_snapshot).unwrap_or(reward_ema);
+                0.25 * mean + 0.40 * reward_ema + 0.15 * best + 0.20 * eval_prior + exploration
             };
             score(a)
                 .partial_cmp(&score(b))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .unwrap_or("steady_verify")
+}
+
+fn ga_policy_eval_prior(
+    policy: &str,
+    eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
+) -> Option<f64> {
+    let snapshot = eval_snapshot?;
+    snapshot
+        .ga_policies
+        .iter()
+        .find(|row| row.key == policy)
+        .map(|row| {
+            if row.low_sample {
+                row.weighted_mean_reward
+            } else {
+                row.conservative_score
+            }
+        })
+}
+
+fn rl_policy_evidence_for_cluster_report(
+    ga_policy: &str,
+    target_selector_policy: Option<&str>,
+    eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
+) -> serde_json::Value {
+    let mut evidence = serde_json::Map::new();
+    evidence.insert(
+        "ga_policy".into(),
+        serde_json::Value::String(ga_policy.into()),
+    );
+    if let Some(policy) = target_selector_policy {
+        evidence.insert(
+            "target_selector_policy".into(),
+            serde_json::Value::String(policy.into()),
+        );
+    }
+    let Some(snapshot) = eval_snapshot else {
+        return serde_json::Value::Object(evidence);
+    };
+    evidence.insert("episodes".into(), serde_json::json!(snapshot.episodes));
+    evidence.insert(
+        "latest_unix_secs".into(),
+        serde_json::json!(snapshot.latest_unix_secs),
+    );
+    if let Some(row) = snapshot.ga_policies.iter().find(|row| row.key == ga_policy) {
+        evidence.insert("ga_policy_pulls".into(), serde_json::json!(row.stats.pulls));
+        evidence.insert(
+            "ga_policy_weighted_mean_reward".into(),
+            serde_json::json!(row.weighted_mean_reward),
+        );
+        evidence.insert(
+            "ga_policy_conservative_score".into(),
+            serde_json::json!(row.conservative_score),
+        );
+        evidence.insert(
+            "ga_policy_lake_pass_rate".into(),
+            serde_json::json!(row.lake_pass_rate),
+        );
+        evidence.insert(
+            "ga_policy_low_sample".into(),
+            serde_json::json!(row.low_sample),
+        );
+    }
+    if let Some(policy) = target_selector_policy {
+        if let Some(row) = snapshot
+            .target_selector_policies
+            .iter()
+            .find(|row| row.key == policy)
+        {
+            evidence.insert(
+                "target_policy_pulls".into(),
+                serde_json::json!(row.stats.pulls),
+            );
+            evidence.insert(
+                "target_policy_weighted_mean_reward".into(),
+                serde_json::json!(row.weighted_mean_reward),
+            );
+            evidence.insert(
+                "target_policy_conservative_score".into(),
+                serde_json::json!(row.conservative_score),
+            );
+            evidence.insert(
+                "target_policy_lake_pass_rate".into(),
+                serde_json::json!(row.lake_pass_rate),
+            );
+            evidence.insert(
+                "target_policy_low_sample".into(),
+                serde_json::json!(row.low_sample),
+            );
+        }
+    }
+    serde_json::Value::Object(evidence)
 }
 
 fn update_ga_workhorse_policy(stats: &mut GaWorkhorsePolicyStats, reward: f64) {
@@ -1006,6 +1191,7 @@ fn select_auto_target<'a>(
         corpus_len,
         now_unix_secs,
         "verifier_ucb",
+        None,
     )
 }
 
@@ -1016,6 +1202,7 @@ fn select_auto_target_with_policy<'a>(
     corpus_len: usize,
     now_unix_secs: i64,
     policy: &str,
+    eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
 ) -> Option<&'a str> {
     if candidates.is_empty() {
         return None;
@@ -1031,7 +1218,13 @@ fn select_auto_target_with_policy<'a>(
         })
         .collect();
     if !unproved_featured.is_empty() {
-        return select_auto_target_from_pool(domain, unproved_featured, stats, policy);
+        return select_auto_target_from_pool(
+            domain,
+            unproved_featured,
+            stats,
+            policy,
+            eval_snapshot,
+        );
     }
     let unproved_frontier: Vec<&'a str> = candidates
         .iter()
@@ -1047,7 +1240,7 @@ fn select_auto_target_with_policy<'a>(
     if unproved_frontier.is_empty() {
         return None;
     }
-    select_auto_target_from_pool(domain, unproved_frontier, stats, policy)
+    select_auto_target_from_pool(domain, unproved_frontier, stats, policy, eval_snapshot)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1148,6 +1341,7 @@ fn select_auto_target_from_pool<'a>(
     candidates: Vec<&'a str>,
     stats: &std::collections::BTreeMap<String, TargetPortfolioStats>,
     policy: &str,
+    eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
 ) -> Option<&'a str> {
     for candidate in &candidates {
         let key = target_portfolio_key(domain, candidate);
@@ -1180,20 +1374,23 @@ fn select_auto_target_from_pool<'a>(
             let failure_streak = st.map(|s| s.failure_streak).unwrap_or(0).min(8) as f64;
             let exploration = (2.0 * total / pulls).sqrt();
             let stall_penalty = 0.07 * failure_streak;
+            let eval_prior = target_eval_prior(domain, target, eval_snapshot).unwrap_or(reward_ema);
             match policy {
                 "recent_verifier" => {
                     0.15 * mean
-                        + 0.45 * reward_ema
+                        + 0.35 * reward_ema
                         + 0.30 * lake_pass_ema
+                        + 0.10 * eval_prior
                         + 0.10 * best
                         + exploration
                         - stall_penalty
                 }
                 "novelty_seeker" => {
                     0.15 * mean
-                        + 0.25 * reward_ema
+                        + 0.20 * reward_ema
                         + 0.15 * lake_pass_ema
                         + 0.35 * novelty_ema
+                        + 0.05 * eval_prior
                         + 0.10 * best
                         + exploration
                         - stall_penalty
@@ -1201,9 +1398,10 @@ fn select_auto_target_from_pool<'a>(
                 "stall_rescue" => {
                     let rescue_bonus = 0.04 * failure_streak;
                     0.20 * mean
-                        + 0.30 * reward_ema
+                        + 0.25 * reward_ema
                         + 0.20 * lake_pass_ema
                         + 0.15 * novelty_ema
+                        + 0.05 * eval_prior
                         + 0.15 * best
                         + exploration
                         + rescue_bonus
@@ -1217,9 +1415,10 @@ fn select_auto_target_from_pool<'a>(
                     // policy meta-bandit above learns when this default scorer
                     // beats the more exploratory scorer variants.
                     0.25 * mean
-                        + 0.35 * reward_ema
+                        + 0.30 * reward_ema
                         + 0.20 * lake_pass_ema
                         + 0.10 * novelty_ema
+                        + 0.05 * eval_prior
                         + 0.10 * best
                         + exploration
                         - stall_penalty
@@ -1230,6 +1429,27 @@ fn select_auto_target_from_pool<'a>(
             .partial_cmp(&score(b))
             .unwrap_or(std::cmp::Ordering::Equal)
     })
+}
+
+fn target_eval_prior(
+    domain: &str,
+    target: &str,
+    eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
+) -> Option<f64> {
+    let snapshot = eval_snapshot?;
+    let key = format!("{domain}:{target}");
+    snapshot
+        .domain_targets
+        .iter()
+        .find(|row| row.key == key)
+        .map(|row| {
+            if row.low_sample {
+                row.weighted_mean_reward
+            } else {
+                row.conservative_score
+            }
+            .clamp(0.0, 1.0)
+        })
 }
 
 fn update_target_portfolio(
@@ -1805,6 +2025,7 @@ async fn main() {
 
     let worker_rl_state_path = worker_rl_state_path();
     let mut worker_rl_state = load_worker_rl_state(&worker_rl_state_path);
+    let mut worker_rl_eval_snapshot = load_worker_rl_episode_eval(&worker_rl_state_path);
 
     // Resolve target: --target sr_rest_energy is the canonical first POC.
     // The shape itself is *not* added to the AxiomStore — it's metadata
@@ -1828,8 +2049,11 @@ async fn main() {
         let candidates = target_candidates_for_domain(&domain);
         let target_now = now_unix_secs();
         let target_corpus_len = store.len();
-        let selector_policy =
-            select_target_selector_policy(&domain, &worker_rl_state.target_selector_policies);
+        let selector_policy = select_target_selector_policy(
+            &domain,
+            &worker_rl_state.target_selector_policies,
+            worker_rl_eval_snapshot.as_ref(),
+        );
         let curriculum = auto_target_curriculum_status(
             &domain,
             &candidates,
@@ -1852,6 +2076,7 @@ async fn main() {
             target_corpus_len,
             target_now,
             selector_policy,
+            worker_rl_eval_snapshot.as_ref(),
         ) {
             Some(name) => {
                 active_target_selector_policy = Some(selector_policy.to_string());
@@ -2569,6 +2794,7 @@ async fn main() {
         let ga_policy = select_ga_workhorse_policy(
             &worker_rl_scope_key,
             &worker_rl_state.ga_workhorse_policies,
+            worker_rl_eval_snapshot.as_ref(),
         );
         apply_ga_workhorse_policy(&mut chunk_config, ga_policy, pop, max_chain_len, max_lake);
         let active_replay_selections = replay_elite_selections(&worker_rl_scope_state);
@@ -2602,8 +2828,10 @@ async fn main() {
             let strategy_weight = if let Some(fp) =
                 nasrudin_ga::steering_knobs::strategy_genome_fingerprint(s, domain_key)
             {
-                let weight =
-                    strategy_genome_select_weight(worker_rl_scope_state.strategy_genomes.get(&fp));
+                let weight = strategy_genome_select_weight(
+                    worker_rl_scope_state.strategy_genomes.get(&fp),
+                    strategy_genome_eval_prior(&fp, worker_rl_eval_snapshot.as_ref()),
+                );
                 active_strategy_genome = Some((fp, weight));
                 weight
             } else {
@@ -3060,16 +3288,24 @@ async fn main() {
                     path = %episode_path.display(),
                     "failed to append worker RL episode"
                 );
-            } else if let Err(e) = maybe_refresh_worker_rl_episode_eval(
-                &episode_path,
-                &worker_rl_state_path,
-                now_after_chunk,
-            ) {
-                tracing::warn!(
-                    error = %e,
-                    path = %episode_path.display(),
-                    "failed to refresh worker RL episode evaluation"
-                );
+            } else {
+                match maybe_refresh_worker_rl_episode_eval(
+                    &episode_path,
+                    &worker_rl_state_path,
+                    now_after_chunk,
+                ) {
+                    Ok(Some(snapshot)) => {
+                        worker_rl_eval_snapshot = Some(snapshot);
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            path = %episode_path.display(),
+                            "failed to refresh worker RL episode evaluation"
+                        );
+                    }
+                }
             }
         }
         if !no_local_lake {
@@ -3138,12 +3374,18 @@ async fn main() {
                 n_clusters = summaries.len(),
                 "chunk clustered"
             );
+            let rl_policy_evidence = rl_policy_evidence_for_cluster_report(
+                ga_policy,
+                active_target_selector_policy.as_deref(),
+                worker_rl_eval_snapshot.as_ref(),
+            );
             if let Err(e) = post_cluster_report(
                 api_cfg_for_cluster,
                 chunk_i as i64,
                 k_for_island as i16,
                 canonical_domain,
                 &summaries,
+                &rl_policy_evidence,
             )
             .await
             {
@@ -3902,10 +4144,17 @@ async fn post_cluster_report(
     k_used: i16,
     island_domain: &str,
     summaries: &[nasrudin_ga::clustering::ClusterSummary],
+    rl_policy_evidence: &serde_json::Value,
 ) -> anyhow::Result<()> {
     let summaries_json: Vec<serde_json::Value> = summaries
         .iter()
-        .map(|s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null))
+        .map(|s| {
+            let mut value = serde_json::to_value(s).unwrap_or(serde_json::Value::Null);
+            if let serde_json::Value::Object(map) = &mut value {
+                map.insert("rl_policy_evidence".into(), rl_policy_evidence.clone());
+            }
+            value
+        })
         .collect();
     // The endpoint stores worker_id as PG UUID. Production workers
     // typically have a string identifier (e.g. "pool-worker-1"); derive
@@ -4715,6 +4964,56 @@ mod mutation_rl_state_tests {
     }
 
     #[test]
+    fn worker_rl_episode_log_compaction_keeps_newest_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("episodes.jsonl");
+        for i in 0..5 {
+            let episode = WorkerRlEpisode {
+                version: 1,
+                at_unix_secs: 200_000 + i,
+                scope_key: "domain=qm|target=qm_planck_einstein".into(),
+                domain: "qm".into(),
+                target: Some("qm_planck_einstein".into()),
+                chunk_index: i as usize,
+                chunks_total: 5,
+                corpus_len: 100,
+                target_selector_policy: Some("verifier_ucb".into()),
+                ga_policy: "steady_verify".into(),
+                strategy_genome_fingerprint: None,
+                strategy_genome_weight: None,
+                replay_canonicals: vec![],
+                population_size: 8,
+                generations: 1,
+                mutation_rate: 0.7,
+                crossover_rate: 0.6,
+                tournament_size: 3,
+                max_chain_len: 12,
+                max_lake_verifications: 1,
+                total_candidates: 8,
+                unique_executable: 1,
+                lake_attempts: 1,
+                lake_passed: 0,
+                dim_rejected: 0,
+                pre_lake_rejected: 0,
+                verified_count: 0,
+                verified_canonicals: vec![],
+                reward: i as f64,
+            };
+            append_worker_rl_episode(&path, &episode).unwrap();
+        }
+
+        compact_worker_rl_episode_log(&path, 2).unwrap();
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(first["chunk_index"], 3);
+        assert_eq!(second["chunk_index"], 4);
+    }
+
+    #[test]
     fn legacy_mutation_operator_state_loads_as_worker_rl_state() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mutation_operator_rl.json");
@@ -4926,7 +5225,52 @@ mod mutation_rl_state_tests {
             ..Default::default()
         };
 
-        assert!((strategy_genome_select_weight(Some(&stats)) - 1.33).abs() < 1e-12);
+        assert!((strategy_genome_select_weight(Some(&stats), None) - 1.33).abs() < 1e-12);
+    }
+
+    #[test]
+    fn strategy_genome_select_weight_blends_episode_eval_prior() {
+        let stats = StrategyGenomeStats {
+            pulls: 4,
+            total_reward: 2.0,
+            weight_mean: 1.2,
+            weight_sigma: 0.2,
+            ..Default::default()
+        };
+        let snapshot = nasrudin_ga::rl_episode_eval::EvaluationSnapshot {
+            generated_at_unix_secs: TEST_NOW,
+            episodes: 16,
+            domains: Default::default(),
+            targets: Default::default(),
+            latest_unix_secs: TEST_NOW,
+            half_life_hours: 168.0,
+            min_pulls: 3,
+            ga_policies: Vec::new(),
+            target_selector_policies: Vec::new(),
+            strategy_genomes: vec![nasrudin_ga::rl_episode_eval::RankedPolicy {
+                key: "genome-a".into(),
+                stats: nasrudin_ga::rl_episode_eval::PolicyStats {
+                    pulls: 8,
+                    weighted_pulls: 7.5,
+                    reward_sum: 6.0,
+                    weighted_reward_sum: 5.8,
+                    lake_attempts: 8,
+                    lake_passed: 5,
+                    ..Default::default()
+                },
+                mean_reward: 0.75,
+                weighted_mean_reward: 0.77,
+                ucb_score: 1.0,
+                conservative_score: 0.90,
+                lake_pass_rate: 0.625,
+                low_sample: false,
+            }],
+            domain_targets: Vec::new(),
+        };
+
+        let prior = strategy_genome_eval_prior("genome-a", Some(&snapshot)).unwrap();
+        assert!((prior - 1.40).abs() < 1e-12);
+        assert!((strategy_genome_select_weight(Some(&stats), Some(prior)) - 1.3475).abs() < 1e-12);
     }
 
     #[test]
@@ -5160,7 +5504,7 @@ mod mutation_rl_state_tests {
         );
 
         assert_eq!(
-            select_target_selector_policy("all", &stats),
+            select_target_selector_policy("all", &stats, None),
             "recent_verifier"
         );
     }
@@ -5192,8 +5536,65 @@ mod mutation_rl_state_tests {
         );
 
         assert_eq!(
-            select_target_selector_policy("all", &stats),
+            select_target_selector_policy("all", &stats, None),
             "novelty_seeker"
+        );
+    }
+
+    #[test]
+    fn target_selector_policy_uses_episode_eval_prior_after_exploration() {
+        let mut stats = std::collections::BTreeMap::new();
+        for policy in TARGET_SELECTOR_POLICIES {
+            stats.insert(
+                target_selector_policy_key("all", policy),
+                TargetSelectorPolicyStats {
+                    pulls: 10,
+                    total_reward: 5.0,
+                    reward_ema: 0.50,
+                    best_reward: 0.60,
+                    ..Default::default()
+                },
+            );
+        }
+        let snapshot = nasrudin_ga::rl_episode_eval::EvaluationSnapshot {
+            generated_at_unix_secs: TEST_NOW,
+            episodes: 24,
+            domains: Default::default(),
+            targets: Default::default(),
+            latest_unix_secs: TEST_NOW,
+            half_life_hours: 168.0,
+            min_pulls: 3,
+            ga_policies: Vec::new(),
+            target_selector_policies: TARGET_SELECTOR_POLICIES
+                .iter()
+                .map(|policy| nasrudin_ga::rl_episode_eval::RankedPolicy {
+                    key: (*policy).to_string(),
+                    stats: nasrudin_ga::rl_episode_eval::PolicyStats {
+                        pulls: 6,
+                        weighted_pulls: 6.0,
+                        reward_sum: 3.0,
+                        weighted_reward_sum: 3.0,
+                        ..Default::default()
+                    },
+                    mean_reward: 0.50,
+                    weighted_mean_reward: if *policy == "stall_rescue" { 1.0 } else { 0.50 },
+                    ucb_score: if *policy == "stall_rescue" { 1.2 } else { 0.70 },
+                    conservative_score: if *policy == "stall_rescue" {
+                        0.95
+                    } else {
+                        0.20
+                    },
+                    lake_pass_rate: if *policy == "stall_rescue" { 1.0 } else { 0.0 },
+                    low_sample: false,
+                })
+                .collect(),
+            strategy_genomes: Vec::new(),
+            domain_targets: Vec::new(),
+        };
+
+        assert_eq!(
+            select_target_selector_policy("all", &stats, Some(&snapshot)),
+            "stall_rescue"
         );
     }
 
@@ -5252,6 +5653,7 @@ mod mutation_rl_state_tests {
                 TEST_CORPUS_LEN,
                 TEST_NOW,
                 "novelty_seeker",
+                None,
             ),
             Some("qm_de_broglie")
         );
@@ -5263,8 +5665,90 @@ mod mutation_rl_state_tests {
                 TEST_CORPUS_LEN,
                 TEST_NOW,
                 "recent_verifier",
+                None,
             ),
             Some("qm_free_particle_dispersion")
+        );
+    }
+
+    #[test]
+    fn auto_target_selector_uses_domain_target_eval_prior_within_allowed_pool() {
+        let candidates = ["qm_free_particle_dispersion", "qm_de_broglie"];
+        let mut stats = std::collections::BTreeMap::new();
+        for target in candidates {
+            stats.insert(
+                target_portfolio_key("qm", target),
+                TargetPortfolioStats {
+                    pulls: 10,
+                    total_reward: 5.0,
+                    reward_ema: 0.50,
+                    lake_pass_ema: 0.50,
+                    novelty_ema: 0.20,
+                    best_reward: 0.60,
+                    ..Default::default()
+                },
+            );
+        }
+        let snapshot = nasrudin_ga::rl_episode_eval::EvaluationSnapshot {
+            generated_at_unix_secs: TEST_NOW,
+            episodes: 20,
+            domains: Default::default(),
+            targets: Default::default(),
+            latest_unix_secs: TEST_NOW,
+            half_life_hours: 168.0,
+            min_pulls: 3,
+            ga_policies: Vec::new(),
+            target_selector_policies: Vec::new(),
+            strategy_genomes: Vec::new(),
+            domain_targets: vec![
+                nasrudin_ga::rl_episode_eval::RankedPolicy {
+                    key: "qm:qm_free_particle_dispersion".into(),
+                    stats: nasrudin_ga::rl_episode_eval::PolicyStats {
+                        pulls: 8,
+                        weighted_pulls: 8.0,
+                        reward_sum: 3.0,
+                        weighted_reward_sum: 3.0,
+                        ..Default::default()
+                    },
+                    mean_reward: 0.38,
+                    weighted_mean_reward: 0.38,
+                    ucb_score: 0.50,
+                    conservative_score: 0.10,
+                    lake_pass_rate: 0.10,
+                    low_sample: false,
+                },
+                nasrudin_ga::rl_episode_eval::RankedPolicy {
+                    key: "qm:qm_de_broglie".into(),
+                    stats: nasrudin_ga::rl_episode_eval::PolicyStats {
+                        pulls: 8,
+                        weighted_pulls: 8.0,
+                        reward_sum: 7.2,
+                        weighted_reward_sum: 7.0,
+                        lake_attempts: 8,
+                        lake_passed: 6,
+                        ..Default::default()
+                    },
+                    mean_reward: 0.90,
+                    weighted_mean_reward: 0.88,
+                    ucb_score: 1.0,
+                    conservative_score: 0.95,
+                    lake_pass_rate: 0.75,
+                    low_sample: false,
+                },
+            ],
+        };
+
+        assert_eq!(
+            select_auto_target_with_policy(
+                "qm",
+                &candidates,
+                &stats,
+                TEST_CORPUS_LEN,
+                TEST_NOW,
+                "verifier_ucb",
+                Some(&snapshot),
+            ),
+            Some("qm_de_broglie")
         );
     }
 
@@ -5282,7 +5766,10 @@ mod mutation_rl_state_tests {
             },
         );
 
-        assert_eq!(select_ga_workhorse_policy(scope, &stats), "wide_explore");
+        assert_eq!(
+            select_ga_workhorse_policy(scope, &stats, None),
+            "wide_explore"
+        );
     }
 
     #[test]
@@ -5312,7 +5799,129 @@ mod mutation_rl_state_tests {
             },
         );
 
-        assert_eq!(select_ga_workhorse_policy(scope, &stats), "deep_recombine");
+        assert_eq!(
+            select_ga_workhorse_policy(scope, &stats, None),
+            "deep_recombine"
+        );
+    }
+
+    #[test]
+    fn ga_workhorse_policy_uses_episode_eval_prior_after_exploration() {
+        let scope = "domain=qm|target=qm_planck_einstein";
+        let mut stats = std::collections::BTreeMap::new();
+        for policy in GA_WORKHORSE_POLICIES {
+            stats.insert(
+                ga_workhorse_policy_key(scope, policy),
+                GaWorkhorsePolicyStats {
+                    pulls: 8,
+                    total_reward: 4.0,
+                    reward_ema: 0.50,
+                    best_reward: 0.60,
+                    ..Default::default()
+                },
+            );
+        }
+        let snapshot = nasrudin_ga::rl_episode_eval::EvaluationSnapshot {
+            generated_at_unix_secs: TEST_NOW,
+            episodes: 20,
+            domains: Default::default(),
+            targets: Default::default(),
+            latest_unix_secs: TEST_NOW,
+            half_life_hours: 168.0,
+            min_pulls: 3,
+            ga_policies: GA_WORKHORSE_POLICIES
+                .iter()
+                .map(|policy| nasrudin_ga::rl_episode_eval::RankedPolicy {
+                    key: (*policy).to_string(),
+                    stats: nasrudin_ga::rl_episode_eval::PolicyStats {
+                        pulls: 4,
+                        weighted_pulls: 4.0,
+                        reward_sum: 2.0,
+                        weighted_reward_sum: 2.0,
+                        ..Default::default()
+                    },
+                    mean_reward: 0.50,
+                    weighted_mean_reward: if *policy == "lake_focus" { 1.0 } else { 0.50 },
+                    ucb_score: if *policy == "lake_focus" { 1.2 } else { 0.70 },
+                    conservative_score: if *policy == "lake_focus" { 0.95 } else { 0.20 },
+                    lake_pass_rate: if *policy == "lake_focus" { 1.0 } else { 0.0 },
+                    low_sample: false,
+                })
+                .collect(),
+            target_selector_policies: Vec::new(),
+            strategy_genomes: Vec::new(),
+            domain_targets: Vec::new(),
+        };
+
+        assert_eq!(
+            select_ga_workhorse_policy(scope, &stats, Some(&snapshot)),
+            "lake_focus"
+        );
+    }
+
+    #[test]
+    fn rl_policy_evidence_for_cluster_report_is_compact() {
+        let snapshot = nasrudin_ga::rl_episode_eval::EvaluationSnapshot {
+            generated_at_unix_secs: TEST_NOW,
+            episodes: 12,
+            domains: Default::default(),
+            targets: Default::default(),
+            latest_unix_secs: TEST_NOW,
+            half_life_hours: 168.0,
+            min_pulls: 3,
+            ga_policies: vec![nasrudin_ga::rl_episode_eval::RankedPolicy {
+                key: "lake_focus".into(),
+                stats: nasrudin_ga::rl_episode_eval::PolicyStats {
+                    pulls: 6,
+                    weighted_pulls: 5.5,
+                    reward_sum: 4.2,
+                    weighted_reward_sum: 4.0,
+                    lake_attempts: 6,
+                    lake_passed: 3,
+                    ..Default::default()
+                },
+                mean_reward: 0.70,
+                weighted_mean_reward: 0.73,
+                ucb_score: 1.0,
+                conservative_score: 0.62,
+                lake_pass_rate: 0.50,
+                low_sample: false,
+            }],
+            target_selector_policies: vec![nasrudin_ga::rl_episode_eval::RankedPolicy {
+                key: "verifier_ucb".into(),
+                stats: nasrudin_ga::rl_episode_eval::PolicyStats {
+                    pulls: 7,
+                    weighted_pulls: 6.8,
+                    reward_sum: 5.0,
+                    weighted_reward_sum: 4.7,
+                    lake_attempts: 7,
+                    lake_passed: 4,
+                    ..Default::default()
+                },
+                mean_reward: 0.71,
+                weighted_mean_reward: 0.69,
+                ucb_score: 0.9,
+                conservative_score: 0.55,
+                lake_pass_rate: 0.57,
+                low_sample: false,
+            }],
+            strategy_genomes: Vec::new(),
+            domain_targets: Vec::new(),
+        };
+
+        let evidence = rl_policy_evidence_for_cluster_report(
+            "lake_focus",
+            Some("verifier_ucb"),
+            Some(&snapshot),
+        );
+
+        assert_eq!(evidence["ga_policy"], "lake_focus");
+        assert_eq!(evidence["target_selector_policy"], "verifier_ucb");
+        assert_eq!(evidence["episodes"], 12);
+        assert_eq!(evidence["ga_policy_pulls"], 6);
+        assert_eq!(evidence["ga_policy_lake_pass_rate"], 0.5);
+        assert!(evidence.get("replay_canonicals").is_none());
+        assert!(evidence.get("verified_canonicals").is_none());
     }
 
     #[test]

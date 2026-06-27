@@ -21,7 +21,7 @@
 //! further with `LLM_STEER_INTERVAL_SECONDS`.
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sea_orm::*;
 use std::sync::Arc;
 use thiserror::Error;
@@ -367,6 +367,17 @@ async fn run_one_cycle_inner(
                 "LLM strategy refresh skipped: insufficient new RL/GA evidence"
             );
             refresh_strategy = false;
+        } else if active_paid_count == 0 && llm_skip_if_rl_confident_enabled() {
+            let confident = recent_rl_policy_evidence_is_confident(db, evidence_cutoff).await;
+            if confident {
+                tracing::info!(
+                    evidence_window_secs,
+                    cluster_report_count,
+                    verified_count,
+                    "LLM strategy refresh skipped: local RL policy evidence is confident"
+                );
+                refresh_strategy = false;
+            }
         }
     }
 
@@ -999,6 +1010,131 @@ fn llm_min_verified_theorems_for_refresh() -> u64 {
         .unwrap_or(0)
 }
 
+fn llm_skip_if_rl_confident_enabled() -> bool {
+    std::env::var("LLM_STEER_SKIP_IF_RL_CONFIDENT")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn llm_rl_confident_min_reports() -> usize {
+    std::env::var("LLM_STEER_RL_CONFIDENT_MIN_REPORTS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(3)
+}
+
+fn llm_rl_confident_min_episodes() -> u64 {
+    std::env::var("LLM_STEER_RL_CONFIDENT_MIN_EPISODES")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(8)
+}
+
+fn llm_rl_confident_min_score() -> f64 {
+    std::env::var("LLM_STEER_RL_CONFIDENT_MIN_SCORE")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.45)
+}
+
+fn llm_rl_confident_min_lake_pass_rate() -> f64 {
+    std::env::var("LLM_STEER_RL_CONFIDENT_MIN_LAKE_PASS_RATE")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.25)
+}
+
+async fn recent_rl_policy_evidence_is_confident(
+    db: &sea_orm::DatabaseConnection,
+    cutoff: DateTime<Utc>,
+) -> bool {
+    let min_reports = llm_rl_confident_min_reports();
+    if min_reports == 0 {
+        return false;
+    }
+    let min_episodes = llm_rl_confident_min_episodes();
+    let min_score = llm_rl_confident_min_score();
+    let min_lake_pass_rate = llm_rl_confident_min_lake_pass_rate();
+    let mut confident_reports = 0usize;
+    for &domain in bandit::ISLAND_DOMAINS {
+        let Ok(rows) = nasrudin_pg::query::cluster_reports::recent_for_island(db, domain, 8).await
+        else {
+            continue;
+        };
+        for row in rows {
+            if row.received_at.with_timezone(&Utc) < cutoff {
+                continue;
+            }
+            if rl_policy_evidence_is_confident(
+                &row.summary,
+                min_episodes,
+                min_score,
+                min_lake_pass_rate,
+            ) {
+                confident_reports += 1;
+                if confident_reports >= min_reports {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn rl_policy_evidence_is_confident(
+    summary: &serde_json::Value,
+    min_episodes: u64,
+    min_score: f64,
+    min_lake_pass_rate: f64,
+) -> bool {
+    let Some(evidence) = summary.get("rl_policy_evidence") else {
+        return false;
+    };
+    let episodes = evidence
+        .get("episodes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_default();
+    if episodes < min_episodes {
+        return false;
+    }
+    let ga_low_sample = evidence
+        .get("ga_policy_low_sample")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let target_low_sample = evidence
+        .get("target_policy_low_sample")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    if ga_low_sample || target_low_sample {
+        return false;
+    }
+    let ga_score = evidence
+        .get("ga_policy_conservative_score")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(f64::NEG_INFINITY);
+    let target_score = evidence
+        .get("target_policy_conservative_score")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(f64::NEG_INFINITY);
+    let ga_lake = evidence
+        .get("ga_policy_lake_pass_rate")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let target_lake = evidence
+        .get("target_policy_lake_pass_rate")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    ga_score >= min_score
+        && target_score >= min_score
+        && ga_lake >= min_lake_pass_rate
+        && target_lake >= min_lake_pass_rate
+}
+
 fn strategy_refresh_has_enough_evidence(
     active_paid_count: u64,
     cluster_report_count: u64,
@@ -1126,6 +1262,54 @@ mod tests {
     #[test]
     fn evidence_gate_can_be_disabled_by_zero_cluster_report_requirement() {
         assert!(strategy_refresh_has_enough_evidence(0, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn rl_policy_evidence_confidence_accepts_sampled_productive_policy() {
+        let summary = serde_json::json!({
+            "rl_policy_evidence": {
+                "episodes": 12,
+                "ga_policy_low_sample": false,
+                "target_policy_low_sample": false,
+                "ga_policy_conservative_score": 0.70,
+                "target_policy_conservative_score": 0.62,
+                "ga_policy_lake_pass_rate": 0.40,
+                "target_policy_lake_pass_rate": 0.35
+            }
+        });
+
+        assert!(rl_policy_evidence_is_confident(&summary, 8, 0.45, 0.25));
+    }
+
+    #[test]
+    fn rl_policy_evidence_confidence_rejects_low_sample() {
+        let summary = serde_json::json!({
+            "rl_policy_evidence": {
+                "episodes": 12,
+                "ga_policy_low_sample": false,
+                "target_policy_low_sample": true,
+                "ga_policy_conservative_score": 0.70,
+                "target_policy_conservative_score": 0.62,
+                "ga_policy_lake_pass_rate": 0.40,
+                "target_policy_lake_pass_rate": 0.35
+            }
+        });
+
+        assert!(!rl_policy_evidence_is_confident(&summary, 8, 0.45, 0.25));
+    }
+
+    #[test]
+    fn rl_policy_evidence_confidence_requires_both_policy_families() {
+        let summary = serde_json::json!({
+            "rl_policy_evidence": {
+                "episodes": 12,
+                "ga_policy_low_sample": false,
+                "ga_policy_conservative_score": 0.70,
+                "ga_policy_lake_pass_rate": 0.40
+            }
+        });
+
+        assert!(!rl_policy_evidence_is_confident(&summary, 8, 0.45, 0.25));
     }
 
     #[test]
