@@ -1,0 +1,102 @@
+{
+  "version": 4,
+  "scopes": {
+    "domain=qm|target=qm_planck_einstein": {
+      "updated_at_unix_secs": 1782570218,
+      "corpus_len": 195762,
+      "mutation_operator": {
+        "pulls": [
+          2,
+          1,
+          0,
+          2,
+          0,
+          0
+        ],
+        "total_reward": [
+          1.2320379513110575,
+          0.3000000000000418,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      "qd_archive": {
+        "cells": [
+          {
+            "chain_len_bin": 0,
+            "axiom_count_bin": 0,
+            "target_progress_bin": 0,
+            "best_score": 2.5250000000000004
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 0,
+            "best_score": 4.225
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 4,
+            "best_score": 17.04
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 5.708333333333333
+          },
+          {
+            "chain_len_bin": 2,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 4,
+            "best_score": 18.9
+          },
+          {
+            "chain_len_bin": 4,
+            "axiom_count_bin": 4,
+            "target_progress_bin": 0,
+            "best_score": 9.250123685837972
+          }
+        ]
+      },
+      "strategy_genomes": {},
+      "replay_elites": []
+    }
+  },
+  "target_portfolio": {
+    "domain=qm|target=qm_planck_einstein": {
+      "pulls": 1,
+      "total_reward": 0.2,
+      "last_reward": 0.2,
+      "best_reward": 0.2,
+      "reward_ema": 0.2,
+      "lake_pass_ema": 0.0,
+      "novelty_ema": 0.125,
+      "failure_streak": 1,
+      "proved": false,
+      "last_attempt_unix_secs": 1782570218,
+      "corpus_len_at_last_attempt": 195762
+    }
+  },
+  "target_selector_policies": {
+    "domain=qm|policy=verifier_ucb": {
+      "pulls": 1,
+      "total_reward": 0.2,
+      "last_reward": 0.2,
+      "best_reward": 0.2,
+      "reward_ema": 0.2
+    }
+  },
+  "ga_workhorse_policies": {
+    "scope=domain=qm|target=qm_planck_einstein|policy=steady_verify": {
+      "pulls": 1,
+      "total_reward": 0.2,
+      "last_reward": 0.2,
+      "best_reward": 0.2,
+      "reward_ema": 0.2
+    }
+  }
+}

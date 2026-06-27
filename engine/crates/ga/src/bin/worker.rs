@@ -109,6 +109,39 @@ struct ReplayEliteSelection {
     chain: Chain,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+struct WorkerRlEpisode {
+    version: u32,
+    at_unix_secs: i64,
+    scope_key: String,
+    domain: String,
+    target: Option<String>,
+    chunk_index: usize,
+    chunks_total: usize,
+    corpus_len: usize,
+    target_selector_policy: Option<String>,
+    ga_policy: String,
+    strategy_genome_fingerprint: Option<String>,
+    strategy_genome_weight: Option<f64>,
+    replay_canonicals: Vec<String>,
+    population_size: usize,
+    generations: usize,
+    mutation_rate: f64,
+    crossover_rate: f64,
+    tournament_size: usize,
+    max_chain_len: usize,
+    max_lake_verifications: usize,
+    total_candidates: usize,
+    unique_executable: usize,
+    lake_attempts: usize,
+    lake_passed: usize,
+    dim_rejected: usize,
+    pre_lake_rejected: usize,
+    verified_count: usize,
+    verified_canonicals: Vec<String>,
+    reward: f64,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct StrategyGenomeStats {
     #[serde(default)]
@@ -211,6 +244,111 @@ fn worker_rl_state_path() -> PathBuf {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("worker_rl_state.json")
+}
+
+fn worker_rl_episode_log_enabled() -> bool {
+    std::env::var("NASRUDIN_RL_EPISODE_LOG")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn worker_rl_episode_log_path(worker_rl_state_path: &Path) -> PathBuf {
+    if let Ok(path) = std::env::var("NASRUDIN_RL_EPISODE_LOG_PATH") {
+        return PathBuf::from(path);
+    }
+    worker_rl_state_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("worker_rl_episodes.jsonl")
+}
+
+fn worker_rl_episode_eval_enabled() -> bool {
+    std::env::var("NASRUDIN_RL_EPISODE_EVAL")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn worker_rl_episode_eval_path(worker_rl_state_path: &Path) -> PathBuf {
+    if let Ok(path) = std::env::var("NASRUDIN_RL_EPISODE_EVAL_PATH") {
+        return PathBuf::from(path);
+    }
+    worker_rl_state_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("worker_rl_episode_eval.json")
+}
+
+fn worker_rl_episode_eval_interval_seconds() -> i64 {
+    std::env::var("NASRUDIN_RL_EPISODE_EVAL_INTERVAL_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1_800)
+}
+
+fn worker_rl_episode_eval_min_pulls() -> usize {
+    std::env::var("NASRUDIN_RL_EPISODE_EVAL_MIN_PULLS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3)
+}
+
+fn path_modified_unix_secs(path: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let duration = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    Some(duration.as_secs() as i64)
+}
+
+fn maybe_refresh_worker_rl_episode_eval(
+    episode_path: &Path,
+    worker_rl_state_path: &Path,
+    now_unix_secs: i64,
+) -> anyhow::Result<Option<nasrudin_ga::rl_episode_eval::EvaluationSnapshot>> {
+    if !worker_rl_episode_eval_enabled() {
+        return Ok(None);
+    }
+    let output_path = worker_rl_episode_eval_path(worker_rl_state_path);
+    let interval = worker_rl_episode_eval_interval_seconds();
+    if interval > 0 {
+        if let Some(modified) = path_modified_unix_secs(&output_path) {
+            if now_unix_secs.saturating_sub(modified) < interval {
+                return Ok(None);
+            }
+        }
+    }
+    let snapshot = nasrudin_ga::rl_episode_eval::write_evaluation_snapshot(
+        episode_path,
+        &output_path,
+        rl_half_life_hours().unwrap_or(168.0),
+        worker_rl_episode_eval_min_pulls(),
+        now_unix_secs,
+    )?;
+    Ok(Some(snapshot))
+}
+
+fn append_worker_rl_episode(path: &Path, episode: &WorkerRlEpisode) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    serde_json::to_writer(&mut file, episode)?;
+    use std::io::Write;
+    file.write_all(b"\n")?;
+    Ok(())
 }
 
 fn resolve_local_catalog_path(prover_root: Option<&Path>) -> Option<PathBuf> {
@@ -696,10 +834,7 @@ fn replay_elite_selections(scope: &WorkerRlScopeState) -> Vec<ReplayEliteSelecti
                 let pulls = elite.pulls.max(1) as f64;
                 let mean = elite.total_reward / pulls;
                 let exploration = (2.0 * total / pulls).sqrt();
-                0.30 * mean
-                    + 0.45 * elite.reward_ema
-                    + 0.15 * elite.best_reward
-                    + exploration
+                0.30 * mean + 0.45 * elite.reward_ema + 0.15 * elite.best_reward + exploration
                     - idx as f64 * 1e-6
             };
             (idx, score)
@@ -727,22 +862,23 @@ fn replay_elite_chains(scope: &WorkerRlScopeState) -> Vec<Chain> {
 
 fn update_selected_replay_elites(
     scope: &mut WorkerRlScopeState,
-    selected_canonicals: &[String],
-    reward: f64,
+    selections: &[ReplayEliteSelection],
+    report: &nasrudin_ga::chain_engine::DiscoveryReport,
+    fallback_reward: f64,
     now_unix_secs: i64,
 ) {
-    if selected_canonicals.is_empty() || !reward.is_finite() {
+    if selections.is_empty() || !fallback_reward.is_finite() {
         return;
     }
     let alpha = target_portfolio_ema_alpha();
-    for canonical in selected_canonicals {
+    for selection in selections {
         if let Some(elite) = scope
             .replay_elites
             .iter_mut()
-            .find(|elite| &elite.canonical == canonical)
+            .find(|elite| elite.canonical == selection.canonical)
         {
             let first_pull = elite.pulls == 0;
-            let r = reward.clamp(0.0, 1.0);
+            let r = replay_selection_reward(selection, report, fallback_reward);
             elite.pulls = elite.pulls.saturating_add(1);
             elite.total_reward += r;
             elite.last_reward = r;
@@ -755,6 +891,32 @@ fn update_selected_replay_elites(
             elite.last_replayed_unix_secs = now_unix_secs;
         }
     }
+}
+
+fn replay_selection_reward(
+    selection: &ReplayEliteSelection,
+    report: &nasrudin_ga::chain_engine::DiscoveryReport,
+    fallback_reward: f64,
+) -> f64 {
+    let fallback = fallback_reward.clamp(0.0, 1.0);
+    let mut reward = 0.50 * fallback;
+    for discovery in &report.verified {
+        if discovery.canonical == selection.canonical || discovery.chain.0 == selection.chain.0 {
+            reward = reward.max(1.0);
+        } else if chain_is_prefix(&selection.chain, &discovery.chain) {
+            reward = reward.max(0.90);
+        } else if !report.verified.is_empty() {
+            reward = reward.max(0.75 * fallback);
+        }
+    }
+    reward.clamp(0.0, 1.0)
+}
+
+fn chain_is_prefix(prefix: &Chain, full: &Chain) -> bool {
+    !prefix.is_empty()
+        && prefix.len() < full.len()
+        && full.0.len() >= prefix.0.len()
+        && full.0[..prefix.0.len()] == prefix.0[..]
 }
 
 fn update_replay_elites_from_verified(
@@ -780,6 +942,7 @@ fn update_replay_elites_from_verified(
                 chain: discovery.chain.0.clone(),
                 added_at_unix_secs: now_unix_secs,
                 generation: discovery.generation,
+                ..Default::default()
             },
         );
         added += 1;
@@ -2408,16 +2571,16 @@ async fn main() {
             &worker_rl_state.ga_workhorse_policies,
         );
         apply_ga_workhorse_policy(&mut chunk_config, ga_policy, pop, max_chain_len, max_lake);
-        let replay_selections = replay_elite_selections(&worker_rl_scope_state);
-        let active_replay_canonicals: Vec<String> = replay_selections
-            .iter()
-            .map(|selection| selection.canonical.clone())
-            .collect();
-        if !replay_selections.is_empty() {
-            let n = replay_selections.len();
-            chunk_config
-                .llm_proposed_chains
-                .extend(replay_selections.into_iter().map(|selection| selection.chain));
+        let active_replay_selections = replay_elite_selections(&worker_rl_scope_state);
+        if !active_replay_selections.is_empty() {
+            let n = active_replay_selections.len();
+            chunk_config.llm_proposed_chains.extend(
+                active_replay_selections
+                    .iter()
+                    .cloned()
+                    .into_iter()
+                    .map(|selection| selection.chain),
+            );
             println!(
                 "▶ chunk {} replay elites: injected {n} locally verified prioritized chain(s) from worker RL archive",
                 chunk_i + 1,
@@ -2811,13 +2974,13 @@ async fn main() {
                     initial_report,
                 )
             };
-        if let Some((fp, weight)) = active_strategy_genome {
+        if let Some((fp, weight)) = active_strategy_genome.as_ref() {
             let reward = strategy_genome_reward(&report);
             let stats = worker_rl_scope_state
                 .strategy_genomes
-                .entry(fp)
+                .entry(fp.clone())
                 .or_default();
-            strategy_genome_update(stats, weight, reward);
+            strategy_genome_update(stats, *weight, reward);
             tracing::debug!(
                 pulls = stats.pulls,
                 mean_reward = stats.total_reward / stats.pulls.max(1) as f64,
@@ -2841,11 +3004,79 @@ async fn main() {
             reward = ga_policy_reward,
             "updated GA workhorse policy stats"
         );
+        let now_after_chunk = now_unix_secs();
+        update_selected_replay_elites(
+            &mut worker_rl_scope_state,
+            &active_replay_selections,
+            &report,
+            ga_policy_reward,
+            now_after_chunk,
+        );
+        if worker_rl_episode_log_enabled() {
+            let episode = WorkerRlEpisode {
+                version: 1,
+                at_unix_secs: now_after_chunk,
+                scope_key: worker_rl_scope_key.clone(),
+                domain: domain.clone(),
+                target: target_name_for_elite.map(|s| s.to_string()),
+                chunk_index: chunk_i,
+                chunks_total: chunks,
+                corpus_len: store.len(),
+                target_selector_policy: active_target_selector_policy.clone(),
+                ga_policy: ga_policy.to_string(),
+                strategy_genome_fingerprint: active_strategy_genome
+                    .as_ref()
+                    .map(|(fp, _)| fp.clone()),
+                strategy_genome_weight: active_strategy_genome.as_ref().map(|(_, weight)| *weight),
+                replay_canonicals: active_replay_selections
+                    .iter()
+                    .map(|selection| selection.canonical.clone())
+                    .collect(),
+                population_size: chunk_config.population_size,
+                generations: chunk_config.generations,
+                mutation_rate: chunk_config.mutation_rate,
+                crossover_rate: chunk_config.crossover_rate,
+                tournament_size: chunk_config.tournament_size,
+                max_chain_len: chunk_config.max_chain_len,
+                max_lake_verifications: chunk_config.max_lake_verifications,
+                total_candidates: report.total_candidates,
+                unique_executable: report.unique_executable,
+                lake_attempts: report.lake_attempts,
+                lake_passed: report.lake_passed,
+                dim_rejected: report.dim_rejected,
+                pre_lake_rejected: report.pre_lake_rejected,
+                verified_count: report.verified.len(),
+                verified_canonicals: report
+                    .verified
+                    .iter()
+                    .map(|d| d.canonical.clone())
+                    .collect(),
+                reward: ga_policy_reward,
+            };
+            let episode_path = worker_rl_episode_log_path(&worker_rl_state_path);
+            if let Err(e) = append_worker_rl_episode(&episode_path, &episode) {
+                tracing::warn!(
+                    error = %e,
+                    path = %episode_path.display(),
+                    "failed to append worker RL episode"
+                );
+            } else if let Err(e) = maybe_refresh_worker_rl_episode_eval(
+                &episode_path,
+                &worker_rl_state_path,
+                now_after_chunk,
+            ) {
+                tracing::warn!(
+                    error = %e,
+                    path = %episode_path.display(),
+                    "failed to refresh worker RL episode evaluation"
+                );
+            }
+        }
         if !no_local_lake {
             let replay_added = update_replay_elites_from_verified(
                 &mut worker_rl_scope_state,
                 &report,
-                now_unix_secs(),
+                now_after_chunk,
             );
             if replay_added > 0 {
                 println!(
@@ -4403,6 +4634,7 @@ mod mutation_rl_state_tests {
             chain: vec![RuleStep::AlgebraicSimplify],
             added_at_unix_secs: 123,
             generation: 4,
+            ..Default::default()
         });
         state
             .scopes
@@ -4423,6 +4655,63 @@ mod mutation_rl_state_tests {
         assert!((loaded_scope.qd_archive.cells[0].best_score - 3.5).abs() < 1e-12);
         assert_eq!(loaded_scope.replay_elites.len(), 1);
         assert_eq!(loaded_scope.replay_elites[0].canonical, "x = y");
+    }
+
+    #[test]
+    fn worker_rl_episode_log_path_defaults_next_to_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_path = dir.path().join("worker_rl_state.json");
+
+        let episode_path = worker_rl_episode_log_path(&state_path);
+
+        assert_eq!(episode_path, dir.path().join("worker_rl_episodes.jsonl"));
+    }
+
+    #[test]
+    fn worker_rl_episode_log_appends_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("episodes.jsonl");
+        let episode = WorkerRlEpisode {
+            version: 1,
+            at_unix_secs: 200_000,
+            scope_key: "domain=qm|target=qm_planck_einstein".into(),
+            domain: "qm".into(),
+            target: Some("qm_planck_einstein".into()),
+            chunk_index: 0,
+            chunks_total: 1,
+            corpus_len: 100,
+            target_selector_policy: Some("verifier_ucb".into()),
+            ga_policy: "steady_verify".into(),
+            strategy_genome_fingerprint: None,
+            strategy_genome_weight: None,
+            replay_canonicals: vec!["canon-a".into()],
+            population_size: 8,
+            generations: 1,
+            mutation_rate: 0.7,
+            crossover_rate: 0.6,
+            tournament_size: 3,
+            max_chain_len: 12,
+            max_lake_verifications: 1,
+            total_candidates: 8,
+            unique_executable: 1,
+            lake_attempts: 1,
+            lake_passed: 1,
+            dim_rejected: 0,
+            pre_lake_rejected: 0,
+            verified_count: 1,
+            verified_canonicals: vec!["canon-a".into()],
+            reward: 0.86,
+        };
+
+        append_worker_rl_episode(&path, &episode).unwrap();
+        append_worker_rl_episode(&path, &episode).unwrap();
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let parsed: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(parsed["ga_policy"], "steady_verify");
+        assert_eq!(parsed["verified_count"], 1);
     }
 
     #[test]
@@ -4752,6 +5041,7 @@ mod mutation_rl_state_tests {
                 chain: vec![RuleStep::AlgebraicSimplify],
                 added_at_unix_secs: TEST_NOW + i as i64,
                 generation: i,
+                ..Default::default()
             });
         }
 
@@ -4759,6 +5049,101 @@ mod mutation_rl_state_tests {
 
         assert_eq!(chains.len(), replay_elites_per_chunk());
         assert_eq!(chains[0].0, vec![RuleStep::AlgebraicSimplify]);
+    }
+
+    #[test]
+    fn replay_elite_selection_prefers_unpulled_then_rewarded_elites() {
+        let mut scope = WorkerRlScopeState::default();
+        scope.replay_elites.push(ReplayElite {
+            canonical: "low".into(),
+            chain: vec![RuleStep::AlgebraicSimplify],
+            pulls: 10,
+            total_reward: 1.0,
+            reward_ema: 0.1,
+            best_reward: 0.2,
+            ..Default::default()
+        });
+        scope.replay_elites.push(ReplayElite {
+            canonical: "fresh".into(),
+            chain: vec![RuleStep::AlgebraicSimplify],
+            pulls: 0,
+            ..Default::default()
+        });
+        scope.replay_elites.push(ReplayElite {
+            canonical: "high".into(),
+            chain: vec![RuleStep::AlgebraicSimplify],
+            pulls: 10,
+            total_reward: 9.0,
+            reward_ema: 0.9,
+            best_reward: 1.0,
+            ..Default::default()
+        });
+
+        let selected = replay_elite_selections(&scope);
+
+        assert_eq!(selected[0].canonical, "fresh");
+        assert_eq!(selected[1].canonical, "high");
+    }
+
+    #[test]
+    fn selected_replay_elite_update_rewards_exact_verified_replay() {
+        let mut scope = WorkerRlScopeState::default();
+        scope.replay_elites.push(ReplayElite {
+            canonical: "canon-a".into(),
+            chain: vec![RuleStep::AlgebraicSimplify],
+            ..Default::default()
+        });
+        let selection = ReplayEliteSelection {
+            canonical: "canon-a".into(),
+            chain: Chain(vec![RuleStep::AlgebraicSimplify]),
+        };
+        let report = nasrudin_ga::chain_engine::DiscoveryReport {
+            verified: vec![test_verified_discovery("canon-a", 1)],
+            ..Default::default()
+        };
+
+        update_selected_replay_elites(&mut scope, &[selection], &report, 0.75, TEST_NOW);
+
+        let elite = &scope.replay_elites[0];
+        assert_eq!(elite.pulls, 1);
+        assert_eq!(elite.last_reward, 1.0);
+        assert_eq!(elite.best_reward, 1.0);
+        assert_eq!(elite.reward_ema, 1.0);
+        assert_eq!(elite.last_replayed_unix_secs, TEST_NOW);
+    }
+
+    #[test]
+    fn selected_replay_elite_update_rewards_descendant_verified_chain() {
+        let prefix = Chain(vec![RuleStep::AlgebraicSimplify]);
+        let descendant = Chain(vec![
+            RuleStep::AlgebraicSimplify,
+            RuleStep::TakePositiveRoot,
+        ]);
+        let mut scope = WorkerRlScopeState::default();
+        scope.replay_elites.push(ReplayElite {
+            canonical: "prefix".into(),
+            chain: prefix.0.clone(),
+            ..Default::default()
+        });
+        let selection = ReplayEliteSelection {
+            canonical: "prefix".into(),
+            chain: prefix,
+        };
+        let report = nasrudin_ga::chain_engine::DiscoveryReport {
+            verified: vec![VerifiedDiscovery {
+                chain: descendant,
+                final_expr: nasrudin_core::Expr::Var("x".into()),
+                canonical: "descendant".into(),
+                lean_source: String::new(),
+                module_path: String::new(),
+                generation: 2,
+            }],
+            ..Default::default()
+        };
+
+        update_selected_replay_elites(&mut scope, &[selection], &report, 0.2, TEST_NOW);
+
+        assert_eq!(scope.replay_elites[0].last_reward, 0.9);
     }
 
     #[test]

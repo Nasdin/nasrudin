@@ -23,6 +23,7 @@ pub mod paid_jobs_client;
 pub mod paid_slice;
 pub mod population;
 pub mod research_client;
+pub mod rl_episode_eval;
 pub mod selection;
 pub mod steering_knobs;
 pub mod target;
