@@ -1,0 +1,69 @@
+{
+  "version": 2,
+  "scopes": {
+    "domain=qm|target=qm_planck_einstein": {
+      "updated_at_unix_secs": 1782564709,
+      "corpus_len": 195762,
+      "mutation_operator": {
+        "pulls": [
+          1,
+          1,
+          0,
+          1,
+          2,
+          0
+        ],
+        "total_reward": [
+          0.8705528732138941,
+          0.3766134371258343,
+          0.0,
+          0.3766134371258343,
+          1.1233865628741657,
+          0.0
+        ]
+      },
+      "qd_archive": {
+        "cells": [
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 0,
+            "best_score": 4.225
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 4,
+            "best_score": 15.925
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 5.708333333333333
+          },
+          {
+            "chain_len_bin": 2,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 6.45
+          }
+        ]
+      },
+      "strategy_genomes": {}
+    }
+  },
+  "target_portfolio": {
+    "domain=qm|target=qm_planck_einstein": {
+      "pulls": 1,
+      "total_reward": 1.0,
+      "last_reward": 1.0,
+      "best_reward": 1.0,
+      "reward_ema": 1.0,
+      "lake_pass_ema": 1.0,
+      "novelty_ema": 0.125,
+      "failure_streak": 0,
+      "proved": true
+    }
+  }
+}

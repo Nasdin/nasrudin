@@ -60,10 +60,12 @@ pub struct NamingClient {
 impl NamingClient {
     /// Build the production client. The API boot path only calls this
     /// when `LLM_NAMING_ENABLED=1`; it uses `GRADIENT_API_KEY` +
-    /// `STEERER_MODEL` (default `kimi-k2.6`, matching the steerer).
+    /// `STEERER_MODEL` or `GRADIENT_GLM_MODEL_FALLBACK`.
     pub fn from_env() -> Result<Self, LlmError> {
         let provider = GradientProvider::from_env()?;
-        let model = std::env::var("STEERER_MODEL").unwrap_or_else(|_| "kimi-k2.6".into());
+        let model = std::env::var("STEERER_MODEL")
+            .or_else(|_| std::env::var("GRADIENT_GLM_MODEL_FALLBACK"))
+            .unwrap_or_else(|_| "glm-5.2".into());
         Ok(Self {
             llm: Box::new(GradientNamingLlm {
                 provider,
@@ -165,7 +167,7 @@ fn sanitize_and_cap(s: &str, max: usize) -> String {
     }
 }
 
-/// Production [`NamingLlm`] backed by Gradient + Kimi K2.6. Identical
+/// Production [`NamingLlm`] backed by Gradient. Identical
 /// strict→soft fallback policy to [`crate::steerer::cycle::GradientCaller`]:
 /// start in `json_schema` mode, latch to `json_object` permanently if
 /// the provider 400s once.

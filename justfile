@@ -22,9 +22,12 @@ up:
     export LLM_STEER_MAX_COMPLETION_TOKENS="${LLM_STEER_MAX_COMPLETION_TOKENS:-2048}"
     export LLM_NAMING_ENABLED="${LLM_NAMING_ENABLED:-0}"
     export NASRUDIN_NO_PAID_JOBS="${NASRUDIN_NO_PAID_JOBS:-1}"
+    export NASRUDIN_AUTO_TARGETS="${NASRUDIN_AUTO_TARGETS:-1}"
+    export NASRUDIN_WORKER_DOMAIN="${NASRUDIN_WORKER_DOMAIN:-all}"
     export NASRUDIN_RL_HALF_LIFE_HOURS="${NASRUDIN_RL_HALF_LIFE_HOURS:-168}"
     API_PORT="${API_PORT:-3001}"
-    echo "[up] low-LLM defaults: strategy_interval=${LLM_STEER_INTERVAL_SECONDS}s max_total_tokens=${LLM_STEER_MAX_TOTAL_TOKENS} naming=${LLM_NAMING_ENABLED} no_paid_jobs=${NASRUDIN_NO_PAID_JOBS}"
+    echo "[up] laptop-origin mode: Cloudflare should route nasrudin.org -> localhost:5173 and api.nasrudin.org -> localhost:${API_PORT}"
+    echo "[up] low-LLM defaults: strategy_interval=${LLM_STEER_INTERVAL_SECONDS}s max_total_tokens=${LLM_STEER_MAX_TOTAL_TOKENS} naming=${LLM_NAMING_ENABLED} no_paid_jobs=${NASRUDIN_NO_PAID_JOBS} auto_targets=${NASRUDIN_AUTO_TARGETS} worker_domain=${NASRUDIN_WORKER_DOMAIN}"
     echo "[up] starting postgres..."
     docker compose up -d postgres
     echo "[up] waiting for postgres..."
@@ -66,9 +69,48 @@ up:
       NASRUDIN_API_URL="http://localhost:${API_PORT}" \
       NASRUDIN_WORKER_ID="local-dev-worker" \
       NASRUDIN_NO_PAID_JOBS="${NASRUDIN_NO_PAID_JOBS}" \
-      ./target/release/worker --domain sr --verify ../prover 2>&1 \
+      NASRUDIN_AUTO_TARGETS="${NASRUDIN_AUTO_TARGETS}" \
+      ./target/release/worker --domain "${NASRUDIN_WORKER_DOMAIN}" --target auto --verify ../prover 2>&1 \
       | sed -u 's/^/[worker] /') &
     wait
+
+# Print the local laptop-origin deployment checklist without starting services.
+local-origin-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{justfile_directory()}}
+    echo "Nasrudin local-origin checklist"
+    echo
+    echo "Expected local services:"
+    echo "  frontend: http://localhost:5173"
+    echo "  api:      http://localhost:${API_PORT:-3001}"
+    echo
+    echo "Expected Cloudflare Tunnel routes:"
+    echo "  nasrudin.org     -> http://localhost:5173"
+    echo "  api.nasrudin.org -> http://localhost:${API_PORT:-3001}"
+    echo
+    echo "Local worker defaults from just up:"
+    echo "  LLM_STEER_INTERVAL_SECONDS=${LLM_STEER_INTERVAL_SECONDS:-7200}"
+    echo "  LLM_STEER_MAX_TOTAL_TOKENS=${LLM_STEER_MAX_TOTAL_TOKENS:-10000}"
+    echo "  LLM_NAMING_ENABLED=${LLM_NAMING_ENABLED:-0}"
+    echo "  NASRUDIN_NO_PAID_JOBS=${NASRUDIN_NO_PAID_JOBS:-1}"
+    echo "  NASRUDIN_AUTO_TARGETS=${NASRUDIN_AUTO_TARGETS:-1}"
+    echo "  NASRUDIN_WORKER_DOMAIN=${NASRUDIN_WORKER_DOMAIN:-all}"
+    echo
+    if command -v cloudflared >/dev/null 2>&1; then
+      echo "cloudflared: $(cloudflared --version | head -n 1)"
+    else
+      echo "cloudflared: not found in PATH"
+    fi
+    if [ -f deploy/cloudflare-local.example.yml ]; then
+      echo "tunnel template: deploy/cloudflare-local.example.yml"
+    else
+      echo "tunnel template: missing deploy/cloudflare-local.example.yml"
+    fi
+    echo
+    echo "Run sequence:"
+    echo "  1. just up"
+    echo "  2. cloudflared tunnel run nasrudin-local"
 
 # Start frontend dev server
 dev-frontend:
@@ -294,6 +336,58 @@ smoke-emc2-local:
 smoke-qm-local:
     cd engine && PATH="$HOME/.elan/bin:$PATH" NASRUDIN_NO_PAID_JOBS=1 cargo run -p nasrudin-ga --bin worker -- \
         --domain qm --target qm_planck_einstein \
+        --verify ../prover \
+        --gens 1 --pop 8 --chunks 1 --max-lake 1 \
+        --no-persistent-elaborator \
+        --no-submit \
+        --submit-top-k 0
+
+# Local verification-only auto-target smoke. Uses an isolated temporary
+# worker RL state file so the test proves cold-start target-portfolio
+# selection instead of inheriting this machine's learned history.
+smoke-auto-qm-local:
+    tmp="$$(mktemp -d)" && cd engine && PATH="$HOME/.elan/bin:$PATH" NASRUDIN_NO_PAID_JOBS=1 NASRUDIN_WORKER_RL_STATE="$$tmp/worker_rl_state.json" cargo run -p nasrudin-ga --bin worker -- \
+        --domain qm --target auto \
+        --verify ../prover \
+        --gens 1 --pop 8 --chunks 1 --max-lake 1 \
+        --no-persistent-elaborator \
+        --no-submit \
+        --submit-top-k 0
+
+# Local verification-only featured QM curriculum smoke. Uses one
+# temporary worker RL state across two auto-target runs: first proves
+# Planck-Einstein, persists it as proved, then the second run should
+# advance to the next featured QM target (Schrödinger) and verify it.
+smoke-featured-qm-local:
+    tmp="$$(mktemp -d)" && cd engine && PATH="$HOME/.elan/bin:$PATH" NASRUDIN_NO_PAID_JOBS=1 NASRUDIN_WORKER_RL_STATE="$$tmp/worker_rl_state.json" cargo run -p nasrudin-ga --bin worker -- \
+        --domain qm --target auto \
+        --verify ../prover \
+        --gens 1 --pop 8 --chunks 1 --max-lake 1 \
+        --no-persistent-elaborator \
+        --no-submit \
+        --submit-top-k 0 && \
+    PATH="$HOME/.elan/bin:$PATH" NASRUDIN_NO_PAID_JOBS=1 NASRUDIN_WORKER_RL_STATE="$$tmp/worker_rl_state.json" cargo run -p nasrudin-ga --bin worker -- \
+        --domain qm --target auto \
+        --verify ../prover \
+        --gens 1 --pop 8 --chunks 1 --max-lake 1 \
+        --no-persistent-elaborator \
+        --no-submit \
+        --submit-top-k 0
+
+# Local verification-only all-domain featured curriculum smoke. Mirrors
+# the default worker mode in `just up` (`--domain all --target auto`):
+# first prove E=mc², persist it as proved, then advance to the next
+# featured target in the global curriculum.
+smoke-featured-all-local:
+    tmp="$$(mktemp -d)" && cd engine && PATH="$HOME/.elan/bin:$PATH" NASRUDIN_NO_PAID_JOBS=1 NASRUDIN_WORKER_RL_STATE="$$tmp/worker_rl_state.json" cargo run -p nasrudin-ga --bin worker -- \
+        --domain all --target auto \
+        --verify ../prover \
+        --gens 1 --pop 8 --chunks 1 --max-lake 1 \
+        --no-persistent-elaborator \
+        --no-submit \
+        --submit-top-k 0 && \
+    PATH="$HOME/.elan/bin:$PATH" NASRUDIN_NO_PAID_JOBS=1 NASRUDIN_WORKER_RL_STATE="$$tmp/worker_rl_state.json" cargo run -p nasrudin-ga --bin worker -- \
+        --domain all --target auto \
         --verify ../prover \
         --gens 1 --pop 8 --chunks 1 --max-lake 1 \
         --no-persistent-elaborator \

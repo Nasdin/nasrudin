@@ -226,6 +226,161 @@ const SCHEMA_HINT: &str = r#"{
   "rationale": "<= 500 chars"
 }"#;
 
+const COMPACT_MAX_DEPTH: usize = 3;
+const COMPACT_MAX_OBJECT_KEYS: usize = 32;
+const COMPACT_MAX_ARRAY_ITEMS: usize = 8;
+const COMPACT_MAX_STRING_CHARS: usize = 180;
+const COMPACT_MAX_SUMMARY_BYTES: usize = 1_500;
+
+fn compact_cluster_summary_for_llm(value: &serde_json::Value) -> serde_json::Value {
+    let compacted = compact_value_for_llm(value, 0);
+    let bytes = serde_json::to_vec(&compacted).map(|v| v.len()).unwrap_or(0);
+    if bytes <= COMPACT_MAX_SUMMARY_BYTES {
+        return compacted;
+    }
+    match compacted {
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for key in [
+                "domain",
+                "island_domain",
+                "cluster_id",
+                "centroid_skeleton_hash",
+                "mean_fitness",
+                "max_fitness",
+                "verified_count",
+                "lake_attempts",
+                "lake_passed",
+                "target_progress",
+                "novelty",
+                "generation",
+            ] {
+                if let Some(v) = map.get(key) {
+                    out.insert(key.to_string(), v.clone());
+                }
+            }
+            out.insert(
+                "compacted".into(),
+                serde_json::Value::String(format!(
+                    "summary exceeded {COMPACT_MAX_SUMMARY_BYTES} bytes; retained core scalar evidence"
+                )),
+            );
+            serde_json::Value::Object(out)
+        }
+        other => other,
+    }
+}
+
+fn compact_value_for_llm(value: &serde_json::Value, depth: usize) -> serde_json::Value {
+    if depth >= COMPACT_MAX_DEPTH {
+        return match value {
+            serde_json::Value::Object(map) => serde_json::json!({
+                "object_keys": map.keys().take(12).cloned().collect::<Vec<_>>(),
+                "dropped": "max_depth"
+            }),
+            serde_json::Value::Array(items) => serde_json::json!({
+                "array_len": items.len(),
+                "dropped": "max_depth"
+            }),
+            other => compact_scalar_for_llm(other),
+        };
+    }
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (key, child) in map {
+                if out.len() >= COMPACT_MAX_OBJECT_KEYS {
+                    out.insert(
+                        "_truncated_keys".into(),
+                        serde_json::Value::String("object key cap reached".into()),
+                    );
+                    break;
+                }
+                if keep_cluster_evidence_key(key) {
+                    out.insert(key.clone(), compact_value_for_llm(child, depth + 1));
+                }
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .iter()
+                .take(COMPACT_MAX_ARRAY_ITEMS)
+                .map(|v| compact_value_for_llm(v, depth + 1))
+                .collect(),
+        ),
+        other => compact_scalar_for_llm(other),
+    }
+}
+
+fn compact_scalar_for_llm(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) if s.chars().count() > COMPACT_MAX_STRING_CHARS => {
+            let truncated: String = s.chars().take(COMPACT_MAX_STRING_CHARS).collect();
+            serde_json::Value::String(format!("{truncated}…[truncated]"))
+        }
+        other => other.clone(),
+    }
+}
+
+fn keep_cluster_evidence_key(key: &str) -> bool {
+    let k = key.to_ascii_lowercase();
+    if [
+        "lean_source",
+        "source",
+        "stderr",
+        "stdout",
+        "raw",
+        "population",
+        "individuals",
+        "chains",
+        "examples",
+        "samples",
+        "logs",
+    ]
+    .iter()
+    .any(|needle| k.contains(needle))
+    {
+        return false;
+    }
+    [
+        "domain",
+        "island",
+        "cluster",
+        "centroid",
+        "skeleton",
+        "hash",
+        "fitness",
+        "reward",
+        "verified",
+        "lake",
+        "pass",
+        "attempt",
+        "target",
+        "novel",
+        "novelty",
+        "mean",
+        "max",
+        "min",
+        "count",
+        "candidate",
+        "unique",
+        "generation",
+        "operator",
+        "mutation",
+        "qd",
+        "archive",
+        "cell",
+        "progress",
+        "elapsed",
+        "duration",
+        "strategy",
+        "genome",
+    ]
+    .iter()
+    .any(|needle| k.contains(needle))
+}
+
 /// Build the *user* prompt string. Caller separately supplies the
 /// system prompt to the LLM SDK. We bundle everything as one JSON
 /// object so the model parses it into a single coherent context.
@@ -259,6 +414,10 @@ pub fn build_prompt(
         "Full authority. You may emit hard_targets, mutation_knobs, \
         mutation_priors, and cluster_directives."
     };
+    let cluster_summaries_compact: Vec<serde_json::Value> = cluster_summaries
+        .iter()
+        .map(compact_cluster_summary_for_llm)
+        .collect();
     let payload = serde_json::json!({
         "schema": SCHEMA_HINT,
         "scope": scope,
@@ -266,7 +425,13 @@ pub fn build_prompt(
         "previous_lessons_learned": previous_lessons_learned,
         "current_demand": demand,
         "active_paid_jobs": active_jobs,
-        "cluster_summaries": cluster_summaries,
+        "cluster_summaries": cluster_summaries_compact,
+        "cluster_summary_compaction": {
+            "policy": "lossy evidence condenser",
+            "kept": "domain/cluster ids, fitness/reward, verifier, target progress, novelty, QD, mutation/operator stats",
+            "dropped": "raw populations, example chains, Lean source, stdout/stderr/log blobs",
+            "max_summary_bytes": COMPACT_MAX_SUMMARY_BYTES
+        },
         "bandit_state": bandit_state,
         "k_per_island_next": k_per_island_next,
         "in_flight_targets": in_flight_targets,
@@ -399,6 +564,56 @@ mod tests {
         ] {
             assert!(p.contains(f), "prompt missing schema field: {f}");
         }
+    }
+
+    #[test]
+    fn prompt_compacts_cluster_summaries_before_llm() {
+        let (_, bs, kp, ift, pts) = empty_extras();
+        let cluster_summaries = vec![serde_json::json!({
+            "domain": "qm",
+            "centroid_skeleton_hash": 12345,
+            "mean_fitness": 0.42,
+            "lake_attempts": 3,
+            "lake_passed": 1,
+            "target_progress": 0.75,
+            "mutation_operator_stats": { "append_productive_suffix": { "pulls": 9, "reward": 1.2 } },
+            "example_chains": [{ "kind": "IntroduceAxiom", "axiom_name": "huge" }],
+            "lean_source": "theorem huge := by sorry",
+            "stderr": "x".repeat(5000),
+        })];
+        let p = build_prompt(
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cluster_summaries,
+            &bs,
+            &kp,
+            &ift,
+            "",
+            &pts,
+        );
+        assert!(p.contains("centroid_skeleton_hash"));
+        assert!(p.contains("lake_passed"));
+        assert!(p.contains("target_progress"));
+        assert!(p.contains("append_productive_suffix"));
+        assert!(!p.contains("example_chains"));
+        assert!(!p.contains("theorem huge"));
+        assert!(!p.contains("\"stderr\""));
+        assert!(p.contains("cluster_summary_compaction"));
+    }
+
+    #[test]
+    fn compact_cluster_summary_bounds_long_strings() {
+        let summary = serde_json::json!({
+            "domain": "sr",
+            "reward_explanation": "r".repeat(1000),
+            "lake_attempts": 1
+        });
+        let compact = compact_cluster_summary_for_llm(&summary);
+        let encoded = serde_json::to_string(&compact).unwrap();
+        assert!(encoded.contains("[truncated]"));
+        assert!(encoded.len() < 500);
     }
 
     #[test]

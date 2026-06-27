@@ -1,0 +1,155 @@
+{
+  "version": 2,
+  "scopes": {
+    "domain=all|target=qm_planck_einstein": {
+      "updated_at_unix_secs": 1782566345,
+      "corpus_len": 195769,
+      "mutation_operator": {
+        "pulls": [
+          1,
+          2,
+          1,
+          1,
+          0,
+          0
+        ],
+        "total_reward": [
+          0.773969984044887,
+          0.5179620487048124,
+          0.5,
+          0.15000000001074398,
+          0.0,
+          0.0
+        ]
+      },
+      "qd_archive": {
+        "cells": [
+          {
+            "chain_len_bin": 0,
+            "axiom_count_bin": 0,
+            "target_progress_bin": 0,
+            "best_score": 3.6166666666666667
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 0,
+            "best_score": 4.225
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 4,
+            "best_score": 15.925
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 5.708333333333333
+          },
+          {
+            "chain_len_bin": 2,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 6.078571428571428
+          },
+          {
+            "chain_len_bin": 4,
+            "axiom_count_bin": 4,
+            "target_progress_bin": 0,
+            "best_score": 9.25012315270936
+          }
+        ]
+      },
+      "strategy_genomes": {}
+    },
+    "domain=all|target=sr_rest_energy": {
+      "updated_at_unix_secs": 1782566298,
+      "corpus_len": 195769,
+      "mutation_operator": {
+        "pulls": [
+          0,
+          1,
+          1,
+          1,
+          0,
+          2
+        ],
+        "total_reward": [
+          0.0,
+          0.6569559804985906,
+          0.3000000000058489,
+          0.3000000000000679,
+          0.0,
+          0.6544727504105846
+        ]
+      },
+      "qd_archive": {
+        "cells": [
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 0,
+            "best_score": 4.29
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 5.34
+          },
+          {
+            "chain_len_bin": 2,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 4,
+            "best_score": 19.272222222222226
+          },
+          {
+            "chain_len_bin": 3,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 6.5181818181818185
+          },
+          {
+            "chain_len_bin": 3,
+            "axiom_count_bin": 3,
+            "target_progress_bin": 0,
+            "best_score": 6.819999999999999
+          },
+          {
+            "chain_len_bin": 4,
+            "axiom_count_bin": 4,
+            "target_progress_bin": 0,
+            "best_score": 9.25012315270936
+          }
+        ]
+      },
+      "strategy_genomes": {}
+    }
+  },
+  "target_portfolio": {
+    "domain=all|target=qm_planck_einstein": {
+      "pulls": 1,
+      "total_reward": 1.0,
+      "last_reward": 1.0,
+      "best_reward": 1.0,
+      "reward_ema": 1.0,
+      "lake_pass_ema": 1.0,
+      "novelty_ema": 0.125,
+      "failure_streak": 0,
+      "proved": true
+    },
+    "domain=all|target=sr_rest_energy": {
+      "pulls": 1,
+      "total_reward": 1.0,
+      "last_reward": 1.0,
+      "best_reward": 1.0,
+      "reward_ema": 1.0,
+      "lake_pass_ema": 1.0,
+      "novelty_ema": 0.125,
+      "failure_streak": 0,
+      "proved": true
+    }
+  }
+}

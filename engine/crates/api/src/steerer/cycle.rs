@@ -60,6 +60,7 @@ pub trait LlmCaller: Send + Sync {
         &self,
         system: &str,
         user: &str,
+        max_total_tokens: u32,
     ) -> Result<(String, Option<i32>, Option<i32>), CycleError>;
 }
 
@@ -336,6 +337,39 @@ async fn run_one_cycle_inner(
             etag: compute_etag,
         }));
 
+    let mut refresh_strategy = refresh_strategy;
+    if refresh_strategy && llm_evidence_gate_enabled() {
+        let evidence_window_secs =
+            llm_strategy_budget_window_secs(min_strategy_refresh_interval_secs);
+        let evidence_cutoff = Utc::now() - chrono::Duration::seconds(evidence_window_secs);
+        let cluster_report_count =
+            nasrudin_pg::query::cluster_reports::count_since(db, evidence_cutoff).await?;
+        let verified_count =
+            nasrudin_pg::query::theorems::count_verified_since(db, evidence_cutoff)
+                .await
+                .unwrap_or(0);
+        let min_cluster_reports = llm_min_cluster_reports_for_refresh();
+        let min_verified_theorems = llm_min_verified_theorems_for_refresh();
+        let enough_evidence = strategy_refresh_has_enough_evidence(
+            active_paid_count,
+            cluster_report_count,
+            verified_count,
+            min_cluster_reports,
+            min_verified_theorems,
+        );
+        if !enough_evidence {
+            tracing::info!(
+                evidence_window_secs,
+                cluster_report_count,
+                verified_count,
+                min_cluster_reports,
+                min_verified_theorems,
+                "LLM strategy refresh skipped: insufficient new RL/GA evidence"
+            );
+            refresh_strategy = false;
+        }
+    }
+
     let claimed_strategy_cycle = if refresh_strategy {
         if let Some(interval_secs) = min_strategy_refresh_interval_secs {
             let claim_config = steering_from_state_cache(state, scope)?;
@@ -435,25 +469,54 @@ async fn run_one_cycle_inner(
         // refusals must not stop the RL/GA workhorse loop; fall back to
         // the last validated strategic config and persist the cycle as
         // validation_failed so operators can see the skipped refresh.
-        let (config, ptok, ctok, validation_failed) =
-            match caller.call(SYSTEM_PROMPT, &user_prompt).await {
-                Ok((text, ptok, ctok)) => {
-                    // 6. Parse + validate. On any failure fall back to LKG.
-                    match parse_and_validate(&text, scope) {
-                        Ok(c) => (c, ptok, ctok, false),
-                        Err(e) => {
-                            tracing::warn!(error=%e, scope=%scope,
-                                "steerer reply failed validation; falling back to last-known-good");
-                            (fallback_config(db, scope).await?, ptok, ctok, true)
+        let approx_input_tokens =
+            approximate_tokens(SYSTEM_PROMPT) + approximate_tokens(&user_prompt);
+        let rolling_window_secs =
+            llm_strategy_budget_window_secs(min_strategy_refresh_interval_secs);
+        let cutoff = Utc::now() - chrono::Duration::seconds(rolling_window_secs);
+        let used_tokens =
+            nasrudin_pg::query::cluster_steering::llm_tokens_used_since(db, cutoff).await?;
+        let window_max_tokens = llm_strategy_window_max_tokens();
+        let (config, ptok, ctok, validation_failed) = match budgeted_call_max_total_tokens(
+            used_tokens,
+            window_max_tokens,
+            approx_input_tokens,
+        ) {
+            Ok(call_max_total_tokens) => {
+                match caller
+                    .call(SYSTEM_PROMPT, &user_prompt, call_max_total_tokens)
+                    .await
+                {
+                    Ok((text, ptok, ctok)) => {
+                        // 6. Parse + validate. On any failure fall back to LKG.
+                        match parse_and_validate(&text, scope) {
+                            Ok(c) => (c, ptok, ctok, false),
+                            Err(e) => {
+                                tracing::warn!(error=%e, scope=%scope,
+                                    "steerer reply failed validation; falling back to last-known-good");
+                                (fallback_config(db, scope).await?, ptok, ctok, true)
+                            }
                         }
                     }
+                    Err(e) => {
+                        tracing::warn!(error=%e, scope=%scope,
+                            "steerer LLM call failed; falling back to last-known-good");
+                        (fallback_config(db, scope).await?, None, None, true)
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(error=%e, scope=%scope,
-                        "steerer LLM call failed; falling back to last-known-good");
-                    (fallback_config(db, scope).await?, None, None, true)
-                }
-            };
+            }
+            Err(reason) => {
+                tracing::warn!(
+                    used_tokens,
+                    window_max_tokens,
+                    approx_input_tokens,
+                    rolling_window_secs,
+                    reason = %reason,
+                    "steerer rolling LLM budget exhausted; reusing cached strategy"
+                );
+                (fallback_config(db, scope).await?, None, None, true)
+            }
+        };
         (config, ptok, ctok, validation_failed)
     } else {
         (steering_from_state_cache(state, scope)?, None, None, false)
@@ -767,15 +830,23 @@ impl LlmCaller for GradientCaller {
         &self,
         system: &str,
         user: &str,
+        max_total_tokens: u32,
     ) -> Result<(String, Option<i32>, Option<i32>), CycleError> {
         use nasrudin_llm::{CompletionRequest, LlmProvider, ResponseFormat};
+        let effective_max_total_tokens = std::cmp::min(self.max_total_tokens, max_total_tokens);
+        if effective_max_total_tokens < MIN_STEERER_COMPLETION_TOKENS {
+            return Err(CycleError::Llm(format!(
+                "steerer rolling budget refusal: remaining_total_tokens={} below minimum {}",
+                effective_max_total_tokens, MIN_STEERER_COMPLETION_TOKENS
+            )));
+        }
         let approx_input_tokens = approximate_tokens(system) + approximate_tokens(user);
         let Some(available_completion_tokens) =
-            self.max_total_tokens.checked_sub(approx_input_tokens)
+            effective_max_total_tokens.checked_sub(approx_input_tokens)
         else {
             return Err(CycleError::Llm(format!(
                 "steerer prompt budget refusal: approx_input_tokens={} exceeds max_total_tokens={}",
-                approx_input_tokens, self.max_total_tokens
+                approx_input_tokens, effective_max_total_tokens
             )));
         };
         if available_completion_tokens < MIN_STEERER_COMPLETION_TOKENS {
@@ -815,11 +886,11 @@ impl LlmCaller for GradientCaller {
         match self.provider.complete(req).await {
             Ok(r) => {
                 let total_tokens = r.input_tokens.saturating_add(r.output_tokens);
-                if total_tokens > self.max_total_tokens {
+                if total_tokens > effective_max_total_tokens {
                     tracing::warn!(
                         input_tokens = r.input_tokens,
                         output_tokens = r.output_tokens,
-                        max_total_tokens = self.max_total_tokens,
+                        max_total_tokens = effective_max_total_tokens,
                         "steerer LLM call exceeded configured token budget according to provider usage"
                     );
                 }
@@ -860,11 +931,11 @@ impl LlmCaller for GradientCaller {
                         .await
                         .map_err(|e2| CycleError::Llm(e2.to_string()))?;
                     let total_tokens = r.input_tokens.saturating_add(r.output_tokens);
-                    if total_tokens > self.max_total_tokens {
+                    if total_tokens > effective_max_total_tokens {
                         tracing::warn!(
                             input_tokens = r.input_tokens,
                             output_tokens = r.output_tokens,
-                            max_total_tokens = self.max_total_tokens,
+                            max_total_tokens = effective_max_total_tokens,
                             "steerer LLM retry exceeded configured token budget according to provider usage"
                         );
                     }
@@ -886,6 +957,90 @@ fn approximate_tokens(s: &str) -> u32 {
     // assets into the API hot path. English/JSON prompts are usually
     // around 3-4 chars/token; using 3 overestimates and refuses early.
     ((s.len() as u32).saturating_add(2)) / 3
+}
+
+fn llm_strategy_window_max_tokens() -> u32 {
+    std::env::var("LLM_STEER_MAX_TOTAL_TOKENS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(10_000)
+}
+
+fn llm_strategy_budget_window_secs(min_strategy_refresh_interval_secs: Option<i64>) -> i64 {
+    let window = std::env::var("LLM_STEER_ROLLING_WINDOW_SECONDS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or_else(|| min_strategy_refresh_interval_secs.unwrap_or(7_200));
+    std::cmp::max(window, 1)
+}
+
+fn llm_evidence_gate_enabled() -> bool {
+    std::env::var("LLM_STEER_REQUIRE_NEW_EVIDENCE")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn llm_min_cluster_reports_for_refresh() -> u64 {
+    std::env::var("LLM_STEER_MIN_CLUSTER_REPORTS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(1)
+}
+
+fn llm_min_verified_theorems_for_refresh() -> u64 {
+    std::env::var("LLM_STEER_MIN_VERIFIED_THEOREMS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+fn strategy_refresh_has_enough_evidence(
+    active_paid_count: u64,
+    cluster_report_count: u64,
+    verified_count: u64,
+    min_cluster_reports: u64,
+    min_verified_theorems: u64,
+) -> bool {
+    if active_paid_count > 0 {
+        return true;
+    }
+    if min_cluster_reports == 0 {
+        return true;
+    }
+    if cluster_report_count >= min_cluster_reports {
+        return true;
+    }
+    min_verified_theorems > 0 && verified_count >= min_verified_theorems
+}
+
+fn budgeted_call_max_total_tokens(
+    used_tokens: i64,
+    max_window_tokens: u32,
+    approx_input_tokens: u32,
+) -> Result<u32, String> {
+    if used_tokens < 0 {
+        return Ok(max_window_tokens);
+    }
+    let used = used_tokens as u64;
+    let max = max_window_tokens as u64;
+    if used >= max {
+        return Err(format!(
+            "used_tokens {used} >= max_window_tokens {max_window_tokens}"
+        ));
+    }
+    let remaining = std::cmp::min(max - used, u32::MAX as u64) as u32;
+    let min_required = approx_input_tokens.saturating_add(MIN_STEERER_COMPLETION_TOKENS);
+    if remaining < min_required {
+        return Err(format!(
+            "remaining_tokens {remaining} < approx_input_tokens {approx_input_tokens} + min_completion_tokens {MIN_STEERER_COMPLETION_TOKENS}"
+        ));
+    }
+    Ok(remaining)
 }
 
 #[cfg(test)]
@@ -935,6 +1090,42 @@ mod tests {
             !s.contains("\"extension\""),
             "extension field must be skipped from strict schema; got {s}"
         );
+    }
+
+    #[test]
+    fn budgeted_call_allows_remaining_window() {
+        let remaining = budgeted_call_max_total_tokens(2_000, 10_000, 1_000).unwrap();
+        assert_eq!(remaining, 8_000);
+    }
+
+    #[test]
+    fn budgeted_call_refuses_full_window() {
+        let err = budgeted_call_max_total_tokens(10_000, 10_000, 1).unwrap_err();
+        assert!(err.contains("used_tokens 10000"));
+    }
+
+    #[test]
+    fn budgeted_call_refuses_when_completion_floor_cannot_fit() {
+        let err = budgeted_call_max_total_tokens(9_200, 10_000, 400).unwrap_err();
+        assert!(err.contains("remaining_tokens 800"));
+        assert!(err.contains("min_completion_tokens"));
+    }
+
+    #[test]
+    fn evidence_gate_requires_worker_signal_by_default() {
+        assert!(!strategy_refresh_has_enough_evidence(0, 0, 0, 1, 0));
+        assert!(strategy_refresh_has_enough_evidence(0, 1, 0, 1, 0));
+    }
+
+    #[test]
+    fn evidence_gate_allows_paid_jobs_and_verified_theorem_signal() {
+        assert!(strategy_refresh_has_enough_evidence(1, 0, 0, 1, 0));
+        assert!(strategy_refresh_has_enough_evidence(0, 0, 2, 10, 2));
+    }
+
+    #[test]
+    fn evidence_gate_can_be_disabled_by_zero_cluster_report_requirement() {
+        assert!(strategy_refresh_has_enough_evidence(0, 0, 0, 0, 0));
     }
 
     #[test]

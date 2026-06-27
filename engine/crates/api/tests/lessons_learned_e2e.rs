@@ -42,6 +42,7 @@ impl LlmCaller for ScriptedLlmCaller {
         &self,
         _system: &str,
         user: &str,
+        _max_total_tokens: u32,
     ) -> Result<(String, Option<i32>, Option<i32>), CycleError> {
         self.captured_prompts.lock().unwrap().push(user.to_string());
         let next = self

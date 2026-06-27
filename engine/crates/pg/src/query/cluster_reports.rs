@@ -62,6 +62,21 @@ pub async fn recent_for_island_with_k(
         .await
 }
 
+/// Count worker cluster reports received since `since`.
+///
+/// Used by the LLM steerer evidence gate: if the GA/RL workhorse has
+/// not produced fresh telemetry, the daemon can skip a strategy LLM
+/// call and keep running from cached steering.
+pub async fn count_since(
+    db: &DatabaseConnection,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<u64, DbErr> {
+    Entity::find()
+        .filter(Column::ReceivedAt.gte(since.fixed_offset()))
+        .count(db)
+        .await
+}
+
 /// Delete rows older than `cutoff`. Returns rows deleted.
 pub async fn purge_older_than(
     db: &DatabaseConnection,

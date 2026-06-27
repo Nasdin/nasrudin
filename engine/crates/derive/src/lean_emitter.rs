@@ -177,15 +177,22 @@ fn emit_chain_theorem(out: &mut String, ctx: &DerivationContext, config: &LeanEm
 
     // Free variables in the conclusion (and in introduced facts/assumptions).
     let mut all_vars: BTreeSet<String> = BTreeSet::new();
+    let mut function_vars: BTreeSet<String> = BTreeSet::new();
     collect_free_vars_into(&conclusion, &mut all_vars);
+    collect_function_vars_into(&conclusion, &mut function_vars);
     for (_, fact) in ctx.facts() {
         collect_free_vars_into(fact, &mut all_vars);
+        collect_function_vars_into(fact, &mut function_vars);
     }
     for (_, asm) in ctx.assumptions() {
         collect_free_vars_into(asm, &mut all_vars);
+        collect_function_vars_into(asm, &mut function_vars);
     }
     // `c` is a defined constant in the prover, not a free var.
     all_vars.remove("c");
+    for f in &function_vars {
+        all_vars.remove(f);
+    }
 
     // Docstring: prefer the curated headline description when the
     // caller supplied one (chain proves a known result), fall back to
@@ -206,6 +213,10 @@ fn emit_chain_theorem(out: &mut String, ctx: &DerivationContext, config: &LeanEm
         }
     }
     out.push_str(&format!("theorem {}\n", config.theorem_name));
+
+    for f in &function_vars {
+        out.push_str(&format!("    ({} : ℝ → ℝ)\n", sanitize_lean_ident(f)));
+    }
 
     // Free vars over ℝ.
     if !all_vars.is_empty() {
@@ -370,8 +381,12 @@ fn emit_chain_theorem(out: &mut String, ctx: &DerivationContext, config: &LeanEm
     // (nlinarith / linarith / ring_nf;nlinarith / ring / norm_num /
     // simp / grind) covers the algebraic goals we actually emit.
     if !hyp_list.is_empty() {
+        out.push_str("  first\n");
+        for hyp in &hyp_list {
+            out.push_str(&format!("    | exact {hyp}\n"));
+        }
         out.push_str(&format!(
-            "  first\n    | (nlinarith [{hyps}])\n    | (linarith [{hyps}])\n    | (ring_nf at * <;> nlinarith [{hyps}])\n    | (linear_combination 0)\n",
+            "    | (nlinarith [{hyps}])\n    | (linarith [{hyps}])\n    | (ring_nf at * <;> nlinarith [{hyps}])\n    | (linear_combination 0)\n",
             hyps = hyp_list.join(", "),
         ));
     } else {
@@ -436,6 +451,8 @@ pub fn expr_to_lean(expr: &Expr) -> String {
                 _ => format!("«{op:?}» {es}"),
             }
         }
+        Expr::Deriv(e, var) => derivative_symbol(e, var),
+        Expr::PartialDeriv(e, var) => derivative_symbol(e, var),
         // Curried application chain: nasrudin's `App` is binary, so a
         // multi-arg call ends up as `App(App(App(f, x), y), z)`. Lean's
         // function application is juxtaposition `f x y z`, parenthesised.
@@ -462,6 +479,14 @@ pub fn expr_to_lean(expr: &Expr) -> String {
         }
         _ => format!("sorry /- {expr:?} -/"),
     }
+}
+
+fn derivative_symbol(e: &Expr, var: &str) -> String {
+    let base = match e {
+        Expr::Var(name) => sanitize_lean_ident(name),
+        _ => sanitize_lean_ident(&e.to_canonical()),
+    };
+    sanitize_lean_ident(&format!("d_{base}_d_{var}"))
 }
 
 /// Sanitise a name into something Lean's parser will accept as an
@@ -512,6 +537,58 @@ fn const_to_lean(c: &PhysConst) -> String {
     }
 }
 
+fn collect_function_vars_into(expr: &Expr, out: &mut BTreeSet<String>) {
+    match expr {
+        Expr::App(f, x) => {
+            if let Expr::Var(name) = f.as_ref() {
+                out.insert(name.clone());
+            } else {
+                collect_function_vars_into(f, out);
+            }
+            collect_function_vars_into(x, out);
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_function_vars_into(l, out);
+            collect_function_vars_into(r, out);
+        }
+        Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => {
+            collect_function_vars_into(e, out);
+        }
+        Expr::Integral {
+            body, lower, upper, ..
+        } => {
+            collect_function_vars_into(body, out);
+            if let Some(l) = lower {
+                collect_function_vars_into(l, out);
+            }
+            if let Some(u) = upper {
+                collect_function_vars_into(u, out);
+            }
+        }
+        Expr::Sum {
+            body, lower, upper, ..
+        }
+        | Expr::Prod {
+            body, lower, upper, ..
+        } => {
+            collect_function_vars_into(body, out);
+            collect_function_vars_into(lower, out);
+            collect_function_vars_into(upper, out);
+        }
+        Expr::Limit {
+            body, approaching, ..
+        } => {
+            collect_function_vars_into(body, out);
+            collect_function_vars_into(approaching, out);
+        }
+        Expr::Lam(_, ty, body) | Expr::Pi(_, ty, body) | Expr::Let(_, ty, body) => {
+            collect_function_vars_into(ty, out);
+            collect_function_vars_into(body, out);
+        }
+        Expr::Var(_) | Expr::Const(_) | Expr::Lit(_, _) => {}
+    }
+}
+
 /// Walk an Expr and collect all free variable names.
 fn collect_free_vars_into(expr: &Expr, out: &mut BTreeSet<String>) {
     match expr {
@@ -524,6 +601,10 @@ fn collect_free_vars_into(expr: &Expr, out: &mut BTreeSet<String>) {
             collect_free_vars_into(r, out);
         }
         Expr::UnOp(_, e) => collect_free_vars_into(e, out),
+        Expr::Deriv(e, var) | Expr::PartialDeriv(e, var) => {
+            out.insert(derivative_symbol(e, var));
+            collect_free_vars_into(e, out);
+        }
         Expr::App(f, x) => {
             collect_free_vars_into(f, out);
             collect_free_vars_into(x, out);

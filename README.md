@@ -90,7 +90,7 @@ Workers also pull a fresh `SteeringConfig` (see below) from `/api/seed` on every
 
 ## LLM-Driven Cluster Steering
 
-A naïve genetic algorithm running across thousands of volunteer workers is unfocused: it grinds through the entire axiom space with no notion of what the corpus actually needs next. Nasrudin solves this by having an LLM **steer the cluster** every `LLM_STEER_INTERVAL_SECONDS` (default 2h), while RL bandits apply feedback on each `STEERER_CADENCE_SECONDS` tick. The refresh gate is claimed in persisted `cluster_steering` history before any prompt construction or provider call, so restarts and multiple API processes do not reset or duplicate the two-hour budget window. LLM spend is separately capped with `LLM_STEER_MAX_TOTAL_TOKENS` (default 10000) and `LLM_STEER_MAX_COMPLETION_TOKENS` (default 2048); if a refresh cannot fit the budget or Gradient fails, the daemon reuses the last validated strategy and the RL/GA loop keeps running.
+A naïve genetic algorithm running across thousands of volunteer workers is unfocused: it grinds through the entire axiom space with no notion of what the corpus actually needs next. Nasrudin solves this by having an LLM **steer the cluster** at most every `LLM_STEER_INTERVAL_SECONDS` (default 2h), while RL bandits apply feedback on each `STEERER_CADENCE_SECONDS` tick. The refresh gate is claimed in persisted `cluster_steering` history before any prompt construction or provider call, so restarts and multiple API processes do not reset or duplicate the two-hour budget window. The interval is an upper bound, not a scheduled spend: with `LLM_STEER_REQUIRE_NEW_EVIDENCE=1` the daemon first checks that fresh RL/GA telemetry exists in the rolling window, defaulting to at least one worker `cluster_report` before it spends Gradient tokens. LLM spend is separately capped with `LLM_STEER_MAX_TOTAL_TOKENS` (default 10000) and `LLM_STEER_MAX_COMPLETION_TOKENS` (default 2048). Before each provider call, the daemon sums actual provider-reported prompt+completion usage in the rolling `LLM_STEER_ROLLING_WINDOW_SECONDS` window (default: the same 2h interval), subtracts that from the cap, and clamps the new request to the remaining budget. If there is not enough new evidence, the prompt plus a minimum completion cannot fit, or Gradient fails, the daemon reuses the last validated strategy and the RL/GA loop keeps running.
 
 ```
    Aggregate user demand            Last 10 cycles' outcomes
@@ -101,7 +101,8 @@ A naïve genetic algorithm running across thousands of volunteer workers is unfo
                     v             v
             ┌────────────────────────────┐
             │  DigitalOcean Gradient     │
-            │  Kimi K2.6 (kimi-k2.6)
+            │  Latest GLM model          │
+            │  (auto from /v1/models)
             │  POST /v1/chat/completions │
             └────────────┬───────────────┘
                          │
@@ -129,6 +130,8 @@ Each cycle's *outcome* (theorems verified, actual domain distribution, cascade r
 **Validation & safety.** Every emitted `SteeringConfig` is range-checked (domain weights sum to 1, mutation rate ∈ [0.05, 0.30], population size ∈ [32, 512], etc.). On any failure — Gradient outage, parse error, validator reject — the daemon transparently falls back to the last-known-good config and flags the row in `cluster_steering`. The cluster keeps running with stale-but-validated steering indefinitely.
 
 The Gradient API key (`GRADIENT_API_KEY`) is server-owned and lives only in the daemon's environment. It is never exposed to clients and is distinct from the per-user encrypted-key flow used by the FunSearch-style conjecture creator. By default, the server key is reserved for the two-hour strategy refresh path; cosmetic per-theorem LLM naming stays disabled unless `LLM_NAMING_ENABLED=1` is explicitly set.
+
+**Dynamic model selection.** Leave `STEERER_MODEL` unset to have the daemon query Gradient's live `/v1/models` catalog and select the newest GLM-family model it can identify, such as `glm-5.2`. Set `STEERER_MODEL` only when you intentionally want to pin a specific model. If catalog probing fails, `GRADIENT_GLM_MODEL_FALLBACK` is used. The resolved model is cached locally for `GRADIENT_MODEL_CACHE_TTL_SECONDS` (default 86400) so restarts do not repeatedly hit the catalog; set the TTL to `0` to force a fresh probe on every boot.
 
 **AlphaEvolve-style strategy genomes.** The LLM steerer is not disabled locally; it is made sparse and high-leverage. In addition to ordinary `SteeringConfig` fields, the model can emit `extension.strategy_genome_v1`, a compact domain policy that workers expand into GA/RL moves:
 
@@ -161,12 +164,32 @@ Workers apply only the matching domain policy in scope C, clamp every value, fin
 - `LLM_STEER_MAX_COMPLETION_TOKENS=2048`
 - `LLM_NAMING_ENABLED=0`
 - `NASRUDIN_NO_PAID_JOBS=1`
+- `NASRUDIN_AUTO_TARGETS=1`
+- `NASRUDIN_WORKER_DOMAIN=all`
 - `NASRUDIN_RL_HALF_LIFE_HOURS=168`
 - `NASRUDIN_WORKER_LOAD_CATALOG=1`
 
-Override these only when you intentionally want different behavior. The local worker persists scoped RL/QD state in `~/.local/share/nasrudin-worker/worker_rl_state.json`, while the LLM remains a high-level strategy source rather than the workhorse. When `physlean-extract/output/catalog.json` is present, standalone workers also load safe local PhysLean catalog propositions into the hot tier before chunks run; the loader skips non-propositional placeholders and any canonical statement on the no-cheat headline deny-list.
+Override these only when you intentionally want different behavior. By default the local worker runs `--domain all --target auto`, so the laptop-origin stack starts with the featured-first curriculum rather than a single hardcoded SR target. The local worker persists scoped RL/QD state in `~/.local/share/nasrudin-worker/worker_rl_state.json`, while the LLM remains a high-level strategy source rather than the workhorse. When `physlean-extract/output/catalog.json` is present, standalone workers also load safe local PhysLean catalog propositions into the hot tier before chunks run; the loader skips non-propositional placeholders and any canonical statement on the no-cheat headline deny-list.
 
-**Cloudflare desktop deployment.** For running the frontend and API from your desktop behind Cloudflare, use [deploy/cloudflare-local.example.yml](deploy/cloudflare-local.example.yml) as the tunnel template. It routes `nasrudin.org` to the local frontend and `api.nasrudin.org` to the local API while keeping both services bound to localhost.
+**Cloudflare desktop deployment.** For the cost-minimized deployment, your desktop/laptop is the origin server. The frontend, API, workers, local RocksDB corpus, Lean verifier, RL state, and GA run on your machine; Cloudflare only provides the public edge, TLS, DNS, and tunnel/proxy routing. Use [deploy/cloudflare-local.example.yml](deploy/cloudflare-local.example.yml) as the tunnel template:
+
+- `nasrudin.org` → `http://localhost:5173` (local frontend)
+- `api.nasrudin.org` → `http://localhost:3001` (local API/backend)
+
+Keep the services bound to localhost. Cloudflare Tunnel exposes them globally without moving compute to GCP/AWS or opening raw inbound ports on the laptop.
+
+Before starting long-running services, run:
+
+```bash
+just local-origin-check
+```
+
+Then start the local origin and tunnel:
+
+```bash
+just up
+cloudflared tunnel run nasrudin-local
+```
 
 **Local no-cheat E=mc² smoke.** To prove the workhorse path without an API key or submission daemon, run:
 
@@ -200,6 +223,71 @@ just smoke-qm-local
 ```
 
 Expected result: one Lake attempt, one Lake pass, and the `QUANTUM PLANCK-EINSTEIN RELATION DERIVED AND VERIFIED` banner. This runs `--domain qm --target qm_planck_einstein` with no API submission and the same low-LLM local profile.
+
+The featured quantum ladder also has a local Schrödinger anchor:
+
+```bash
+cd engine
+PATH="$HOME/.elan/bin:$PATH" NASRUDIN_NO_PAID_JOBS=1 cargo run -p nasrudin-ga --bin worker -- \
+  --domain qm \
+  --target qm_schrodinger \
+  --verify ../prover \
+  --gens 1 \
+  --pop 8 \
+  --chunks 1 \
+  --max-lake 1 \
+  --no-persistent-elaborator \
+  --no-submit \
+  --submit-top-k 0
+```
+
+Expected result: one Lake attempt, one Lake pass, and a verified theorem whose chain starts from `qm_schrodinger_evolution`.
+
+**Local auto-target smoke.** To prove the RL target portfolio can choose a target while the GA remains the workhorse, run:
+
+```bash
+just smoke-auto-qm-local
+```
+
+Expected result: the worker logs `Auto-target RL selected 'qm_planck_einstein'`, then one Lake attempt, one Lake pass, and the same quantum verification banner. The recipe uses a temporary `NASRUDIN_WORKER_RL_STATE` file so the run demonstrates cold-start target selection rather than reusing local history.
+
+**Local featured-ladder smoke.** To prove the local auto-target curriculum advances across featured QM targets, run:
+
+```bash
+just smoke-featured-qm-local
+```
+
+Expected result: the first run logs `featured 0/2 proved`, selects `qm_planck_einstein`, and verifies `Eph = hbar * omega`; the second run reuses the same temporary RL state, logs `featured 1/2 proved`, selects `qm_schrodinger`, and verifies a chain starting from `qm_schrodinger_evolution`.
+
+To test the same featured-first policy used by the default laptop-origin worker in `just up`, run:
+
+```bash
+just smoke-featured-all-local
+```
+
+Expected result: the first run uses `--domain all --target auto`, selects `sr_rest_energy`, and verifies `E = m·c²`; the second run reuses the same temporary RL state, logs `featured 1/7 proved`, selects `qm_planck_einstein`, and verifies `Eph = hbar * omega`.
+
+**Verifier-budget policy.** Lake/Lean calls are treated as scarce evaluator budget. When a target is active, the worker now ranks proof attempts by target completion before generic novelty, prefers shorter proof contexts, and pre-rejects chains whose introduced axiom context contains formalization plumbing symbols. This keeps the GA/RL workhorse from spending the only verifier slot on unrelated Mathlib scaffolding when a clean target-complete chain is available.
+
+**LLM prompt-budget policy.** LLM steering calls are sparse strategy updates, not search steps. Before the steerer builds its user prompt, recent worker cluster reports are passed through a lossy evidence condenser: it keeps reward, fitness, target-progress, verifier, QD/archive, and mutation-operator evidence, while dropping raw populations, example chains, Lean source, stdout/stderr, and log blobs. This keeps the 10k-token / 2h ceiling available for high-level strategy genomes and curriculum choices instead of accidental telemetry dumps.
+
+The budget cap is enforced twice: first by conservative prompt estimation before the call, then by a rolling `cluster_steering` usage ledger using provider-reported prompt and completion tokens. Budget refusals persist a validation-failed strategy marker with no token counts, so operators can distinguish "no LLM spend because budget exhausted" from normal RL-only cycles.
+
+The evidence gate is separate from the hard token ledger. `LLM_STEER_MIN_CLUSTER_REPORTS=1` means "do not call the LLM just because two hours passed; wait until workers have produced new cluster telemetry." Paid active jobs bypass the gate because the steerer may need to rebalance prerequisites for the job domain. Set `LLM_STEER_MIN_CLUSTER_REPORTS=0` only if you intentionally want the older timer-driven behavior.
+
+**Auto-target RL policy.** `--target auto` / `NASRUDIN_AUTO_TARGETS=1` uses a nonstationary verifier-aware portfolio controller. Cold targets are tried first; after that, a local meta-controller chooses among target-scoring policies (`verifier_ucb`, `recent_verifier`, `novelty_seeker`, `stall_rescue`) using prior verifier reward, then the selected policy scores targets from lifetime reward, recent reward EMA, recent Lake pass EMA, novelty EMA, UCB exploration, and stall signals. This is the inner "how to search" RL layer; it does not call the LLM. Tune `NASRUDIN_TARGET_RL_EMA_ALPHA` to control how quickly target choice reacts to recent verifier outcomes. Tune `NASRUDIN_TARGET_RL_STALL_THRESHOLD` to control how many consecutive no-proof chunks a target gets before it is reported as stalled and skipped so it cannot block frontier/novelty search forever. Tune `NASRUDIN_TARGET_RL_STALL_RETRY_SECONDS` to control when a stalled featured theorem re-enters priority; corpus-size drift also makes it eligible again because new local discoveries may have changed the proof landscape.
+
+**GA workhorse RL policy.** Every background chunk also selects a local GA policy (`steady_verify`, `wide_explore`, `deep_recombine`, `mutation_sweep`, `lake_focus`) from persisted verifier reward. The selected policy makes bounded changes to population size, mutation rate, crossover rate, tournament pressure, max chain depth, and Lake budget before the GA runs. This is the workhorse equivalent of test-time compute scaling: the LLM can still provide rare high-level steering, but the laptop worker learns the per-chunk "how hard and in what style should I search?" decision locally from Lake/verifier feedback.
+
+**Verified-chain replay archive.** When local Lake verification is enabled, every verified discovery is stored in the worker's scoped RL state as a bounded replay elite. Future chunks inject the newest proof-backed chains as elite seeds before random mutation/crossover starts. This is the local analogue of an AlphaEvolve archive: successful derivation programs are reused and mutated without another LLM call. `NASRUDIN_REPLAY_ELITE_ARCHIVE_LIMIT` caps persisted memory, and `NASRUDIN_REPLAY_ELITES_PER_CHUNK` caps how many archived chains enter a chunk. The archive does not learn from `--no-local-lake` harvested candidates because those still need server-side verification.
+
+**Featured-first curriculum.** Production workers claim platform conjecture jobs before background discovery, so the API queue prioritizes the featured physics rediscoveries first. Local/full-auto workers mirror that behavior: `--target auto` ranks unproved featured targets ahead of frontier targets, persists a per-target `proved` bit only when a verified theorem matches the built-in target spec, then falls through to frontier targets and finally untargeted novelty search once the featured curriculum is exhausted. This gives the system a visible proof ladder: rediscover known physics first, then travel beyond it.
+
+For local unattended deployment, keep `NASRUDIN_WORKER_RL_STATE` on a persistent path and run workers with `--target auto` / `NASRUDIN_AUTO_TARGETS=1`. The target portfolio state is what carries "featured theorem already proved" across worker restarts and lets the next run advance the curriculum instead of re-proving the same headline.
+
+In auto-target mode, worker startup logs include `Auto-target curriculum: featured X/Y proved; pending featured: ...; stalled featured: ...; pending frontier: ...` and the chosen target log includes `policy=...`. Each chunk also logs `GA workhorse policy=...` with the actual population, generation, mutation, crossover, tournament, chain-depth, and Lake settings used for that chunk. Treat this as the runtime audit trail: featured pending drains first, stalled featured targets have exceeded the local no-proof threshold and temporarily stop blocking progress, frontier pending starts after featured targets are proved or currently stalled, and `curriculum exhausted` means the worker has intentionally fallen through to untargeted novelty search. Stalled featured targets are retried after `NASRUDIN_TARGET_RL_STALL_RETRY_SECONDS` or after corpus-size drift.
+
+Featured seed coverage currently includes SR rest energy, Planck-Einstein, Schrödinger, Boltzmann entropy, Newton's second law, and the no-cosmological-constant Einstein field equation. Gauss's law remains featured but has no permanent elite until the upstream EM store has a clean `div_E`, `rho`, and `epsilon_0` postulate path.
 
 ## Reinforcement-Learning Layer
 
@@ -337,7 +425,7 @@ just clean           # Remove all build artifacts
 | **Math Rendering** | KaTeX | 0.16 |
 | **Graph Canvas** | React Flow | 12 |
 | **LLM Integration** | MCP (Model Context Protocol) | -- |
-| **Cluster Steerer** | Kimi K2.6 via DigitalOcean Gradient | `kimi-k2.6` |
+| **Cluster Steerer** | Latest GLM via DigitalOcean Gradient | auto from `/v1/models` |
 
 ## The GA Engine
 

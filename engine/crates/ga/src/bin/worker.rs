@@ -57,6 +57,12 @@ const DEFAULT_RL_HALF_LIFE_HOURS: f64 = 168.0;
 struct WorkerRlState {
     version: u32,
     scopes: std::collections::BTreeMap<String, WorkerRlScopeState>,
+    #[serde(default)]
+    target_portfolio: std::collections::BTreeMap<String, TargetPortfolioStats>,
+    #[serde(default)]
+    target_selector_policies: std::collections::BTreeMap<String, TargetSelectorPolicyStats>,
+    #[serde(default)]
+    ga_workhorse_policies: std::collections::BTreeMap<String, GaWorkhorsePolicyStats>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -71,6 +77,36 @@ struct WorkerRlScopeState {
     qd_archive: nasrudin_ga::chain_engine::QdArchiveStats,
     #[serde(default)]
     strategy_genomes: std::collections::BTreeMap<String, StrategyGenomeStats>,
+    #[serde(default)]
+    replay_elites: Vec<ReplayElite>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct ReplayElite {
+    canonical: String,
+    chain: Vec<RuleStep>,
+    #[serde(default)]
+    added_at_unix_secs: i64,
+    #[serde(default)]
+    generation: usize,
+    #[serde(default)]
+    pulls: u32,
+    #[serde(default)]
+    total_reward: f64,
+    #[serde(default)]
+    last_reward: f64,
+    #[serde(default)]
+    best_reward: f64,
+    #[serde(default)]
+    reward_ema: f64,
+    #[serde(default)]
+    last_replayed_unix_secs: i64,
+}
+
+#[derive(Debug, Clone)]
+struct ReplayEliteSelection {
+    canonical: String,
+    chain: Chain,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -91,11 +127,68 @@ struct StrategyGenomeStats {
     best_reward: f64,
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct TargetPortfolioStats {
+    #[serde(default)]
+    pulls: u32,
+    #[serde(default)]
+    total_reward: f64,
+    #[serde(default)]
+    last_reward: f64,
+    #[serde(default)]
+    best_reward: f64,
+    #[serde(default)]
+    reward_ema: f64,
+    #[serde(default)]
+    lake_pass_ema: f64,
+    #[serde(default)]
+    novelty_ema: f64,
+    #[serde(default)]
+    failure_streak: u32,
+    #[serde(default)]
+    proved: bool,
+    #[serde(default)]
+    last_attempt_unix_secs: i64,
+    #[serde(default)]
+    corpus_len_at_last_attempt: usize,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct TargetSelectorPolicyStats {
+    #[serde(default)]
+    pulls: u32,
+    #[serde(default)]
+    total_reward: f64,
+    #[serde(default)]
+    last_reward: f64,
+    #[serde(default)]
+    best_reward: f64,
+    #[serde(default)]
+    reward_ema: f64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct GaWorkhorsePolicyStats {
+    #[serde(default)]
+    pulls: u32,
+    #[serde(default)]
+    total_reward: f64,
+    #[serde(default)]
+    last_reward: f64,
+    #[serde(default)]
+    best_reward: f64,
+    #[serde(default)]
+    reward_ema: f64,
+}
+
 impl Default for WorkerRlState {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 4,
             scopes: std::collections::BTreeMap::new(),
+            target_portfolio: std::collections::BTreeMap::new(),
+            target_selector_policies: std::collections::BTreeMap::new(),
+            ga_workhorse_policies: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -154,6 +247,7 @@ fn load_worker_rl_state(path: &Path) -> WorkerRlState {
                 mutation_operator: legacy.mutation_operator,
                 qd_archive: legacy.qd_archive,
                 strategy_genomes: std::collections::BTreeMap::new(),
+                replay_elites: Vec::new(),
             },
         );
         return state;
@@ -170,6 +264,7 @@ fn load_worker_rl_state(path: &Path) -> WorkerRlState {
                 mutation_operator: stats,
                 qd_archive: nasrudin_ga::chain_engine::QdArchiveStats::default(),
                 strategy_genomes: std::collections::BTreeMap::new(),
+                replay_elites: Vec::new(),
             },
         );
         return state;
@@ -196,6 +291,10 @@ fn worker_rl_scope_key(domain: &str, target_name: Option<&str>) -> String {
     let target = target_name
         .filter(|s| !s.is_empty())
         .unwrap_or("background");
+    format!("domain={domain}|target={target}")
+}
+
+fn target_portfolio_key(domain: &str, target: &str) -> String {
     format!("domain={domain}|target={target}")
 }
 
@@ -367,6 +466,681 @@ fn strategy_genome_reward(report: &nasrudin_ga::chain_engine::DiscoveryReport) -
     };
     let verified = if report.verified.is_empty() { 0.0 } else { 1.0 };
     (0.2 * novelty + 0.4 * pass_rate + 0.4 * verified).clamp(0.0, 1.0)
+}
+
+const FEATURED_TARGETS: &[&str] = &[
+    "sr_rest_energy",
+    "qm_planck_einstein",
+    "qm_schrodinger",
+    "thermo_boltzmann_entropy",
+    "newton_second",
+    "em_gauss_law",
+    "gr_einstein_field_equation",
+];
+
+fn is_featured_target(target: &str) -> bool {
+    FEATURED_TARGETS.contains(&target)
+}
+
+fn target_candidates_for_domain(domain: &str) -> Vec<&'static str> {
+    match domain {
+        "sr" | "special_relativity" => vec!["sr_rest_energy"],
+        "qm" | "quantum_mechanics" => vec![
+            "qm_planck_einstein",
+            "qm_schrodinger",
+            "qm_free_particle_dispersion",
+            "qm_de_broglie",
+            "qm_harmonic_oscillator_levels",
+        ],
+        "em" | "electromagnetism" => vec!["em_gauss_law"],
+        "thermo" | "thermodynamics" => vec!["thermo_boltzmann_entropy", "thermo_carnot"],
+        "classical" | "classical_mechanics" => vec!["newton_second"],
+        "gr" | "general_relativity" => {
+            vec!["gr_einstein_field_equation", "gr_schwarzschild_radius"]
+        }
+        "pure-math" | "mixed" | "all" => vec![
+            "sr_rest_energy",
+            "qm_planck_einstein",
+            "qm_schrodinger",
+            "thermo_boltzmann_entropy",
+            "newton_second",
+            "em_gauss_law",
+            "gr_einstein_field_equation",
+            "qm_free_particle_dispersion",
+            "qm_de_broglie",
+            "qm_harmonic_oscillator_levels",
+            "thermo_carnot",
+            "gr_schwarzschild_radius",
+        ],
+        _ => vec![],
+    }
+}
+
+const TARGET_SELECTOR_POLICIES: [&str; 4] = [
+    "verifier_ucb",
+    "recent_verifier",
+    "novelty_seeker",
+    "stall_rescue",
+];
+
+fn target_selector_policy_key(domain: &str, policy: &str) -> String {
+    format!("domain={domain}|policy={policy}")
+}
+
+fn select_target_selector_policy(
+    domain: &str,
+    stats: &std::collections::BTreeMap<String, TargetSelectorPolicyStats>,
+) -> &'static str {
+    for policy in TARGET_SELECTOR_POLICIES {
+        let key = target_selector_policy_key(domain, policy);
+        if stats.get(&key).map(|s| s.pulls).unwrap_or(0) == 0 {
+            return policy;
+        }
+    }
+    let total_pulls: u32 = TARGET_SELECTOR_POLICIES
+        .iter()
+        .map(|policy| {
+            stats
+                .get(&target_selector_policy_key(domain, policy))
+                .map(|s| s.pulls)
+                .unwrap_or(0)
+        })
+        .sum();
+    let total = (total_pulls.max(1) as f64).ln();
+    TARGET_SELECTOR_POLICIES
+        .into_iter()
+        .max_by(|a, b| {
+            let score = |policy: &str| {
+                let st = stats.get(&target_selector_policy_key(domain, policy));
+                let pulls = st.map(|s| s.pulls).unwrap_or(1).max(1) as f64;
+                let mean = st
+                    .map(|s| s.total_reward / s.pulls.max(1) as f64)
+                    .unwrap_or(0.0);
+                let reward_ema = st.map(|s| s.reward_ema).unwrap_or(mean);
+                let best = st.map(|s| s.best_reward).unwrap_or(0.0);
+                let exploration = (2.0 * total / pulls).sqrt();
+                0.35 * mean + 0.45 * reward_ema + 0.20 * best + exploration
+            };
+            score(a)
+                .partial_cmp(&score(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or("verifier_ucb")
+}
+
+fn update_target_selector_policy(stats: &mut TargetSelectorPolicyStats, reward: f64) {
+    let alpha = target_portfolio_ema_alpha();
+    let first_pull = stats.pulls == 0;
+    stats.pulls = stats.pulls.saturating_add(1);
+    stats.total_reward += reward;
+    stats.last_reward = reward;
+    stats.best_reward = stats.best_reward.max(reward);
+    if first_pull {
+        stats.reward_ema = reward;
+    } else {
+        stats.reward_ema = ema(stats.reward_ema, reward, alpha);
+    }
+}
+
+const GA_WORKHORSE_POLICIES: [&str; 5] = [
+    "steady_verify",
+    "wide_explore",
+    "deep_recombine",
+    "mutation_sweep",
+    "lake_focus",
+];
+
+fn ga_workhorse_policy_key(scope: &str, policy: &str) -> String {
+    format!("scope={scope}|policy={policy}")
+}
+
+fn select_ga_workhorse_policy(
+    scope: &str,
+    stats: &std::collections::BTreeMap<String, GaWorkhorsePolicyStats>,
+) -> &'static str {
+    for policy in GA_WORKHORSE_POLICIES {
+        let key = ga_workhorse_policy_key(scope, policy);
+        if stats.get(&key).map(|s| s.pulls).unwrap_or(0) == 0 {
+            return policy;
+        }
+    }
+    let total_pulls: u32 = GA_WORKHORSE_POLICIES
+        .iter()
+        .map(|policy| {
+            stats
+                .get(&ga_workhorse_policy_key(scope, policy))
+                .map(|s| s.pulls)
+                .unwrap_or(0)
+        })
+        .sum();
+    let total = (total_pulls.max(1) as f64).ln();
+    GA_WORKHORSE_POLICIES
+        .into_iter()
+        .max_by(|a, b| {
+            let score = |policy: &str| {
+                let st = stats.get(&ga_workhorse_policy_key(scope, policy));
+                let pulls = st.map(|s| s.pulls).unwrap_or(1).max(1) as f64;
+                let mean = st
+                    .map(|s| s.total_reward / s.pulls.max(1) as f64)
+                    .unwrap_or(0.0);
+                let reward_ema = st.map(|s| s.reward_ema).unwrap_or(mean);
+                let best = st.map(|s| s.best_reward).unwrap_or(0.0);
+                let exploration = (2.0 * total / pulls).sqrt();
+                0.30 * mean + 0.50 * reward_ema + 0.20 * best + exploration
+            };
+            score(a)
+                .partial_cmp(&score(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or("steady_verify")
+}
+
+fn update_ga_workhorse_policy(stats: &mut GaWorkhorsePolicyStats, reward: f64) {
+    let alpha = target_portfolio_ema_alpha();
+    let first_pull = stats.pulls == 0;
+    stats.pulls = stats.pulls.saturating_add(1);
+    stats.total_reward += reward;
+    stats.last_reward = reward;
+    stats.best_reward = stats.best_reward.max(reward);
+    if first_pull {
+        stats.reward_ema = reward;
+    } else {
+        stats.reward_ema = ema(stats.reward_ema, reward, alpha);
+    }
+}
+
+fn replay_elites_enabled() -> bool {
+    std::env::var("NASRUDIN_REPLAY_ELITES")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn replay_elite_archive_limit() -> usize {
+    std::env::var("NASRUDIN_REPLAY_ELITE_ARCHIVE_LIMIT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(16)
+        .clamp(1, 128)
+}
+
+fn replay_elites_per_chunk() -> usize {
+    std::env::var("NASRUDIN_REPLAY_ELITES_PER_CHUNK")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(4)
+        .clamp(1, 32)
+}
+
+fn replay_elite_selections(scope: &WorkerRlScopeState) -> Vec<ReplayEliteSelection> {
+    if !replay_elites_enabled() {
+        return Vec::new();
+    }
+    let total_pulls: u32 = scope.replay_elites.iter().map(|elite| elite.pulls).sum();
+    let total = (total_pulls.max(1) as f64).ln();
+    let mut scored: Vec<(usize, f64)> = scope
+        .replay_elites
+        .iter()
+        .enumerate()
+        .filter(|(_, elite)| !elite.chain.is_empty())
+        .map(|(idx, elite)| {
+            let score = if elite.pulls == 0 {
+                // Try every proof-backed elite at least once before
+                // exploiting. Preserve archive recency as a tiny tie-break.
+                10_000.0 - idx as f64 * 1e-6
+            } else {
+                let pulls = elite.pulls.max(1) as f64;
+                let mean = elite.total_reward / pulls;
+                let exploration = (2.0 * total / pulls).sqrt();
+                0.30 * mean
+                    + 0.45 * elite.reward_ema
+                    + 0.15 * elite.best_reward
+                    + exploration
+                    - idx as f64 * 1e-6
+            };
+            (idx, score)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored
+        .into_iter()
+        .take(replay_elites_per_chunk())
+        .filter_map(|(idx, _)| scope.replay_elites.get(idx))
+        .map(|elite| ReplayEliteSelection {
+            canonical: elite.canonical.clone(),
+            chain: Chain(elite.chain.clone()),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn replay_elite_chains(scope: &WorkerRlScopeState) -> Vec<Chain> {
+    replay_elite_selections(scope)
+        .into_iter()
+        .map(|selection| selection.chain)
+        .collect()
+}
+
+fn update_selected_replay_elites(
+    scope: &mut WorkerRlScopeState,
+    selected_canonicals: &[String],
+    reward: f64,
+    now_unix_secs: i64,
+) {
+    if selected_canonicals.is_empty() || !reward.is_finite() {
+        return;
+    }
+    let alpha = target_portfolio_ema_alpha();
+    for canonical in selected_canonicals {
+        if let Some(elite) = scope
+            .replay_elites
+            .iter_mut()
+            .find(|elite| &elite.canonical == canonical)
+        {
+            let first_pull = elite.pulls == 0;
+            let r = reward.clamp(0.0, 1.0);
+            elite.pulls = elite.pulls.saturating_add(1);
+            elite.total_reward += r;
+            elite.last_reward = r;
+            elite.best_reward = elite.best_reward.max(r);
+            elite.reward_ema = if first_pull {
+                r
+            } else {
+                ema(elite.reward_ema, r, alpha)
+            };
+            elite.last_replayed_unix_secs = now_unix_secs;
+        }
+    }
+}
+
+fn update_replay_elites_from_verified(
+    scope: &mut WorkerRlScopeState,
+    report: &nasrudin_ga::chain_engine::DiscoveryReport,
+    now_unix_secs: i64,
+) -> usize {
+    if !replay_elites_enabled() {
+        return 0;
+    }
+    let mut added = 0usize;
+    for discovery in &report.verified {
+        if discovery.canonical.trim().is_empty() || discovery.chain.is_empty() {
+            continue;
+        }
+        scope
+            .replay_elites
+            .retain(|elite| elite.canonical != discovery.canonical);
+        scope.replay_elites.insert(
+            0,
+            ReplayElite {
+                canonical: discovery.canonical.clone(),
+                chain: discovery.chain.0.clone(),
+                added_at_unix_secs: now_unix_secs,
+                generation: discovery.generation,
+            },
+        );
+        added += 1;
+    }
+    scope.replay_elites.truncate(replay_elite_archive_limit());
+    added
+}
+
+fn apply_ga_workhorse_policy(
+    cfg: &mut DiscoveryConfig,
+    policy: &str,
+    base_pop: usize,
+    base_max_chain_len: usize,
+    base_max_lake: usize,
+) {
+    match policy {
+        "wide_explore" => {
+            cfg.population_size = scaled_usize(base_pop, 1.50, 8, 512);
+            cfg.mutation_rate = (cfg.mutation_rate + 0.05).clamp(0.05, 0.30);
+            cfg.crossover_rate = (cfg.crossover_rate + 0.05).clamp(0.20, 0.90);
+        }
+        "deep_recombine" => {
+            cfg.max_chain_len = base_max_chain_len.saturating_add(4).clamp(4, 24);
+            cfg.crossover_rate = (cfg.crossover_rate + 0.15).clamp(0.20, 0.90);
+            cfg.mutation_rate = (cfg.mutation_rate - 0.03).clamp(0.05, 0.30);
+            cfg.tournament_size = cfg.tournament_size.saturating_add(1).clamp(2, 7);
+        }
+        "mutation_sweep" => {
+            cfg.population_size = scaled_usize(base_pop, 1.20, 8, 512);
+            cfg.mutation_rate = (cfg.mutation_rate + 0.10).clamp(0.05, 0.30);
+            cfg.crossover_rate = (cfg.crossover_rate - 0.10).clamp(0.20, 0.90);
+            cfg.tournament_size = cfg.tournament_size.saturating_sub(1).clamp(2, 7);
+        }
+        "lake_focus" => {
+            cfg.population_size = scaled_usize(base_pop, 0.80, 8, 512);
+            cfg.mutation_rate = (cfg.mutation_rate - 0.05).clamp(0.05, 0.30);
+            cfg.crossover_rate = (cfg.crossover_rate + 0.05).clamp(0.20, 0.90);
+            cfg.max_lake_verifications =
+                scaled_usize(base_max_lake.max(1), 1.50, 1, base_max_lake.max(1) * 3);
+        }
+        _ => {}
+    }
+}
+
+fn scaled_usize(value: usize, factor: f64, min: usize, max: usize) -> usize {
+    ((value as f64 * factor).round() as usize).clamp(min, max.max(min))
+}
+
+#[cfg(test)]
+fn select_auto_target<'a>(
+    domain: &str,
+    candidates: &'a [&'static str],
+    stats: &std::collections::BTreeMap<String, TargetPortfolioStats>,
+    corpus_len: usize,
+    now_unix_secs: i64,
+) -> Option<&'a str> {
+    select_auto_target_with_policy(
+        domain,
+        candidates,
+        stats,
+        corpus_len,
+        now_unix_secs,
+        "verifier_ucb",
+    )
+}
+
+fn select_auto_target_with_policy<'a>(
+    domain: &str,
+    candidates: &'a [&'static str],
+    stats: &std::collections::BTreeMap<String, TargetPortfolioStats>,
+    corpus_len: usize,
+    now_unix_secs: i64,
+    policy: &str,
+) -> Option<&'a str> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let unproved_featured: Vec<&'a str> = candidates
+        .iter()
+        .copied()
+        .filter(|candidate| is_featured_target(candidate))
+        .filter(|candidate| {
+            let key = target_portfolio_key(domain, candidate);
+            let st = stats.get(&key);
+            !st.map(|s| s.proved).unwrap_or(false) && !stalled_target(st, corpus_len, now_unix_secs)
+        })
+        .collect();
+    if !unproved_featured.is_empty() {
+        return select_auto_target_from_pool(domain, unproved_featured, stats, policy);
+    }
+    let unproved_frontier: Vec<&'a str> = candidates
+        .iter()
+        .copied()
+        .filter(|candidate| !is_featured_target(candidate))
+        .filter(|candidate| {
+            !stats
+                .get(&target_portfolio_key(domain, candidate))
+                .map(|s| s.proved)
+                .unwrap_or(false)
+        })
+        .collect();
+    if unproved_frontier.is_empty() {
+        return None;
+    }
+    select_auto_target_from_pool(domain, unproved_frontier, stats, policy)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AutoTargetCurriculumStatus {
+    featured_total: usize,
+    featured_proved: usize,
+    featured_pending: Vec<&'static str>,
+    featured_stalled: Vec<&'static str>,
+    frontier_pending: Vec<&'static str>,
+}
+
+fn auto_target_curriculum_status(
+    domain: &str,
+    candidates: &[&'static str],
+    stats: &std::collections::BTreeMap<String, TargetPortfolioStats>,
+    corpus_len: usize,
+    now_unix_secs: i64,
+) -> AutoTargetCurriculumStatus {
+    let mut featured_total = 0usize;
+    let mut featured_proved = 0usize;
+    let mut featured_pending = Vec::new();
+    let mut featured_stalled = Vec::new();
+    let mut frontier_pending = Vec::new();
+    for candidate in candidates {
+        let key = target_portfolio_key(domain, candidate);
+        let st = stats.get(&key);
+        let proved = st.map(|s| s.proved).unwrap_or(false);
+        if is_featured_target(candidate) {
+            featured_total += 1;
+            if proved {
+                featured_proved += 1;
+            } else if stalled_target(st, corpus_len, now_unix_secs) {
+                featured_stalled.push(*candidate);
+            } else {
+                featured_pending.push(*candidate);
+            }
+        } else if !proved {
+            frontier_pending.push(*candidate);
+        }
+    }
+    AutoTargetCurriculumStatus {
+        featured_total,
+        featured_proved,
+        featured_pending,
+        featured_stalled,
+        frontier_pending,
+    }
+}
+
+fn stalled_target(
+    stats: Option<&TargetPortfolioStats>,
+    corpus_len: usize,
+    now_unix_secs: i64,
+) -> bool {
+    let Some(s) = stats else {
+        return false;
+    };
+    if s.failure_streak < target_stall_threshold() {
+        return false;
+    }
+    if s.corpus_len_at_last_attempt != 0 && s.corpus_len_at_last_attempt != corpus_len {
+        return false;
+    }
+    let cooldown = target_stall_retry_after_secs();
+    if cooldown == 0 {
+        return true;
+    }
+    let elapsed = now_unix_secs.saturating_sub(s.last_attempt_unix_secs);
+    elapsed < cooldown
+}
+
+fn target_stall_threshold() -> u32 {
+    std::env::var("NASRUDIN_TARGET_RL_STALL_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(5)
+        .max(1)
+}
+
+fn target_stall_retry_after_secs() -> i64 {
+    std::env::var("NASRUDIN_TARGET_RL_STALL_RETRY_SECONDS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(86_400)
+        .max(0)
+}
+
+fn format_target_list(targets: &[&str]) -> String {
+    if targets.is_empty() {
+        "none".into()
+    } else {
+        targets.join(", ")
+    }
+}
+
+fn select_auto_target_from_pool<'a>(
+    domain: &str,
+    candidates: Vec<&'a str>,
+    stats: &std::collections::BTreeMap<String, TargetPortfolioStats>,
+    policy: &str,
+) -> Option<&'a str> {
+    for candidate in &candidates {
+        let key = target_portfolio_key(domain, candidate);
+        if stats.get(&key).map(|s| s.pulls).unwrap_or(0) == 0 {
+            return Some(*candidate);
+        }
+    }
+    let total_pulls: u32 = candidates
+        .iter()
+        .map(|candidate| {
+            stats
+                .get(&target_portfolio_key(domain, candidate))
+                .map(|s| s.pulls)
+                .unwrap_or(0)
+        })
+        .sum();
+    let total = (total_pulls.max(1) as f64).ln();
+    candidates.into_iter().max_by(|a, b| {
+        let score = |target: &str| {
+            let key = target_portfolio_key(domain, target);
+            let st = stats.get(&key);
+            let pulls = st.map(|s| s.pulls).unwrap_or(1).max(1) as f64;
+            let mean = st
+                .map(|s| s.total_reward / s.pulls.max(1) as f64)
+                .unwrap_or(0.0);
+            let reward_ema = st.map(|s| s.reward_ema).unwrap_or(mean);
+            let lake_pass_ema = st.map(|s| s.lake_pass_ema).unwrap_or(0.0);
+            let novelty_ema = st.map(|s| s.novelty_ema).unwrap_or(0.0);
+            let best = st.map(|s| s.best_reward).unwrap_or(0.0);
+            let failure_streak = st.map(|s| s.failure_streak).unwrap_or(0).min(8) as f64;
+            let exploration = (2.0 * total / pulls).sqrt();
+            let stall_penalty = 0.07 * failure_streak;
+            match policy {
+                "recent_verifier" => {
+                    0.15 * mean
+                        + 0.45 * reward_ema
+                        + 0.30 * lake_pass_ema
+                        + 0.10 * best
+                        + exploration
+                        - stall_penalty
+                }
+                "novelty_seeker" => {
+                    0.15 * mean
+                        + 0.25 * reward_ema
+                        + 0.15 * lake_pass_ema
+                        + 0.35 * novelty_ema
+                        + 0.10 * best
+                        + exploration
+                        - stall_penalty
+                }
+                "stall_rescue" => {
+                    let rescue_bonus = 0.04 * failure_streak;
+                    0.20 * mean
+                        + 0.30 * reward_ema
+                        + 0.20 * lake_pass_ema
+                        + 0.15 * novelty_ema
+                        + 0.15 * best
+                        + exploration
+                        + rescue_bonus
+                        - 0.02 * failure_streak
+                }
+                _ => {
+                    // Nonstationary verifier-aware UCB. Lifetime mean keeps
+                    // useful long-run signal, but recent EMA and Lake pass EMA
+                    // dominate so the portfolio reacts when a target becomes
+                    // newly productive after corpus/proof-cache drift. The
+                    // policy meta-bandit above learns when this default scorer
+                    // beats the more exploratory scorer variants.
+                    0.25 * mean
+                        + 0.35 * reward_ema
+                        + 0.20 * lake_pass_ema
+                        + 0.10 * novelty_ema
+                        + 0.10 * best
+                        + exploration
+                        - stall_penalty
+                }
+            }
+        };
+        score(a)
+            .partial_cmp(&score(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
+}
+
+fn update_target_portfolio(
+    stats: &mut TargetPortfolioStats,
+    target_name: &str,
+    report: &nasrudin_ga::chain_engine::DiscoveryReport,
+    corpus_len: usize,
+    now_unix_secs: i64,
+) {
+    let reward = strategy_genome_reward(report);
+    let alpha = target_portfolio_ema_alpha();
+    let pass_rate = if report.lake_attempts > 0 {
+        report.lake_passed as f64 / report.lake_attempts as f64
+    } else {
+        0.0
+    };
+    let novelty = if report.total_candidates > 0 {
+        report.unique_executable as f64 / report.total_candidates as f64
+    } else {
+        0.0
+    }
+    .clamp(0.0, 1.0);
+    let first_pull = stats.pulls == 0;
+    stats.last_attempt_unix_secs = now_unix_secs;
+    stats.corpus_len_at_last_attempt = corpus_len;
+    stats.pulls = stats.pulls.saturating_add(1);
+    stats.total_reward += reward;
+    stats.last_reward = reward;
+    stats.best_reward = stats.best_reward.max(reward);
+    if target_was_verified(target_name, report) {
+        stats.proved = true;
+    }
+    if first_pull {
+        stats.reward_ema = reward;
+        stats.lake_pass_ema = pass_rate;
+        stats.novelty_ema = novelty;
+    } else {
+        stats.reward_ema = ema(stats.reward_ema, reward, alpha);
+        stats.lake_pass_ema = ema(stats.lake_pass_ema, pass_rate, alpha);
+        stats.novelty_ema = ema(stats.novelty_ema, novelty, alpha);
+    }
+    if report.lake_passed > 0 || !report.verified.is_empty() {
+        stats.failure_streak = 0;
+    } else {
+        stats.failure_streak = stats.failure_streak.saturating_add(1);
+    }
+}
+
+fn target_was_verified(
+    target_name: &str,
+    report: &nasrudin_ga::chain_engine::DiscoveryReport,
+) -> bool {
+    let Some(spec) = nasrudin_ga::target::TargetSpec::lookup(target_name) else {
+        return false;
+    };
+    let target_canonical = spec.final_target.to_canonical();
+    report.verified.iter().any(|discovery| {
+        discovery.canonical == target_canonical
+            || discovery.final_expr.to_canonical() == target_canonical
+            || nasrudin_ga::target::shape_similarity(&discovery.final_expr, &spec.final_target)
+                >= 0.999
+    })
+}
+
+fn target_portfolio_ema_alpha() -> f64 {
+    std::env::var("NASRUDIN_TARGET_RL_EMA_ALPHA")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.30)
+        .clamp(0.05, 1.0)
+}
+
+fn ema(prev: f64, next: f64, alpha: f64) -> f64 {
+    alpha * next + (1.0 - alpha) * prev
 }
 
 #[tokio::main]
@@ -866,19 +1640,78 @@ async fn main() {
         println!();
     }
 
+    let worker_rl_state_path = worker_rl_state_path();
+    let mut worker_rl_state = load_worker_rl_state(&worker_rl_state_path);
+
     // Resolve target: --target sr_rest_energy is the canonical first POC.
     // The shape itself is *not* added to the AxiomStore — it's metadata
     // used to bias the search via target_shape + ladder_progress fitness.
     // The no-cheat audit confirms this invariant at boot.
-    let target_name = std::env::args()
+    let requested_target = std::env::args()
         .skip_while(|a| a != "--target")
         .nth(1)
-        .or_else(|| std::env::var("NASRUDIN_TARGET").ok())
-        .unwrap_or_else(|| match domain.as_str() {
+        .or_else(|| std::env::var("NASRUDIN_TARGET").ok());
+    let auto_targets = requested_target.as_deref() == Some("auto")
+        || std::env::var("NASRUDIN_AUTO_TARGETS")
+            .map(|v| {
+                !matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                )
+            })
+            .unwrap_or(false);
+    let mut active_target_selector_policy: Option<String> = None;
+    let target_name = if auto_targets {
+        let candidates = target_candidates_for_domain(&domain);
+        let target_now = now_unix_secs();
+        let target_corpus_len = store.len();
+        let selector_policy =
+            select_target_selector_policy(&domain, &worker_rl_state.target_selector_policies);
+        let curriculum = auto_target_curriculum_status(
+            &domain,
+            &candidates,
+            &worker_rl_state.target_portfolio,
+            target_corpus_len,
+            target_now,
+        );
+        println!(
+            "▶ Auto-target curriculum: featured {}/{} proved; pending featured: {}; stalled featured: {}; pending frontier: {}",
+            curriculum.featured_proved,
+            curriculum.featured_total,
+            format_target_list(&curriculum.featured_pending),
+            format_target_list(&curriculum.featured_stalled),
+            format_target_list(&curriculum.frontier_pending),
+        );
+        match select_auto_target_with_policy(
+            &domain,
+            &candidates,
+            &worker_rl_state.target_portfolio,
+            target_corpus_len,
+            target_now,
+            selector_policy,
+        ) {
+            Some(name) => {
+                active_target_selector_policy = Some(selector_policy.to_string());
+                println!(
+                    "▶ Auto-target RL selected `{name}` from {} candidates for domain={domain} policy={selector_policy}",
+                    candidates.len(),
+                );
+                name.to_string()
+            }
+            None => {
+                println!(
+                    "▶ Auto-target curriculum exhausted for domain={domain}; running untargeted novelty search"
+                );
+                String::new()
+            }
+        }
+    } else {
+        requested_target.unwrap_or_else(|| match domain.as_str() {
             "sr" => "sr_rest_energy".into(),
             "qm" => "qm_planck_einstein".into(),
             _ => String::new(),
-        });
+        })
+    };
     let target_spec = if target_name.is_empty() {
         None
     } else {
@@ -1379,8 +2212,6 @@ async fn main() {
         c
     };
     let paid_slice_store: std::sync::Arc<AxiomStore> = std::sync::Arc::new(store.clone());
-    let worker_rl_state_path = worker_rl_state_path();
-    let mut worker_rl_state = load_worker_rl_state(&worker_rl_state_path);
     let worker_rl_scope_key = worker_rl_scope_key(&domain, target_name_for_elite);
     let mut worker_rl_scope_state = worker_rl_state
         .scopes
@@ -1572,6 +2403,37 @@ async fn main() {
             "thermo" => "thermodynamics",
             other => other,
         };
+        let ga_policy = select_ga_workhorse_policy(
+            &worker_rl_scope_key,
+            &worker_rl_state.ga_workhorse_policies,
+        );
+        apply_ga_workhorse_policy(&mut chunk_config, ga_policy, pop, max_chain_len, max_lake);
+        let replay_selections = replay_elite_selections(&worker_rl_scope_state);
+        let active_replay_canonicals: Vec<String> = replay_selections
+            .iter()
+            .map(|selection| selection.canonical.clone())
+            .collect();
+        if !replay_selections.is_empty() {
+            let n = replay_selections.len();
+            chunk_config
+                .llm_proposed_chains
+                .extend(replay_selections.into_iter().map(|selection| selection.chain));
+            println!(
+                "▶ chunk {} replay elites: injected {n} locally verified prioritized chain(s) from worker RL archive",
+                chunk_i + 1,
+            );
+        }
+        println!(
+            "▶ chunk {} GA workhorse policy={ga_policy}: pop={}, gens={}, mutation={:.3}, crossover={:.3}, tournament={}, max_chain_len={}, max_lake={}",
+            chunk_i + 1,
+            chunk_config.population_size,
+            chunk_config.generations,
+            chunk_config.mutation_rate,
+            chunk_config.crossover_rate,
+            chunk_config.tournament_size,
+            chunk_config.max_chain_len,
+            chunk_config.max_lake_verifications,
+        );
         let mut active_strategy_genome: Option<(String, f64)> = None;
         if let Some(ref s) = last_steering {
             let strategy_weight = if let Some(fp) =
@@ -1642,11 +2504,11 @@ async fn main() {
                             let chain = nasrudin_derive::Chain(steps);
                             println!(
                                 "▶ LLM proposed chain ({} steps) for target={} — \
-                                 locked as elite",
+                                 added as elite seed",
                                 chain.len(),
                                 target_name
                             );
-                            chunk_config.llm_proposed_chains = vec![chain];
+                            chunk_config.llm_proposed_chains.push(chain);
                         }
                         Ok(_) => {
                             tracing::debug!(
@@ -1965,6 +2827,33 @@ async fn main() {
                 "updated strategy genome evaluator stats"
             );
         }
+        let ga_policy_reward = strategy_genome_reward(&report);
+        let ga_policy_key = ga_workhorse_policy_key(&worker_rl_scope_key, ga_policy);
+        let ga_policy_stats = worker_rl_state
+            .ga_workhorse_policies
+            .entry(ga_policy_key)
+            .or_default();
+        update_ga_workhorse_policy(ga_policy_stats, ga_policy_reward);
+        tracing::debug!(
+            policy = ga_policy,
+            pulls = ga_policy_stats.pulls,
+            mean_reward = ga_policy_stats.total_reward / ga_policy_stats.pulls.max(1) as f64,
+            reward = ga_policy_reward,
+            "updated GA workhorse policy stats"
+        );
+        if !no_local_lake {
+            let replay_added = update_replay_elites_from_verified(
+                &mut worker_rl_scope_state,
+                &report,
+                now_unix_secs(),
+            );
+            if replay_added > 0 {
+                println!(
+                    "▶ replay archive: added/updated {replay_added} locally verified elite(s), archive_size={}",
+                    worker_rl_scope_state.replay_elites.len()
+                );
+            }
+        }
         worker_rl_scope_state.mutation_operator = report.mutation_operator_stats.clone();
         worker_rl_scope_state.qd_archive = report.qd_archive_stats.clone();
         worker_rl_scope_state.updated_at_unix_secs = now_unix_secs();
@@ -2238,6 +3127,41 @@ async fn main() {
         mutation_operator_stats: worker_rl_scope_state.mutation_operator,
         qd_archive_stats: worker_rl_scope_state.qd_archive,
     };
+
+    if let Some(target_name) = target_name_for_elite {
+        let key = target_portfolio_key(&domain, target_name);
+        let stats = worker_rl_state
+            .target_portfolio
+            .entry(key.clone())
+            .or_default();
+        update_target_portfolio(stats, target_name, &report, store.len(), now_unix_secs());
+        let pulls = stats.pulls;
+        let mean_reward = stats.total_reward / stats.pulls.max(1) as f64;
+        let last_reward = stats.last_reward;
+        if let Some(policy) = active_target_selector_policy.as_deref() {
+            let policy_key = target_selector_policy_key(&domain, policy);
+            let policy_stats = worker_rl_state
+                .target_selector_policies
+                .entry(policy_key)
+                .or_default();
+            update_target_selector_policy(policy_stats, strategy_genome_reward(&report));
+        }
+        if let Err(e) = save_worker_rl_state(&worker_rl_state_path, &worker_rl_state) {
+            tracing::warn!(
+                error = %e,
+                path = %worker_rl_state_path.display(),
+                "failed to persist target portfolio RL state"
+            );
+        } else {
+            tracing::debug!(
+                key,
+                pulls,
+                mean_reward,
+                last_reward,
+                "updated target portfolio RL state"
+            );
+        }
+    }
 
     println!("▶ Run complete.");
     println!("    Generations:         {}", report.generations_run);
@@ -2645,7 +3569,10 @@ fn arg_value<T: std::str::FromStr>(args: &[String], flag: &str) -> Option<T> {
 /// Registered seed chains:
 /// - `sr_rest_energy`            → `Chain::rest_energy_from_upstream`
 /// - `qm_planck_einstein`        → `Chain::planck_einstein_from_upstream`
+/// - `qm_schrodinger`            → `Chain::schrodinger_from_upstream`
 /// - `thermo_boltzmann_entropy`  → `Chain::boltzmann_entropy_from_upstream`
+/// - `newton_second`             → `Chain::newton_second_from_upstream`
+/// - `gr_einstein_field_equation` → `Chain::einstein_field_no_lambda_from_upstream`
 ///
 /// `em_gauss_law` is intentionally NOT registered: the electromagnetism
 /// upstream store has no `div E`, `rho`, or `VacuumPermittivity` axioms,
@@ -2671,8 +3598,13 @@ fn m1_seed_elite_for(target_name: Option<&str>) -> Option<Chain> {
     match target_name {
         Some("sr_rest_energy") => Some(Chain::rest_energy_from_upstream()),
         Some("qm_planck_einstein") => Some(Chain::planck_einstein_from_upstream()),
+        Some("qm_schrodinger" | "schrodinger") => Some(Chain::schrodinger_from_upstream()),
         Some("thermo_boltzmann_entropy" | "boltzmann_entropy") => {
             Some(Chain::boltzmann_entropy_from_upstream())
+        }
+        Some("newton_second" | "f_eq_ma") => Some(Chain::newton_second_from_upstream()),
+        Some("gr_einstein_field_equation" | "einstein_field_equation") => {
+            Some(Chain::einstein_field_no_lambda_from_upstream())
         }
         _ => None,
     }
@@ -3466,6 +4398,12 @@ mod mutation_rl_state_tests {
                 target_progress_bin: 4,
                 best_score: 3.5,
             });
+        scope.replay_elites.push(ReplayElite {
+            canonical: "x = y".into(),
+            chain: vec![RuleStep::AlgebraicSimplify],
+            added_at_unix_secs: 123,
+            generation: 4,
+        });
         state
             .scopes
             .insert("domain=sr|target=sr_rest_energy".into(), scope);
@@ -3477,12 +4415,14 @@ mod mutation_rl_state_tests {
             .get("domain=sr|target=sr_rest_energy")
             .unwrap();
 
-        assert_eq!(loaded.version, 2);
+        assert_eq!(loaded.version, 4);
         assert_eq!(loaded_scope.corpus_len, 123);
         assert_eq!(loaded_scope.mutation_operator.pulls[5], 7);
         assert!((loaded_scope.mutation_operator.total_reward[5] - 4.25).abs() < 1e-12);
         assert_eq!(loaded_scope.qd_archive.cells.len(), 1);
         assert!((loaded_scope.qd_archive.cells[0].best_score - 3.5).abs() < 1e-12);
+        assert_eq!(loaded_scope.replay_elites.len(), 1);
+        assert_eq!(loaded_scope.replay_elites[0].canonical, "x = y");
     }
 
     #[test]
@@ -3565,6 +4505,7 @@ mod mutation_rl_state_tests {
                     ..Default::default()
                 },
             )]),
+            replay_elites: Vec::new(),
         };
 
         decay_worker_rl_scope_state(&mut scope, 1_000 + 3600, Some(1.0));
@@ -3595,6 +4536,7 @@ mod mutation_rl_state_tests {
                     ..Default::default()
                 },
             )]),
+            replay_elites: Vec::new(),
         };
 
         decay_worker_rl_scope_state(&mut scope, 1_000 + 3600, None);
@@ -3629,6 +4571,7 @@ mod mutation_rl_state_tests {
                     ..Default::default()
                 },
             )]),
+            replay_elites: Vec::new(),
         };
 
         decay_worker_rl_scope_for_corpus_drift(&mut scope, 200);
@@ -3660,6 +4603,7 @@ mod mutation_rl_state_tests {
                     ..Default::default()
                 },
             )]),
+            replay_elites: Vec::new(),
         };
 
         decay_worker_rl_scope_for_corpus_drift(&mut scope, 100);
@@ -3735,6 +4679,702 @@ mod mutation_rl_state_tests {
         };
 
         assert!((strategy_genome_reward(&report) - 0.86).abs() < 1e-12);
+    }
+
+    const TEST_CORPUS_LEN: usize = 100;
+    const TEST_NOW: i64 = 200_000;
+
+    fn test_verified_discovery(canonical: &str, generation: usize) -> VerifiedDiscovery {
+        VerifiedDiscovery {
+            chain: Chain(vec![RuleStep::AlgebraicSimplify]),
+            final_expr: nasrudin_core::Expr::Var("x".into()),
+            canonical: canonical.into(),
+            lean_source: String::new(),
+            module_path: String::new(),
+            generation,
+        }
+    }
+
+    #[test]
+    fn replay_archive_adds_dedupes_and_keeps_recent_verified_chains() {
+        let mut scope = WorkerRlScopeState::default();
+        let report = nasrudin_ga::chain_engine::DiscoveryReport {
+            verified: vec![
+                test_verified_discovery("canon-a", 1),
+                test_verified_discovery("canon-b", 2),
+            ],
+            ..Default::default()
+        };
+
+        let added = update_replay_elites_from_verified(&mut scope, &report, TEST_NOW);
+
+        assert_eq!(added, 2);
+        assert_eq!(scope.replay_elites.len(), 2);
+        assert_eq!(scope.replay_elites[0].canonical, "canon-b");
+        assert_eq!(scope.replay_elites[1].canonical, "canon-a");
+
+        let replacement = nasrudin_ga::chain_engine::DiscoveryReport {
+            verified: vec![test_verified_discovery("canon-a", 9)],
+            ..Default::default()
+        };
+        update_replay_elites_from_verified(&mut scope, &replacement, TEST_NOW + 1);
+
+        assert_eq!(scope.replay_elites.len(), 2);
+        assert_eq!(scope.replay_elites[0].canonical, "canon-a");
+        assert_eq!(scope.replay_elites[0].generation, 9);
+    }
+
+    #[test]
+    fn replay_archive_truncates_to_limit() {
+        let mut scope = WorkerRlScopeState::default();
+        let report = nasrudin_ga::chain_engine::DiscoveryReport {
+            verified: (0..(replay_elite_archive_limit() + 4))
+                .map(|i| test_verified_discovery(&format!("canon-{i}"), i))
+                .collect(),
+            ..Default::default()
+        };
+
+        update_replay_elites_from_verified(&mut scope, &report, TEST_NOW);
+
+        assert_eq!(scope.replay_elites.len(), replay_elite_archive_limit());
+        assert_eq!(
+            scope.replay_elites[0].canonical,
+            format!("canon-{}", replay_elite_archive_limit() + 3)
+        );
+    }
+
+    #[test]
+    fn replay_elite_chains_returns_per_chunk_prefix() {
+        let mut scope = WorkerRlScopeState::default();
+        for i in 0..(replay_elites_per_chunk() + 2) {
+            scope.replay_elites.push(ReplayElite {
+                canonical: format!("canon-{i}"),
+                chain: vec![RuleStep::AlgebraicSimplify],
+                added_at_unix_secs: TEST_NOW + i as i64,
+                generation: i,
+            });
+        }
+
+        let chains = replay_elite_chains(&scope);
+
+        assert_eq!(chains.len(), replay_elites_per_chunk());
+        assert_eq!(chains[0].0, vec![RuleStep::AlgebraicSimplify]);
+    }
+
+    #[test]
+    fn target_selector_policy_covers_unpulled_policies_first() {
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_selector_policy_key("all", "verifier_ucb"),
+            TargetSelectorPolicyStats {
+                pulls: 1,
+                total_reward: 0.4,
+                reward_ema: 0.4,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_target_selector_policy("all", &stats),
+            "recent_verifier"
+        );
+    }
+
+    #[test]
+    fn target_selector_policy_prefers_recent_reward_signal() {
+        let mut stats = std::collections::BTreeMap::new();
+        for policy in TARGET_SELECTOR_POLICIES {
+            stats.insert(
+                target_selector_policy_key("all", policy),
+                TargetSelectorPolicyStats {
+                    pulls: 10,
+                    total_reward: 8.0,
+                    reward_ema: 0.20,
+                    best_reward: 0.8,
+                    ..Default::default()
+                },
+            );
+        }
+        stats.insert(
+            target_selector_policy_key("all", "novelty_seeker"),
+            TargetSelectorPolicyStats {
+                pulls: 10,
+                total_reward: 5.0,
+                reward_ema: 0.95,
+                best_reward: 1.0,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_target_selector_policy("all", &stats),
+            "novelty_seeker"
+        );
+    }
+
+    #[test]
+    fn target_selector_policy_update_tracks_reward_ema() {
+        let mut stats = TargetSelectorPolicyStats {
+            pulls: 1,
+            total_reward: 0.2,
+            reward_ema: 0.2,
+            best_reward: 0.2,
+            ..Default::default()
+        };
+
+        update_target_selector_policy(&mut stats, 0.8);
+
+        assert_eq!(stats.pulls, 2);
+        assert_eq!(stats.last_reward, 0.8);
+        assert_eq!(stats.best_reward, 0.8);
+        assert!(stats.reward_ema > 0.2);
+    }
+
+    #[test]
+    fn auto_target_policy_can_prioritize_novelty_over_verifier_score() {
+        let candidates = ["qm_free_particle_dispersion", "qm_de_broglie"];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("qm", "qm_free_particle_dispersion"),
+            TargetPortfolioStats {
+                pulls: 20,
+                total_reward: 10.0,
+                reward_ema: 0.70,
+                lake_pass_ema: 0.90,
+                novelty_ema: 0.10,
+                best_reward: 0.8,
+                ..Default::default()
+            },
+        );
+        stats.insert(
+            target_portfolio_key("qm", "qm_de_broglie"),
+            TargetPortfolioStats {
+                pulls: 20,
+                total_reward: 9.0,
+                reward_ema: 0.60,
+                lake_pass_ema: 0.20,
+                novelty_ema: 1.0,
+                best_reward: 0.7,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_auto_target_with_policy(
+                "qm",
+                &candidates,
+                &stats,
+                TEST_CORPUS_LEN,
+                TEST_NOW,
+                "novelty_seeker",
+            ),
+            Some("qm_de_broglie")
+        );
+        assert_eq!(
+            select_auto_target_with_policy(
+                "qm",
+                &candidates,
+                &stats,
+                TEST_CORPUS_LEN,
+                TEST_NOW,
+                "recent_verifier",
+            ),
+            Some("qm_free_particle_dispersion")
+        );
+    }
+
+    #[test]
+    fn ga_workhorse_policy_covers_unpulled_policies_first() {
+        let scope = "domain=qm|target=qm_planck_einstein";
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            ga_workhorse_policy_key(scope, "steady_verify"),
+            GaWorkhorsePolicyStats {
+                pulls: 1,
+                total_reward: 0.5,
+                reward_ema: 0.5,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(select_ga_workhorse_policy(scope, &stats), "wide_explore");
+    }
+
+    #[test]
+    fn ga_workhorse_policy_prefers_recent_reward_signal() {
+        let scope = "domain=qm|target=qm_planck_einstein";
+        let mut stats = std::collections::BTreeMap::new();
+        for policy in GA_WORKHORSE_POLICIES {
+            stats.insert(
+                ga_workhorse_policy_key(scope, policy),
+                GaWorkhorsePolicyStats {
+                    pulls: 8,
+                    total_reward: 6.0,
+                    reward_ema: 0.20,
+                    best_reward: 0.7,
+                    ..Default::default()
+                },
+            );
+        }
+        stats.insert(
+            ga_workhorse_policy_key(scope, "deep_recombine"),
+            GaWorkhorsePolicyStats {
+                pulls: 8,
+                total_reward: 4.0,
+                reward_ema: 0.95,
+                best_reward: 1.0,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(select_ga_workhorse_policy(scope, &stats), "deep_recombine");
+    }
+
+    #[test]
+    fn ga_workhorse_policy_update_tracks_reward_ema() {
+        let mut stats = GaWorkhorsePolicyStats {
+            pulls: 1,
+            total_reward: 0.1,
+            reward_ema: 0.1,
+            best_reward: 0.1,
+            ..Default::default()
+        };
+
+        update_ga_workhorse_policy(&mut stats, 0.9);
+
+        assert_eq!(stats.pulls, 2);
+        assert_eq!(stats.last_reward, 0.9);
+        assert_eq!(stats.best_reward, 0.9);
+        assert!(stats.reward_ema > 0.1);
+    }
+
+    #[test]
+    fn ga_workhorse_policy_applies_bounded_config_changes() {
+        let mut cfg = DiscoveryConfig {
+            population_size: 16,
+            mutation_rate: 0.12,
+            crossover_rate: 0.60,
+            tournament_size: 3,
+            max_chain_len: 10,
+            max_lake_verifications: 2,
+            ..Default::default()
+        };
+
+        apply_ga_workhorse_policy(&mut cfg, "deep_recombine", 16, 10, 2);
+
+        assert_eq!(cfg.population_size, 16);
+        assert_eq!(cfg.max_chain_len, 14);
+        assert_eq!(cfg.tournament_size, 4);
+        assert!(cfg.crossover_rate > 0.60);
+        assert!(cfg.mutation_rate < 0.12);
+    }
+
+    #[test]
+    fn auto_target_selector_stays_on_unproved_featured_before_frontier() {
+        let candidates = ["qm_planck_einstein", "qm_free_particle_dispersion"];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("qm", "qm_planck_einstein"),
+            TargetPortfolioStats {
+                pulls: 3,
+                total_reward: 2.0,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_auto_target("qm", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW),
+            Some("qm_planck_einstein")
+        );
+    }
+
+    #[test]
+    fn auto_target_selector_covers_unpulled_featured_targets_first() {
+        let candidates = [
+            "qm_planck_einstein",
+            "qm_schrodinger",
+            "qm_free_particle_dispersion",
+        ];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("qm", "qm_planck_einstein"),
+            TargetPortfolioStats {
+                pulls: 3,
+                total_reward: 2.0,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_auto_target("qm", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW),
+            Some("qm_schrodinger")
+        );
+    }
+
+    #[test]
+    fn auto_target_selector_prefers_recent_verifier_signal_over_stale_mean() {
+        let candidates = ["qm_planck_einstein", "qm_free_particle_dispersion"];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("qm", "qm_planck_einstein"),
+            TargetPortfolioStats {
+                proved: true,
+                pulls: 20,
+                total_reward: 16.0,
+                best_reward: 1.0,
+                reward_ema: 0.05,
+                lake_pass_ema: 0.0,
+                novelty_ema: 0.05,
+                failure_streak: 6,
+                ..Default::default()
+            },
+        );
+        stats.insert(
+            target_portfolio_key("qm", "qm_free_particle_dispersion"),
+            TargetPortfolioStats {
+                pulls: 20,
+                total_reward: 8.0,
+                best_reward: 0.8,
+                reward_ema: 0.85,
+                lake_pass_ema: 1.0,
+                novelty_ema: 0.30,
+                failure_streak: 0,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_auto_target("qm", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW),
+            Some("qm_free_particle_dispersion")
+        );
+    }
+
+    #[test]
+    fn auto_target_selector_returns_none_after_all_candidates_proved() {
+        let candidates = ["sr_rest_energy"];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("sr", "sr_rest_energy"),
+            TargetPortfolioStats {
+                proved: true,
+                pulls: 1,
+                total_reward: 1.0,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_auto_target("sr", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW),
+            None
+        );
+    }
+
+    #[test]
+    fn auto_target_selector_moves_to_frontier_after_featured_targets_proved() {
+        let candidates = [
+            "qm_planck_einstein",
+            "qm_schrodinger",
+            "qm_free_particle_dispersion",
+        ];
+        let mut stats = std::collections::BTreeMap::new();
+        for target in ["qm_planck_einstein", "qm_schrodinger"] {
+            stats.insert(
+                target_portfolio_key("qm", target),
+                TargetPortfolioStats {
+                    proved: true,
+                    pulls: 1,
+                    total_reward: 1.0,
+                    ..Default::default()
+                },
+            );
+        }
+
+        assert_eq!(
+            select_auto_target("qm", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW),
+            Some("qm_free_particle_dispersion")
+        );
+    }
+
+    #[test]
+    fn auto_target_selector_skips_stalled_featured_targets() {
+        let candidates = ["em_gauss_law", "qm_free_particle_dispersion"];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("all", "em_gauss_law"),
+            TargetPortfolioStats {
+                pulls: target_stall_threshold(),
+                failure_streak: target_stall_threshold(),
+                last_attempt_unix_secs: TEST_NOW,
+                corpus_len_at_last_attempt: TEST_CORPUS_LEN,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_auto_target("all", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW),
+            Some("qm_free_particle_dispersion")
+        );
+    }
+
+    #[test]
+    fn auto_target_selector_retries_stalled_target_after_cooldown() {
+        let candidates = ["em_gauss_law", "qm_free_particle_dispersion"];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("all", "em_gauss_law"),
+            TargetPortfolioStats {
+                pulls: target_stall_threshold(),
+                failure_streak: target_stall_threshold(),
+                last_attempt_unix_secs: TEST_NOW - target_stall_retry_after_secs() - 1,
+                corpus_len_at_last_attempt: TEST_CORPUS_LEN,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_auto_target("all", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW),
+            Some("em_gauss_law")
+        );
+    }
+
+    #[test]
+    fn auto_target_selector_retries_stalled_target_after_corpus_change() {
+        let candidates = ["em_gauss_law", "qm_free_particle_dispersion"];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("all", "em_gauss_law"),
+            TargetPortfolioStats {
+                pulls: target_stall_threshold(),
+                failure_streak: target_stall_threshold(),
+                last_attempt_unix_secs: TEST_NOW,
+                corpus_len_at_last_attempt: TEST_CORPUS_LEN - 1,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            select_auto_target("all", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW),
+            Some("em_gauss_law")
+        );
+    }
+
+    #[test]
+    fn auto_target_curriculum_status_reports_featured_and_frontier_tiers() {
+        let candidates = [
+            "qm_planck_einstein",
+            "qm_schrodinger",
+            "qm_free_particle_dispersion",
+        ];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("qm", "qm_planck_einstein"),
+            TargetPortfolioStats {
+                proved: true,
+                pulls: 1,
+                total_reward: 1.0,
+                ..Default::default()
+            },
+        );
+
+        let status =
+            auto_target_curriculum_status("qm", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW);
+
+        assert_eq!(status.featured_total, 2);
+        assert_eq!(status.featured_proved, 1);
+        assert_eq!(status.featured_pending, vec!["qm_schrodinger"]);
+        assert!(status.featured_stalled.is_empty());
+        assert_eq!(status.frontier_pending, vec!["qm_free_particle_dispersion"]);
+    }
+
+    #[test]
+    fn auto_target_curriculum_status_reports_stalled_featured_targets() {
+        let candidates = ["em_gauss_law", "qm_free_particle_dispersion"];
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("all", "em_gauss_law"),
+            TargetPortfolioStats {
+                pulls: target_stall_threshold(),
+                failure_streak: target_stall_threshold(),
+                last_attempt_unix_secs: TEST_NOW,
+                corpus_len_at_last_attempt: TEST_CORPUS_LEN,
+                ..Default::default()
+            },
+        );
+
+        let status =
+            auto_target_curriculum_status("all", &candidates, &stats, TEST_CORPUS_LEN, TEST_NOW);
+
+        assert_eq!(status.featured_total, 1);
+        assert_eq!(status.featured_proved, 0);
+        assert!(status.featured_pending.is_empty());
+        assert_eq!(status.featured_stalled, vec!["em_gauss_law"]);
+        assert_eq!(status.frontier_pending, vec!["qm_free_particle_dispersion"]);
+    }
+
+    #[test]
+    fn target_portfolio_update_rewards_verified_chunks() {
+        let mut stats = TargetPortfolioStats::default();
+        let report = nasrudin_ga::chain_engine::DiscoveryReport {
+            total_candidates: 100,
+            unique_executable: 10,
+            lake_attempts: 1,
+            lake_passed: 1,
+            verified: vec![nasrudin_ga::chain_engine::VerifiedDiscovery {
+                chain: Chain(vec![]),
+                final_expr: nasrudin_core::Expr::Var("x".into()),
+                canonical: "x".into(),
+                lean_source: String::new(),
+                module_path: String::new(),
+                generation: 0,
+            }],
+            ..Default::default()
+        };
+
+        update_target_portfolio(
+            &mut stats,
+            "qm_planck_einstein",
+            &report,
+            TEST_CORPUS_LEN,
+            TEST_NOW,
+        );
+
+        assert_eq!(stats.pulls, 1);
+        assert_eq!(stats.last_attempt_unix_secs, TEST_NOW);
+        assert_eq!(stats.corpus_len_at_last_attempt, TEST_CORPUS_LEN);
+        assert!(stats.last_reward > 0.9);
+        assert_eq!(stats.best_reward, stats.last_reward);
+        assert!(stats.reward_ema > 0.9);
+        assert_eq!(stats.lake_pass_ema, 1.0);
+        assert_eq!(stats.failure_streak, 0);
+        assert!(!stats.proved);
+    }
+
+    #[test]
+    fn target_portfolio_marks_matching_featured_target_proved() {
+        let mut stats = TargetPortfolioStats::default();
+        let final_expr = nasrudin_ga::target::TargetSpec::lookup("qm_planck_einstein")
+            .unwrap()
+            .final_target;
+        let report = nasrudin_ga::chain_engine::DiscoveryReport {
+            total_candidates: 8,
+            unique_executable: 1,
+            lake_attempts: 1,
+            lake_passed: 1,
+            verified: vec![nasrudin_ga::chain_engine::VerifiedDiscovery {
+                chain: Chain(vec![]),
+                canonical: final_expr.to_canonical(),
+                final_expr,
+                lean_source: String::new(),
+                module_path: String::new(),
+                generation: 0,
+            }],
+            ..Default::default()
+        };
+
+        update_target_portfolio(
+            &mut stats,
+            "qm_planck_einstein",
+            &report,
+            TEST_CORPUS_LEN,
+            TEST_NOW,
+        );
+
+        assert!(stats.proved);
+    }
+
+    #[test]
+    fn target_portfolio_marks_planck_einstein_alias_expr_proved() {
+        use nasrudin_core::{BinOp, Expr};
+
+        let final_expr = Expr::BinOp(
+            BinOp::Eq,
+            Box::new(Expr::Var("Eph".into())),
+            Box::new(Expr::BinOp(
+                BinOp::Mul,
+                Box::new(Expr::Var("hbar".into())),
+                Box::new(Expr::Var("omega".into())),
+            )),
+        );
+        let report = nasrudin_ga::chain_engine::DiscoveryReport {
+            total_candidates: 8,
+            unique_executable: 1,
+            lake_attempts: 1,
+            lake_passed: 1,
+            verified: vec![nasrudin_ga::chain_engine::VerifiedDiscovery {
+                chain: Chain(vec![]),
+                canonical: final_expr.to_canonical(),
+                final_expr,
+                lean_source: String::new(),
+                module_path: String::new(),
+                generation: 0,
+            }],
+            ..Default::default()
+        };
+        let mut stats = TargetPortfolioStats::default();
+
+        update_target_portfolio(
+            &mut stats,
+            "qm_planck_einstein",
+            &report,
+            TEST_CORPUS_LEN,
+            TEST_NOW,
+        );
+
+        assert!(stats.proved);
+    }
+
+    #[test]
+    fn featured_postulate_backed_targets_have_seed_elites() {
+        for target in [
+            "sr_rest_energy",
+            "qm_planck_einstein",
+            "qm_schrodinger",
+            "thermo_boltzmann_entropy",
+            "newton_second",
+            "gr_einstein_field_equation",
+        ] {
+            assert!(
+                m1_seed_elite_for(Some(target)).is_some(),
+                "featured target {target} should have a seed elite"
+            );
+        }
+        assert!(
+            m1_seed_elite_for(Some("em_gauss_law")).is_none(),
+            "Gauss law has no current upstream div_E/rho/epsilon_0 postulate seed"
+        );
+    }
+
+    #[test]
+    fn target_portfolio_update_tracks_stalls() {
+        let mut stats = TargetPortfolioStats {
+            pulls: 1,
+            total_reward: 1.0,
+            reward_ema: 1.0,
+            lake_pass_ema: 1.0,
+            novelty_ema: 1.0,
+            ..Default::default()
+        };
+        let report = nasrudin_ga::chain_engine::DiscoveryReport {
+            total_candidates: 100,
+            unique_executable: 5,
+            lake_attempts: 1,
+            lake_passed: 0,
+            verified: vec![],
+            ..Default::default()
+        };
+
+        update_target_portfolio(
+            &mut stats,
+            "qm_planck_einstein",
+            &report,
+            TEST_CORPUS_LEN,
+            TEST_NOW,
+        );
+
+        assert_eq!(stats.failure_streak, 1);
+        assert!(stats.reward_ema < 1.0);
+        assert!(stats.lake_pass_ema < 1.0);
+        assert!(stats.novelty_ema < 1.0);
     }
 
     #[test]

@@ -130,6 +130,54 @@ impl Chain {
         ])
     }
 
+    /// The upstream time-dependent Schrödinger equation seed:
+    /// `iℏ ∂ψ/∂t = Ĥψ`.
+    ///
+    /// This introduces the registered QM postulate
+    /// `qm_schrodinger_evolution`; it does not add the target to the
+    /// store. The postulate is part of the upstream physics basis, so it
+    /// serves as the featured-curriculum anchor for the Schrödinger card.
+    pub fn schrodinger_from_upstream() -> Self {
+        Chain(vec![
+            RuleStep::IntroduceAxiom {
+                axiom_name: "qm_schrodinger_evolution".into(),
+            },
+            RuleStep::AlgebraicSimplify,
+            RuleStep::AlgebraicSimplify,
+        ])
+    }
+
+    /// Newton's second law seed: `F = m·a`.
+    ///
+    /// Uses the constant-mass upstream classical mechanics postulate
+    /// `newton_second`, not a generated theorem.
+    pub fn newton_second_from_upstream() -> Self {
+        Chain(vec![
+            RuleStep::IntroduceAxiom {
+                axiom_name: "newton_second".into(),
+            },
+            RuleStep::AlgebraicSimplify,
+            RuleStep::AlgebraicSimplify,
+        ])
+    }
+
+    /// Einstein field equation seed without cosmological constant:
+    /// `G = (8πG/c⁴)T`.
+    ///
+    /// Uses the upstream GR special-case postulate
+    /// `gr_einstein_field_no_lambda`, which matches the featured target
+    /// spec. The full `gr_einstein_field_equation` axiom includes a
+    /// `Λg` term and is therefore not the right seed for this card.
+    pub fn einstein_field_no_lambda_from_upstream() -> Self {
+        Chain(vec![
+            RuleStep::IntroduceAxiom {
+                axiom_name: "gr_einstein_field_no_lambda".into(),
+            },
+            RuleStep::AlgebraicSimplify,
+            RuleStep::AlgebraicSimplify,
+        ])
+    }
+
     /// The chain that hand-codes the Boltzmann entropy relation
     /// `S = k_B · ln(Ω)` via the statistical-mechanics postulates.
     ///
@@ -459,5 +507,39 @@ mod tests {
             Box::new(Expr::BinOp(BinOp::Mul, Box::new(kb), Box::new(ln_omega))),
         );
         assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn upstream_schrodinger_chain_executes() {
+        let mut engine = DerivationEngine::new();
+        engine.store_mut().load_quantum_mechanics_postulates();
+        let chain = Chain::schrodinger_from_upstream();
+        let mut ctx = DerivationContext::new();
+        let res = chain.execute(engine.store(), &mut ctx).unwrap();
+        let canonical = res.to_canonical();
+        assert!(canonical.contains("psi"), "{canonical}");
+        assert!(canonical.contains("H_op"), "{canonical}");
+    }
+
+    #[test]
+    fn upstream_newton_second_chain_executes() {
+        let mut engine = DerivationEngine::new();
+        engine.store_mut().load_classical_mechanics_postulates();
+        let chain = Chain::newton_second_from_upstream();
+        let mut ctx = DerivationContext::new();
+        let res = chain.execute(engine.store(), &mut ctx).unwrap();
+        assert_eq!(res.to_canonical(), "(= v:F (* v:m v:a))");
+    }
+
+    #[test]
+    fn upstream_einstein_field_no_lambda_chain_executes() {
+        let mut engine = DerivationEngine::new();
+        engine.store_mut().load_general_relativity_postulates();
+        let chain = Chain::einstein_field_no_lambda_from_upstream();
+        let mut ctx = DerivationContext::new();
+        let res = chain.execute(engine.store(), &mut ctx).unwrap();
+        let canonical = res.to_canonical();
+        assert!(canonical.contains("G_einstein"), "{canonical}");
+        assert!(canonical.contains("T_stress"), "{canonical}");
     }
 }

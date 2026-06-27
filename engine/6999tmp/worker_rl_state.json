@@ -1,0 +1,107 @@
+{
+  "version": 4,
+  "scopes": {
+    "domain=qm|target=qm_planck_einstein": {
+      "updated_at_unix_secs": 1782567639,
+      "corpus_len": 195762,
+      "mutation_operator": {
+        "pulls": [
+          0,
+          0,
+          0,
+          2,
+          0,
+          1
+        ],
+        "total_reward": [
+          0.0,
+          0.0,
+          0.0,
+          1.2733865628741659,
+          0.0,
+          0.15000000001223557
+        ]
+      },
+      "qd_archive": {
+        "cells": [
+          {
+            "chain_len_bin": 0,
+            "axiom_count_bin": 0,
+            "target_progress_bin": 0,
+            "best_score": 2.0250000000000004
+          },
+          {
+            "chain_len_bin": 0,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 0,
+            "best_score": 4.366666666666667
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 0,
+            "best_score": 4.225
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 4,
+            "best_score": 15.925
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 5.708333333333333
+          },
+          {
+            "chain_len_bin": 2,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 4,
+            "best_score": 18.52857142857143
+          },
+          {
+            "chain_len_bin": 4,
+            "axiom_count_bin": 4,
+            "target_progress_bin": 0,
+            "best_score": 6.800123685837971
+          }
+        ]
+      },
+      "strategy_genomes": {}
+    }
+  },
+  "target_portfolio": {
+    "domain=qm|target=qm_planck_einstein": {
+      "pulls": 1,
+      "total_reward": 1.0,
+      "last_reward": 1.0,
+      "best_reward": 1.0,
+      "reward_ema": 1.0,
+      "lake_pass_ema": 1.0,
+      "novelty_ema": 0.125,
+      "failure_streak": 0,
+      "proved": true,
+      "last_attempt_unix_secs": 1782567639,
+      "corpus_len_at_last_attempt": 195762
+    }
+  },
+  "target_selector_policies": {
+    "domain=qm|policy=verifier_ucb": {
+      "pulls": 1,
+      "total_reward": 1.0,
+      "last_reward": 1.0,
+      "best_reward": 1.0,
+      "reward_ema": 1.0
+    }
+  },
+  "ga_workhorse_policies": {
+    "scope=domain=qm|target=qm_planck_einstein|policy=steady_verify": {
+      "pulls": 1,
+      "total_reward": 1.0,
+      "last_reward": 1.0,
+      "best_reward": 1.0,
+      "reward_ema": 1.0
+    }
+  }
+}

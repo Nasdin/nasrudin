@@ -10,19 +10,17 @@
 //!     (`GRADIENT_API_KEY`), not in the per-user `user_llm_keys` table.
 //!     The cluster steerer uses it for an internal control-loop call
 //!     and there is no per-user attribution.
-//!  2. **Default model is Kimi K2.6** (`kimi-k2.6`), not GPT. K2.6 is
-//!     a reasoning model that emits a `reasoning_content` chain of
-//!     thought before producing the actual `content`, so callers must
-//!     give it a generous `max_tokens` budget (≥4096) when asking for
-//!     structured JSON. `supported_models()` reflects the catalog
-//!     Gradient currently advertises; `list_models()` queries the live
-//!     catalog so the steerer's boot-time check stays accurate.
+//!  2. **Default steerer model is resolved dynamically.** Operators can
+//!     pin `STEERER_MODEL`; otherwise the API daemon queries Gradient's
+//!     live model catalog and picks the newest GLM-family model it can
+//!     identify. `supported_models()` is advisory only.
 //!  3. **Lives in its own provider** so the BYO LLM Registry never
 //!     accidentally dispatches a user request to the server's key.
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 use crate::provider::{
     CompletionRequest, CompletionResponse, LlmError, LlmProvider, ResponseFormat, TokenChunk,
@@ -30,17 +28,16 @@ use crate::provider::{
 
 const DEFAULT_BASE_URL: &str = "https://inference.do-ai.run";
 const DEFAULT_MAX_ATTEMPTS: u32 = 4;
+const DEFAULT_MODEL_CACHE_TTL_SECONDS: u64 = 86_400;
 // Names mirror DigitalOcean Gradient's serverless catalog. The list is
 // advisory — `list_models()` queries the live catalog at boot and the
 // daemon doesn't hard-reject anything not listed here, so adding a
 // model here is purely about giving operators a sane default.
 //
-// Kimi K2.6 is a reasoning model: it spends tokens on
-// `reasoning_content` before producing the actual `content` field, so
-// callers should give it a generous `max_tokens` budget (≥4096) when
-// asking for structured JSON output. K2.5 stays in the supported list
-// as a graceful-degrade fallback while operators migrate.
+// Advisory fallback list. The steerer resolves the live GLM catalog at
+// boot; this list is only for diagnostics and offline tests.
 const SUPPORTED: &[&str] = &[
+    "glm-5.2",
     "kimi-k2.6",
     "kimi-k2.5",
     "llama3.3-70b-instruct",
@@ -54,6 +51,27 @@ pub struct GradientProvider {
     api_key: String,
     base_url: String,
     max_attempts: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedGradientModel {
+    pub model: String,
+    pub source: GradientModelSource,
+    pub catalog_models: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GradientModelSource {
+    ExplicitEnv,
+    CachedCatalog,
+    LiveCatalog,
+    Fallback,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedGradientModel {
+    model: String,
+    cached_at_unix_secs: u64,
 }
 
 impl GradientProvider {
@@ -143,6 +161,167 @@ impl GradientProvider {
             .map_err(|e| LlmError::Parse(e.to_string()))?;
         Ok(r.data.into_iter().map(|m| m.id).collect())
     }
+
+    /// Resolve the model used by the high-level steerer.
+    ///
+    /// Priority:
+    /// 1. `STEERER_MODEL`, when explicitly set.
+    /// 2. Latest GLM-family model discovered in Gradient's live catalog.
+    /// 3. `GRADIENT_GLM_MODEL_FALLBACK`, defaulting to `glm-5.2`.
+    pub async fn resolve_steerer_model(&self) -> String {
+        self.resolve_steerer_model_detailed().await.model
+    }
+
+    pub async fn resolve_steerer_model_detailed(&self) -> ResolvedGradientModel {
+        if let Ok(model) = std::env::var("STEERER_MODEL") {
+            let model = model.trim();
+            if !model.is_empty() {
+                return ResolvedGradientModel {
+                    model: model.to_string(),
+                    source: GradientModelSource::ExplicitEnv,
+                    catalog_models: None,
+                };
+            }
+        }
+        let fallback =
+            std::env::var("GRADIENT_GLM_MODEL_FALLBACK").unwrap_or_else(|_| "glm-5.2".into());
+        let cache_path = steerer_model_cache_path();
+        let ttl = steerer_model_cache_ttl_seconds();
+        if let Some(model) = load_cached_steerer_model(&cache_path, ttl) {
+            return ResolvedGradientModel {
+                model,
+                source: GradientModelSource::CachedCatalog,
+                catalog_models: None,
+            };
+        }
+        match self.list_models().await {
+            Ok(models) => {
+                let live_model = latest_glm_model(&models);
+                let source = if live_model.is_some() {
+                    GradientModelSource::LiveCatalog
+                } else {
+                    GradientModelSource::Fallback
+                };
+                let model = live_model.unwrap_or_else(|| fallback.clone());
+                if source == GradientModelSource::LiveCatalog {
+                    persist_cached_steerer_model(&cache_path, &model);
+                }
+                ResolvedGradientModel {
+                    model,
+                    source,
+                    catalog_models: Some(models),
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    fallback = %fallback,
+                    "Gradient model catalog probe failed; using GLM fallback model"
+                );
+                ResolvedGradientModel {
+                    model: fallback,
+                    source: GradientModelSource::Fallback,
+                    catalog_models: None,
+                }
+            }
+        }
+    }
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn steerer_model_cache_ttl_seconds() -> u64 {
+    std::env::var("GRADIENT_MODEL_CACHE_TTL_SECONDS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_MODEL_CACHE_TTL_SECONDS)
+}
+
+fn steerer_model_cache_path() -> PathBuf {
+    if let Ok(path) = std::env::var("GRADIENT_MODEL_CACHE_PATH") {
+        return PathBuf::from(path);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("nasrudin-worker")
+        .join("gradient_steerer_model.json")
+}
+
+fn load_cached_steerer_model(path: &Path, ttl_seconds: u64) -> Option<String> {
+    if ttl_seconds == 0 {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let cached: CachedGradientModel = serde_json::from_slice(&bytes).ok()?;
+    if cached.model.trim().is_empty() {
+        return None;
+    }
+    let age = now_unix_secs().saturating_sub(cached.cached_at_unix_secs);
+    (age <= ttl_seconds).then_some(cached.model)
+}
+
+fn persist_cached_steerer_model(path: &Path, model: &str) {
+    if model.trim().is_empty() {
+        return;
+    }
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!(error = %e, path = %parent.display(), "failed to create Gradient model cache dir");
+        return;
+    }
+    let cached = CachedGradientModel {
+        model: model.to_string(),
+        cached_at_unix_secs: now_unix_secs(),
+    };
+    let Ok(bytes) = serde_json::to_vec_pretty(&cached) else {
+        return;
+    };
+    if let Err(e) = std::fs::write(path, bytes) {
+        tracing::warn!(error = %e, path = %path.display(), "failed to persist Gradient model cache");
+    }
+}
+
+/// Pick the newest GLM-family model from a list of Gradient model IDs.
+/// Accepts IDs such as `glm-5.2`, `zai-glm-5.2`, or `glm-5.2-air`.
+pub fn latest_glm_model(models: &[String]) -> Option<String> {
+    models
+        .iter()
+        .filter_map(|model| glm_version_key(model).map(|key| (key, model)))
+        .max_by(|(a, am), (b, bm)| a.cmp(b).then_with(|| am.cmp(bm)))
+        .map(|(_, model)| model.clone())
+}
+
+fn glm_version_key(model: &str) -> Option<Vec<u32>> {
+    let lower = model.to_ascii_lowercase();
+    let glm_idx = lower.find("glm")?;
+    let after = &lower[glm_idx + 3..];
+    let mut nums = Vec::new();
+    let mut current = String::new();
+    for ch in after.chars() {
+        if ch.is_ascii_digit() {
+            current.push(ch);
+        } else if ch == '.' || ch == '-' || ch == '_' {
+            if !current.is_empty() {
+                nums.push(current.parse::<u32>().ok()?);
+                current.clear();
+            }
+        } else if !current.is_empty() {
+            nums.push(current.parse::<u32>().ok()?);
+            break;
+        }
+    }
+    if !current.is_empty() {
+        nums.push(current.parse::<u32>().ok()?);
+    }
+    (!nums.is_empty()).then_some(nums)
 }
 
 #[derive(Serialize)]
@@ -369,10 +548,63 @@ mod tests {
     #[test]
     fn supports_kimi_k2() {
         let p = GradientProvider::new("test".into());
+        assert!(p.supported_models().contains(&"glm-5.2"));
         assert!(p.supported_models().contains(&"kimi-k2.6"));
         // K2.5 stays during migration so deployments mid-upgrade
         // don't hard-fail.
         assert!(p.supported_models().contains(&"kimi-k2.5"));
+    }
+
+    #[test]
+    fn latest_glm_model_picks_highest_version() {
+        let models = vec![
+            "kimi-k2.6".to_string(),
+            "zai-glm-4.5".to_string(),
+            "glm-5.1-air".to_string(),
+            "glm-5.2".to_string(),
+        ];
+
+        assert_eq!(latest_glm_model(&models), Some("glm-5.2".to_string()));
+    }
+
+    #[test]
+    fn latest_glm_model_returns_none_when_absent() {
+        let models = vec!["kimi-k2.6".to_string(), "llama3.3-70b-instruct".to_string()];
+
+        assert_eq!(latest_glm_model(&models), None);
+    }
+
+    #[test]
+    fn cached_steerer_model_respects_ttl() {
+        let path = std::env::temp_dir().join(format!(
+            "nasrudin_gradient_model_cache_{}.json",
+            std::process::id()
+        ));
+        let cached = CachedGradientModel {
+            model: "glm-5.2".to_string(),
+            cached_at_unix_secs: now_unix_secs(),
+        };
+        std::fs::write(&path, serde_json::to_vec(&cached).unwrap()).unwrap();
+
+        assert_eq!(
+            load_cached_steerer_model(&path, 60),
+            Some("glm-5.2".to_string())
+        );
+        assert_eq!(load_cached_steerer_model(&path, 0), None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn persist_cached_steerer_model_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gradient_model.json");
+
+        persist_cached_steerer_model(&path, "glm-5.2");
+
+        assert_eq!(
+            load_cached_steerer_model(&path, 60),
+            Some("glm-5.2".to_string())
+        );
     }
 
     #[test]

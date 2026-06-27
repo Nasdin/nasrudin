@@ -28,6 +28,7 @@ impl LlmCaller for FakeLlmCaller {
         &self,
         _system: &str,
         _user: &str,
+        _max_total_tokens: u32,
     ) -> Result<(String, Option<i32>, Option<i32>), CycleError> {
         Ok((self.canned.clone(), Some(100), Some(200)))
     }

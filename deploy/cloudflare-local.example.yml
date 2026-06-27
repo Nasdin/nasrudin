@@ -7,6 +7,10 @@
 # Then run the app locally:
 #   just up
 #
+# `just up` starts this laptop/desktop as the origin server with low-LLM
+# defaults and an auto-target local worker. Override NASRUDIN_WORKER_DOMAIN
+# only if you want a narrower worker island than the default `all`.
+#
 # And start the tunnel:
 #   cloudflared tunnel run nasrudin-local
 #

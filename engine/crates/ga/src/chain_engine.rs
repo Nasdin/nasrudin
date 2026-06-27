@@ -126,6 +126,7 @@ impl PreLakeFilters {
     fn check(
         &self,
         chain: &Chain,
+        store: &AxiomStore,
         final_expr: &Expr,
         target: Option<&TargetSpec>,
     ) -> Option<&'static str> {
@@ -143,6 +144,9 @@ impl PreLakeFilters {
         // opaque tensor-category catalog axioms flood the corpus.
         if self.reject_plumbing_symbols && contains_plumbing_symbol(final_expr) {
             return Some("plumbing_symbol");
+        }
+        if self.reject_plumbing_symbols && chain_introduces_plumbing_statement(chain, store) {
+            return Some("plumbing_context");
         }
         let Some(spec) = target else {
             return None;
@@ -170,6 +174,18 @@ impl PreLakeFilters {
         }
         None
     }
+}
+
+fn chain_introduces_plumbing_statement(chain: &Chain, store: &AxiomStore) -> bool {
+    chain.0.iter().any(|step| match step {
+        RuleStep::IntroduceAxiom { axiom_name } => store
+            .get(axiom_name)
+            .is_some_and(|axiom| contains_plumbing_symbol(&axiom.statement)),
+        RuleStep::IntroduceTheorem { theorem_name } => store
+            .get(theorem_name)
+            .is_some_and(|axiom| contains_plumbing_symbol(&axiom.statement)),
+        _ => false,
+    })
 }
 
 /// Returns `true` if any `Var` symbol in `expr` is a formalization-internal
@@ -1090,8 +1106,9 @@ pub fn run_discovery_from_population(
                 // internals (dotted names like `complexLorentzTensor.*`,
                 // `DFunLike.coe`, `Space.oneEquiv`). Mirrors PreLakeFilters
                 // filter 5; gated by the same env knob.
-                if PreLakeFilters::from_env_once().reject_plumbing_symbols
-                    && contains_plumbing_symbol(&final_expr)
+                if PreLakeFilters::from_env_once()
+                    .check(&ind.chain, store, &final_expr, config.target.as_ref())
+                    .is_some()
                 {
                     report.pre_lake_rejected += 1;
                     verified_canonicals.remove(&canonical_cached);
@@ -1543,8 +1560,19 @@ fn pick_top_for_verify<'a>(
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(0.5);
-    for ind in offspring {
-        if ind.fitness.novelty < verify_min || ind.fitness.nasrudin_relevance < verify_min {
+    let mut ordered: Vec<&ChainIndividual> = offspring.iter().collect();
+    ordered.sort_by(|a, b| {
+        verify_priority(b, target)
+            .partial_cmp(&verify_priority(a, target))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for ind in ordered {
+        let target_complete = target.is_some()
+            && ind.fitness.target_shape >= 0.999
+            && ind.fitness.ladder_progress >= 0.999;
+        if !target_complete
+            && (ind.fitness.novelty < verify_min || ind.fitness.nasrudin_relevance < verify_min)
+        {
             continue;
         }
         if let Some(expr) = run_chain_for_final(&ind.chain, store) {
@@ -1557,7 +1585,7 @@ fn pick_top_for_verify<'a>(
             // priority: chain length first (sub-µs), then target-aware
             // checks (µs each). All four together dominated by the
             // canonicalize step that the lake-build path also pays.
-            if let Some(reason) = pre_lake.check(&ind.chain, &expr, target) {
+            if let Some(reason) = pre_lake.check(&ind.chain, store, &expr, target) {
                 *pre_lake_rejected += 1;
                 tracing::debug!(
                     filter = "pre_lake",
@@ -1590,6 +1618,35 @@ fn pick_top_for_verify<'a>(
         }
     }
     None
+}
+
+fn verify_priority(ind: &ChainIndividual, target: Option<&TargetSpec>) -> f64 {
+    let target_progress = if target.is_some() {
+        ind.fitness
+            .target_shape
+            .max(ind.fitness.ladder_progress)
+            .clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let target_complete = if target.is_some()
+        && ind.fitness.target_shape >= 0.999
+        && ind.fitness.ladder_progress >= 0.999
+    {
+        1.0
+    } else {
+        0.0
+    };
+    // Lake is the scarce resource. When the RL layer has selected a
+    // concrete target, spend verifier budget on chains that reach that
+    // target, then prefer the smallest proof context. This prevents a
+    // longer target-equivalent chain with unrelated Mathlib hypotheses
+    // from consuming the only Lake slot ahead of the clean seeded elite.
+    10.0 * target_complete
+        + 4.0 * target_progress
+        + ind.fitness.novelty.clamp(0.0, 1.0)
+        + ind.fitness.nasrudin_relevance.clamp(0.0, 1.0)
+        - 0.05 * ind.chain.0.len() as f64
 }
 
 #[cfg(test)]

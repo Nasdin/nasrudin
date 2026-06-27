@@ -1059,24 +1059,27 @@ async fn main() -> anyhow::Result<()> {
         if !steerer_disabled {
             match nasrudin_llm::GradientProvider::from_env() {
                 Ok(provider) => {
-                    let model_id =
-                        std::env::var("STEERER_MODEL").unwrap_or_else(|_| "kimi-k2.6".into());
-                    match provider.list_models().await {
-                        Ok(models) => {
-                            if !models.iter().any(|m| m == &model_id) {
-                                tracing::warn!(
-                                    model=%model_id, available=?models,
-                                    "STEERER_MODEL not in Gradient catalog; \
-                                     steerer will still run but may 4xx"
-                                );
-                            } else {
-                                tracing::info!(model=%model_id, "steerer model verified");
-                            }
+                    let resolved_model = provider.resolve_steerer_model_detailed().await;
+                    let model_id = resolved_model.model.clone();
+                    if let Some(models) = resolved_model.catalog_models.as_ref() {
+                        if !models.iter().any(|m| m == &model_id) {
+                            tracing::warn!(
+                                model=%model_id, source=?resolved_model.source, available=?models,
+                                "steerer model not in Gradient catalog; steerer will still run but may 4xx"
+                            );
+                        } else {
+                            tracing::info!(
+                                model=%model_id,
+                                source=?resolved_model.source,
+                                "steerer model verified"
+                            );
                         }
-                        Err(e) => tracing::warn!(
-                            error=%e,
-                            "Gradient /v1/models probe failed; steerer will run anyway"
-                        ),
+                    } else {
+                        tracing::info!(
+                            model=%model_id,
+                            source=?resolved_model.source,
+                            "steerer model resolved without live catalog verification"
+                        );
                     }
                     let provider = provider.with_max_attempts(1);
                     let cadence_s: u64 = std::env::var("STEERER_CADENCE_SECONDS")

@@ -181,6 +181,30 @@ pub async fn most_recent_strategy_refresh(db: &DatabaseConnection) -> Result<Opt
         .await
 }
 
+/// Actual provider-reported steerer token usage since `cutoff`.
+///
+/// This powers the hard rolling LLM spend guard. RL-only cycles store
+/// NULL token counts and therefore contribute 0. Strategy attempts
+/// that failed before provider usage was available also contribute 0,
+/// which matches reported billable usage.
+pub async fn llm_tokens_used_since(
+    db: &DatabaseConnection,
+    cutoff: chrono::DateTime<chrono::Utc>,
+) -> Result<i64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT COALESCE(SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)), 0)::BIGINT AS used_tokens \
+         FROM cluster_steering \
+         WHERE started_at >= $1",
+        [cutoff.fixed_offset().into()],
+    );
+    let row = db
+        .query_one_raw(stmt)
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("cluster_steering token sum".into()))?;
+    row.try_get::<i64>("", "used_tokens")
+}
+
 /// Retention sweep: keep the last `keep` rows, delete older ones.
 /// Cluster-steering history grows ~144 rows/day at 10-min cadence; we
 /// trim aggressively because only the last ~10 are ever read by the

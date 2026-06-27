@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "scopes": {
+    "domain=qm|target=qm_planck_einstein": {
+      "updated_at_unix_secs": 1782563494,
+      "corpus_len": 195762,
+      "mutation_operator": {
+        "pulls": [
+          0,
+          2,
+          1,
+          1,
+          1,
+          1
+        ],
+        "total_reward": [
+          0.0,
+          0.6000000000639648,
+          0.3000000000052472,
+          0.15000000001074398,
+          0.9999999999948225,
+          0.15000000001223557
+        ]
+      },
+      "qd_archive": {
+        "cells": [
+          {
+            "chain_len_bin": 0,
+            "axiom_count_bin": 0,
+            "target_progress_bin": 0,
+            "best_score": 0.7
+          },
+          {
+            "chain_len_bin": 0,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 0,
+            "best_score": 4.366666666666667
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 0,
+            "best_score": 4.225
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 4,
+            "best_score": 17.04
+          },
+          {
+            "chain_len_bin": 4,
+            "axiom_count_bin": 4,
+            "target_progress_bin": 0,
+            "best_score": 6.800123685837971
+          }
+        ]
+      },
+      "strategy_genomes": {}
+    }
+  },
+  "target_portfolio": {
+    "domain=qm|target=qm_planck_einstein": {
+      "pulls": 1,
+      "total_reward": 0.2,
+      "last_reward": 0.2,
+      "best_reward": 0.2
+    }
+  }
+}
