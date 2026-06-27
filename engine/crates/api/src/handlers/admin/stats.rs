@@ -12,10 +12,7 @@ use serde_json::json;
 use crate::admin::require_admin::RequireAdmin;
 use crate::state::AppState;
 
-pub async fn stats(
-    _admin: RequireAdmin,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn stats(_admin: RequireAdmin, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let pg = match &state.pg {
         Some(p) => p,
         None => {

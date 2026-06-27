@@ -8,11 +8,7 @@ use crate::provider::{
     CompletionRequest, CompletionResponse, LlmError, LlmProvider, ResponseFormat, TokenChunk,
 };
 
-const SUPPORTED: &[&str] = &[
-    "claude-sonnet-4-6",
-    "claude-opus-4-7",
-    "claude-haiku-4-5",
-];
+const SUPPORTED: &[&str] = &["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5"];
 
 pub struct AnthropicProvider {
     client: reqwest::Client,

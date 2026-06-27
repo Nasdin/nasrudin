@@ -17,9 +17,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(Users::Table)
-                    .add_column_if_not_exists(
-                        ColumnDef::new(Users::GithubId).big_integer().null(),
-                    )
+                    .add_column_if_not_exists(ColumnDef::new(Users::GithubId).big_integer().null())
                     .to_owned(),
             )
             .await?;
@@ -29,9 +27,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(Users::Table)
-                    .add_column_if_not_exists(
-                        ColumnDef::new(Users::GithubLogin).text().null(),
-                    )
+                    .add_column_if_not_exists(ColumnDef::new(Users::GithubLogin).text().null())
                     .to_owned(),
             )
             .await?;

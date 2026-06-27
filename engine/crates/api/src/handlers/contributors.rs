@@ -1,5 +1,10 @@
 //! Contributors/leaderboard endpoints — user-level aggregated stats.
-use axum::{Json, extract::{Path, State}, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use std::sync::Arc;
 use std::time::Duration;
 

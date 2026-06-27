@@ -46,7 +46,10 @@ fn gen_kp() -> Kp {
     let mut rng = rand_08::thread_rng();
     let pk = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
     let priv_pem = pk.to_pkcs1_pem(LineEnding::LF).unwrap().to_string();
-    let pub_pem = pk.to_public_key().to_public_key_pem(LineEnding::LF).unwrap();
+    let pub_pem = pk
+        .to_public_key()
+        .to_public_key_pem(LineEnding::LF)
+        .unwrap();
     Kp {
         enc: EncodingKey::from_rsa_pem(priv_pem.as_bytes()).unwrap(),
         dec: DecodingKey::from_rsa_pem(pub_pem.as_bytes()).unwrap(),
@@ -54,7 +57,10 @@ fn gen_kp() -> Kp {
 }
 
 fn now() -> usize {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize
 }
 
 fn mint(uid: &str, email: &str, provider: &str, verified: bool, kp: &Kp) -> String {
@@ -67,7 +73,9 @@ fn mint(uid: &str, email: &str, provider: &str, verified: bool, kp: &Kp) -> Stri
         aud: TEST_PROJECT.into(),
         exp: now() + 3600,
         iat: now() - 5,
-        firebase: WireFirebase { sign_in_provider: provider.into() },
+        firebase: WireFirebase {
+            sign_in_provider: provider.into(),
+        },
     };
     let mut h = Header::new(Algorithm::RS256);
     h.kid = Some(TEST_KID.into());
@@ -79,9 +87,17 @@ async fn google_user_creates_row_and_session() {
     let kp = gen_kp();
     let mut jwks = HashMap::new();
     jwks.insert(TEST_KID.into(), kp.dec.clone());
-    let Some(app) = test_app::build_with_jwks(TEST_PROJECT, jwks).await else { return };
+    let Some(app) = test_app::build_with_jwks(TEST_PROJECT, jwks).await else {
+        return;
+    };
 
-    let token = mint("fb-uid-google-1", "google.user@example.test", "google.com", true, &kp);
+    let token = mint(
+        "fb-uid-google-1",
+        "google.user@example.test",
+        "google.com",
+        true,
+        &kp,
+    );
 
     let req = Request::builder()
         .method("POST")
@@ -122,8 +138,7 @@ async fn google_user_creates_row_and_session() {
     // research_credits — surface it on /api/auth/me so the frontend
     // can read the wallet without a separate round-trip.
     assert!(
-        v.get("research_credits").is_some()
-            && !v["research_credits"].is_null(),
+        v.get("research_credits").is_some() && !v["research_credits"].is_null(),
         "research_credits must be present on /api/auth/me; body: {v}"
     );
     assert_eq!(
@@ -138,30 +153,50 @@ async fn returning_user_reuses_existing_row() {
     let kp = gen_kp();
     let mut jwks = HashMap::new();
     jwks.insert(TEST_KID.into(), kp.dec.clone());
-    let Some(app) = test_app::build_with_jwks(TEST_PROJECT, jwks).await else { return };
+    let Some(app) = test_app::build_with_jwks(TEST_PROJECT, jwks).await else {
+        return;
+    };
 
-    let token = mint("fb-uid-returning", "ret@example.test", "google.com", true, &kp);
-    let r1 = app.router.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/api/auth/firebase-session")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(format!(r#"{{"id_token":"{token}"}}"#)))
-            .unwrap(),
-    ).await.unwrap();
+    let token = mint(
+        "fb-uid-returning",
+        "ret@example.test",
+        "google.com",
+        true,
+        &kp,
+    );
+    let r1 = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/firebase-session")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(r#"{{"id_token":"{token}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(r1.status(), StatusCode::OK);
-    let v1: serde_json::Value = serde_json::from_slice(&to_bytes(r1.into_body(), 1<<16).await.unwrap()).unwrap();
+    let v1: serde_json::Value =
+        serde_json::from_slice(&to_bytes(r1.into_body(), 1 << 16).await.unwrap()).unwrap();
 
-    let r2 = app.router.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/api/auth/firebase-session")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(format!(r#"{{"id_token":"{token}"}}"#)))
-            .unwrap(),
-    ).await.unwrap();
+    let r2 = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/firebase-session")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(r#"{{"id_token":"{token}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(r2.status(), StatusCode::OK);
-    let v2: serde_json::Value = serde_json::from_slice(&to_bytes(r2.into_body(), 1<<16).await.unwrap()).unwrap();
+    let v2: serde_json::Value =
+        serde_json::from_slice(&to_bytes(r2.into_body(), 1 << 16).await.unwrap()).unwrap();
 
     assert_eq!(v1["id"], v2["id"], "same users.id reused on second call");
 }
@@ -171,19 +206,33 @@ async fn rejects_unverified_password_user() {
     let kp = gen_kp();
     let mut jwks = HashMap::new();
     jwks.insert(TEST_KID.into(), kp.dec.clone());
-    let Some(app) = test_app::build_with_jwks(TEST_PROJECT, jwks).await else { return };
+    let Some(app) = test_app::build_with_jwks(TEST_PROJECT, jwks).await else {
+        return;
+    };
 
-    let token = mint("fb-uid-unverified", "noverify@example.test", "password", false, &kp);
-    let resp = app.router.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/api/auth/firebase-session")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(format!(r#"{{"id_token":"{token}"}}"#)))
-            .unwrap(),
-    ).await.unwrap();
+    let token = mint(
+        "fb-uid-unverified",
+        "noverify@example.test",
+        "password",
+        false,
+        &kp,
+    );
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/firebase-session")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(r#"{{"id_token":"{token}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-    let v: serde_json::Value = serde_json::from_slice(&to_bytes(resp.into_body(), 1<<16).await.unwrap()).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&to_bytes(resp.into_body(), 1 << 16).await.unwrap()).unwrap();
     assert_eq!(v["error"], "email_not_verified");
 }
 
@@ -192,15 +241,22 @@ async fn rejects_invalid_token() {
     let kp = gen_kp();
     let mut jwks = HashMap::new();
     jwks.insert(TEST_KID.into(), kp.dec.clone());
-    let Some(app) = test_app::build_with_jwks(TEST_PROJECT, jwks).await else { return };
+    let Some(app) = test_app::build_with_jwks(TEST_PROJECT, jwks).await else {
+        return;
+    };
 
-    let resp = app.router.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/api/auth/firebase-session")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(r#"{"id_token":"not.a.real.jwt"}"#))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/firebase-session")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"id_token":"not.a.real.jwt"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }

@@ -13,8 +13,7 @@ import Mathlib.Analysis.SpecialFunctions.Log.Basic
 import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
 
 -- Tactics the emitter uses to close goals
-import Mathlib.Tactic.Linarith
-import Mathlib.Tactic.Polyrith
+import Mathlib.Tactic.Linarith.Frontend
 import Mathlib.Tactic.Ring
 import Mathlib.Tactic.NormNum
 import Mathlib.Tactic.Positivity

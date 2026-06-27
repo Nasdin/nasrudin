@@ -46,14 +46,17 @@ pub use axiom_store::AxiomStore;
 // the rocks crate can encode/decode it without a derive→rocks→derive
 // dependency cycle). Existing callers `use nasrudin_derive::Axiom`
 // keep working unchanged.
-pub use nasrudin_core::Axiom;
 pub use cache_config::{CacheConfig, CacheStats};
 pub use chain::{Chain, RuleStep};
 pub use context::{DerivationContext, DerivationStep};
 pub use derivation::{DerivationEngine, DerivationResult};
-pub use dimension_checker::{check_equation_dimensions, domain_variable_dimensions, equation_definitely_inconsistent, infer_dimension, sr_variable_dimensions};
+pub use dimension_checker::{
+    check_equation_dimensions, domain_variable_dimensions, equation_definitely_inconsistent,
+    infer_dimension, sr_variable_dimensions,
+};
 pub use error::DeriveError;
-pub use lean_emitter::{emit_lean_file, expr_to_lean, LeanEmitConfig};
+pub use lean_emitter::{LeanEmitConfig, emit_lean_file, expr_to_lean};
 pub use lean_verify::{LeanVerifier, LeanVerifyResult};
+pub use nasrudin_core::Axiom;
 pub use rules::DerivationRule;
 pub use strategies::DerivationStrategy;

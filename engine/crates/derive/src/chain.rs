@@ -227,11 +227,11 @@ impl Chain {
                 // deep) Expr tree. Skips one deep `Box<Expr>` walk per
                 // IntroduceAxiom step. The hot path runs a ~6-step
                 // chain ~200 times per generation; this multiplies.
-                let ax = store.get(axiom_name).ok_or_else(|| {
-                    DeriveError::AxiomNotFound {
+                let ax = store
+                    .get(axiom_name)
+                    .ok_or_else(|| DeriveError::AxiomNotFound {
                         name: axiom_name.clone(),
-                    }
-                })?;
+                    })?;
                 IntroduceAxiom {
                     axiom_name: axiom_name.clone(),
                     statement: ax.statement,
@@ -245,11 +245,11 @@ impl Chain {
             // separate so audit and search heuristics can distinguish
             // composing-off-peer from starting-from-postulates.
             RuleStep::IntroduceTheorem { theorem_name } => {
-                let ax = store.get(theorem_name).ok_or_else(|| {
-                    DeriveError::AxiomNotFound {
+                let ax = store
+                    .get(theorem_name)
+                    .ok_or_else(|| DeriveError::AxiomNotFound {
                         name: theorem_name.clone(),
-                    }
-                })?;
+                    })?;
                 IntroduceAxiom {
                     axiom_name: theorem_name.clone(),
                     statement: ax.statement,
@@ -263,7 +263,10 @@ impl Chain {
             }
             .apply(ctx),
             RuleStep::AlgebraicSimplify => AlgebraicSimplify.apply(ctx),
-            RuleStep::RearrangeEquation { description, target } => RearrangeEquation {
+            RuleStep::RearrangeEquation {
+                description,
+                target,
+            } => RearrangeEquation {
                 description: description.clone(),
                 target: target.clone(),
             }
@@ -291,9 +294,11 @@ impl DerivationStrategy for Chain {
         for step in &self.0 {
             Self::apply_step(step, store, ctx)?;
         }
-        ctx.current().cloned().ok_or_else(|| DeriveError::RewriteFailed {
-            reason: "chain produced no current expression".into(),
-        })
+        ctx.current()
+            .cloned()
+            .ok_or_else(|| DeriveError::RewriteFailed {
+                reason: "chain produced no current expression".into(),
+            })
     }
 }
 
@@ -352,7 +357,9 @@ mod tests {
         engine.store_mut().load_special_relativity_upstream();
         let chain = Chain::rest_energy_from_upstream();
         let mut ctx = crate::context::DerivationContext::new();
-        chain.execute(engine.store(), &mut ctx).expect("chain execute");
+        chain
+            .execute(engine.store(), &mut ctx)
+            .expect("chain execute");
         let cfg = crate::lean_emitter::LeanEmitConfig {
             namespace: "PhysicsGenerator.Derived".into(),
             theorem_name: "rest_energy_seed_chain".into(),
@@ -375,7 +382,10 @@ mod tests {
             !lean.contains("polyrith"),
             "emitter still emits polyrith; it was removed for offline reliability"
         );
-        assert!(lean.contains("Real.sqrt_sq"), "emitter dropped Real.sqrt_sq rewrite");
+        assert!(
+            lean.contains("Real.sqrt_sq"),
+            "emitter dropped Real.sqrt_sq rewrite"
+        );
         assert!(
             lean.contains("rest_energy_seed_chain"),
             "emitted Lean missing theorem name; got:\n{lean}"

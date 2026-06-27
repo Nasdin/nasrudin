@@ -88,11 +88,7 @@ pub async fn get_ciphertext(
     Ok(row.map(|m| m.encrypted_key))
 }
 
-pub async fn delete(
-    db: &DatabaseConnection,
-    user_id: Uuid,
-    provider: &str,
-) -> Result<u64, DbErr> {
+pub async fn delete(db: &DatabaseConnection, user_id: Uuid, provider: &str) -> Result<u64, DbErr> {
     let res = user_llm_keys::Entity::delete_by_id((user_id, provider.to_string()))
         .exec(db)
         .await?;

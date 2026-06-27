@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::admin::audit::{actions, perform_audited, RequestMeta};
+use crate::admin::audit::{RequestMeta, actions, perform_audited};
 use crate::admin::require_admin::RequireAdmin;
 use crate::state::AppState;
 use crate::trust::CacheInvalidation;
@@ -49,8 +49,7 @@ pub async fn revoke(
     {
         Ok(Some(r)) => r,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"})))
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response();
         }
         Err(e) => {
             return (
@@ -89,7 +88,9 @@ pub async fn revoke(
     )
     .await;
     if result.is_ok() {
-        let _ = state.trust_invalidation_tx.send(CacheInvalidation::ApiKey(id));
+        let _ = state
+            .trust_invalidation_tx
+            .send(CacheInvalidation::ApiKey(id));
     }
     match result {
         Ok(()) => (StatusCode::OK, Json(json!({"ok": true}))).into_response(),
@@ -129,8 +130,7 @@ pub async fn set_trust(
     {
         Ok(Some(r)) => r,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"})))
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response();
         }
         Err(e) => {
             return (
@@ -174,7 +174,9 @@ pub async fn set_trust(
     )
     .await;
     if result.is_ok() {
-        let _ = state.trust_invalidation_tx.send(CacheInvalidation::ApiKey(id));
+        let _ = state
+            .trust_invalidation_tx
+            .send(CacheInvalidation::ApiKey(id));
     }
     match result {
         Ok(()) => (StatusCode::OK, Json(json!({"ok": true}))).into_response(),

@@ -7,7 +7,9 @@ use nasrudin_core::{canonical_ac_hash, canonical_ac_string, parse};
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
-    let format = args.next().ok_or_else(|| anyhow::anyhow!("missing format"))?;
+    let format = args
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing format"))?;
     let input = args.collect::<Vec<_>>().join(" ");
     let expr = match format.as_str() {
         "sexpr" => parse::parse_sexpr(&input).map_err(|e| anyhow::anyhow!("{e}"))?,

@@ -36,8 +36,7 @@ impl CacheCtx {
         let stats = Arc::new(CacheStats::default());
         let lean_version =
             std::env::var("NASRUDIN_LEAN_VERSION").unwrap_or_else(|_| "4.27.0".into());
-        let worker_id =
-            std::env::var("NASRUDIN_WORKER_ID").unwrap_or_else(|_| "api-server".into());
+        let worker_id = std::env::var("NASRUDIN_WORKER_ID").unwrap_or_else(|_| "api-server".into());
         let bundle = CacheBundle {
             attempts,
             tactic_priors,

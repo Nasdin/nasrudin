@@ -120,9 +120,8 @@ pub fn resolve_local_path() -> std::path::PathBuf {
 /// the worker).
 pub fn open_local(path: &Path) -> Result<CorpusDb> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("create parent dir for worker rocks: {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create parent dir for worker rocks: {}", parent.display()))?;
     }
     std::fs::create_dir_all(path)
         .with_context(|| format!("create worker rocks dir: {}", path.display()))?;
@@ -187,8 +186,10 @@ pub async fn hydrate_from_server(
     if let Some(ref etag) = cached_etag {
         headers.push(("if-none-match".into(), etag.clone()));
     }
-    let header_refs: Vec<(&str, &str)> =
-        headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let header_refs: Vec<(&str, &str)> = headers
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
 
     let started = std::time::Instant::now();
     let (status, resp_headers, byte_stream) = http
@@ -380,9 +381,7 @@ fn parse_domain(s: &str) -> Domain {
 /// Returns `Arc<dyn CorpusBackend>` and the `AxiomStore` so the
 /// caller can hold the cold-tier handle for diagnostics if desired
 /// (e.g. logging `corpus.count()` periodically).
-pub fn build_axiom_store(
-    corpus: Arc<dyn CorpusBackend>,
-) -> nasrudin_derive::AxiomStore {
+pub fn build_axiom_store(corpus: Arc<dyn CorpusBackend>) -> nasrudin_derive::AxiomStore {
     nasrudin_derive::AxiomStore::with_corpus(corpus)
 }
 
@@ -518,7 +517,10 @@ mod tests {
     fn parse_domain_dual_form() {
         assert_eq!(parse_domain("pure_math"), Domain::PureMath);
         assert_eq!(parse_domain("PureMath"), Domain::PureMath);
-        assert_eq!(parse_domain("special_relativity"), Domain::SpecialRelativity);
+        assert_eq!(
+            parse_domain("special_relativity"),
+            Domain::SpecialRelativity
+        );
         assert_eq!(parse_domain("SpecialRelativity"), Domain::SpecialRelativity);
         assert_eq!(parse_domain("nonsense"), Domain::PureMath);
     }

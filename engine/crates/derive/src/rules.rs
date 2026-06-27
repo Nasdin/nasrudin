@@ -112,7 +112,12 @@ impl DerivationRule for SubstituteValue {
         let result = rewrite::substitute_in_equation(&current, &self.var, &self.value);
 
         ctx.record_step(
-            format!("Substitute {} = {} ({})", self.var, self.value.to_canonical(), self.reason),
+            format!(
+                "Substitute {} = {} ({})",
+                self.var,
+                self.value.to_canonical(),
+                self.reason
+            ),
             self.name(),
             result,
         );

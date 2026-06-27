@@ -67,10 +67,12 @@ impl MigrationTrait for Migration {
                             .col(ClusterDirectiveArms::StrengthBucket)
                             .col(ClusterDirectiveArms::MultiplierChoice),
                     )
-                    .check(
-                        Expr::col(ClusterDirectiveArms::Action)
-                            .is_in(["boost", "exploit", "diversify", "kill"]),
-                    )
+                    .check(Expr::col(ClusterDirectiveArms::Action).is_in([
+                        "boost",
+                        "exploit",
+                        "diversify",
+                        "kill",
+                    ]))
                     .check(Expr::col(ClusterDirectiveArms::StrengthBucket).between(0, 4))
                     .check(Expr::col(ClusterDirectiveArms::MultiplierChoice).between(0, 4))
                     .to_owned(),
@@ -98,11 +100,7 @@ impl MigrationTrait for Migration {
             .await
             .ok();
         manager
-            .drop_table(
-                Table::drop()
-                    .table(ClusterDirectiveArms::Table)
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(ClusterDirectiveArms::Table).to_owned())
             .await
     }
 }

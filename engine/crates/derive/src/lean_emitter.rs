@@ -310,10 +310,7 @@ fn emit_chain_theorem(out: &mut String, ctx: &DerivationContext, config: &LeanEm
             // close with linarith. This is what the iter 4 v1b emitter did
             // and it works for the legacy `DeriveRestEnergy` chain.
             if all_axiom_hyps.len() == 1 && !all_asm_hyps.is_empty() {
-                out.push_str(&format!(
-                    "  have h_axiom := {}\n",
-                    all_axiom_hyps[0]
-                ));
+                out.push_str(&format!("  have h_axiom := {}\n", all_axiom_hyps[0]));
                 for asm_hyp in &all_asm_hyps {
                     out.push_str(&format!("  rw [{}] at h_axiom\n", asm_hyp));
                 }
@@ -538,6 +535,12 @@ fn collect_free_vars_into(expr: &Expr, out: &mut BTreeSet<String>) {
 /// Make a string a valid Lean identifier (alphanumerics + underscore).
 fn sanitize_ident(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }

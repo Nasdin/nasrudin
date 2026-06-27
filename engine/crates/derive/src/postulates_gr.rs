@@ -69,10 +69,9 @@ pub fn general_relativity_postulates() -> Vec<Axiom> {
                 g_einstein(),
                 sub(r_ricci(), mul(Expr::Lit(1, 2), mul(g(), r_scalar()))),
             ),
-            description:
-                "Einstein tensor (slot form): G = R_μν - (½) g_μν R. Trace-reversed \
+            description: "Einstein tensor (slot form): G = R_μν - (½) g_μν R. Trace-reversed \
                  Ricci tensor (Carroll §4.5)."
-                    .into(),
+                .into(),
         },
         // Einstein field equations: G + Λ g = (8πG/c⁴) T.
         Axiom {
@@ -85,10 +84,9 @@ pub fn general_relativity_postulates() -> Vec<Axiom> {
                     t_stress(),
                 ),
             ),
-            description:
-                "Einstein field equations (slot form): G_μν + Λ g_μν = (8πG/c⁴) T_μν. \
+            description: "Einstein field equations (slot form): G_μν + Λ g_μν = (8πG/c⁴) T_μν. \
                  Couples spacetime curvature to stress-energy (Carroll §4.6)."
-                    .into(),
+                .into(),
         },
         // Einstein equations without cosmological constant (special case
         // useful as a chain ladder rung).
@@ -102,10 +100,9 @@ pub fn general_relativity_postulates() -> Vec<Axiom> {
                     t_stress(),
                 ),
             ),
-            description:
-                "Einstein equations without cosmological constant: G_μν = (8πG/c⁴) T_μν. \
+            description: "Einstein equations without cosmological constant: G_μν = (8πG/c⁴) T_μν. \
                  The Λ=0 case (Carroll §4.6, original 1915 form)."
-                    .into(),
+                .into(),
         },
         // Geodesic equation (slot form): d²x/dτ² + Γ·(dx/dτ)² = 0,
         // encoded as d²x/dτ² = -Γ·v² where Γ = Γ_kin is a slot for
@@ -119,17 +116,13 @@ pub fn general_relativity_postulates() -> Vec<Axiom> {
                     nasrudin_core::UnOp::Neg,
                     Box::new(mul(
                         Expr::Var("Gamma_kin".into()),
-                        pow(
-                            Expr::Deriv(Box::new(x_geo()), "proper_time".into()),
-                            lit(2),
-                        ),
+                        pow(Expr::Deriv(Box::new(x_geo()), "proper_time".into()), lit(2)),
                     )),
                 ),
             ),
-            description:
-                "Geodesic equation (slot form): d²x/dτ² = -Γ (dx/dτ)². Free-fall \
+            description: "Geodesic equation (slot form): d²x/dτ² = -Γ (dx/dτ)². Free-fall \
                  paths in curved spacetime (Carroll §3.4)."
-                    .into(),
+                .into(),
         },
         // Equivalence principle: locally, GR reduces to SR. Encoded as
         // the existence of a frame where g = η (Minkowski metric, slot
@@ -142,10 +135,9 @@ pub fn general_relativity_postulates() -> Vec<Axiom> {
                 Box::new(Expr::Var("local_inertial_frame".into())),
                 Box::new(eq(g(), Expr::Var("eta_minkowski".into()))),
             ),
-            description:
-                "Equivalence principle: in a local inertial frame, the metric \
+            description: "Equivalence principle: in a local inertial frame, the metric \
                  reduces to Minkowski. Foundation of GR (Carroll §2.1)."
-                    .into(),
+                .into(),
         },
         // Newtonian limit: Einstein equation reduces to Poisson. In
         // weak-field, slow-motion limit: ∇²Φ = 4πGρ. Encoded as a
@@ -158,12 +150,14 @@ pub fn general_relativity_postulates() -> Vec<Axiom> {
                     nasrudin_core::UnOp::Laplacian,
                     Box::new(Expr::Var("Phi_grav".into())),
                 ),
-                mul(mul(lit(4), pi_const()), mul(big_g(), Expr::Var("rho".into()))),
+                mul(
+                    mul(lit(4), pi_const()),
+                    mul(big_g(), Expr::Var("rho".into())),
+                ),
             ),
-            description:
-                "Newtonian limit of GR: ∇²Φ = 4πGρ. Recovered from EFE in the \
+            description: "Newtonian limit of GR: ∇²Φ = 4πGρ. Recovered from EFE in the \
                  weak-field, slow-motion regime (Carroll §4.1)."
-                    .into(),
+                .into(),
         },
         // Speed of light positive (carrying it into GR domain too).
         Axiom {

@@ -85,7 +85,9 @@ impl Island {
     ///
     /// Loads theorems for this island's domain and fills remaining slots with random.
     pub fn seed_from_db(&mut self, db: &TheoremDb, rng: &mut impl Rng) {
-        let domain_ids = db.list_by_domain(&self.population.domain).unwrap_or_default();
+        let domain_ids = db
+            .list_by_domain(&self.population.domain)
+            .unwrap_or_default();
         let target = self.config.population_size;
         for id in domain_ids.iter().take(target) {
             if let Ok(Some(thm)) = db.get_theorem(id) {
@@ -169,8 +171,7 @@ impl Island {
             let math_pool: Vec<nasrudin_derive::Axiom> =
                 store.by_domain_excluding(&Domain::PureMath, forbidden);
             let need = target.saturating_sub(self.population.len());
-            let math_sample: Vec<nasrudin_derive::Axiom> =
-                math_pool.into_iter().sample(rng, need);
+            let math_sample: Vec<nasrudin_derive::Axiom> = math_pool.into_iter().sample(rng, need);
             for axiom in math_sample {
                 if self.population.len() >= target {
                     break;
@@ -237,19 +238,11 @@ impl Island {
     /// to AxiomInjection mutation. Domain-relevant axioms (incl. all of
     /// PhysLean + Mathlib + foundational postulates) become reachable
     /// substrate during evolution.
-    pub fn step_with_store(
-        &mut self,
-        rng: &mut impl Rng,
-        store: &AxiomStore,
-    ) -> Vec<Theorem> {
+    pub fn step_with_store(&mut self, rng: &mut impl Rng, store: &AxiomStore) -> Vec<Theorem> {
         self.step_inner(rng, Some(store))
     }
 
-    fn step_inner(
-        &mut self,
-        rng: &mut impl Rng,
-        store: Option<&AxiomStore>,
-    ) -> Vec<Theorem> {
+    fn step_inner(&mut self, rng: &mut impl Rng, store: Option<&AxiomStore>) -> Vec<Theorem> {
         let pop_size = self.config.population_size;
         if self.population.len() < 2 {
             return vec![];
@@ -277,19 +270,19 @@ impl Island {
             );
 
             // Crossover
-            let (mut child_stmt_a, mut child_stmt_b) = if rng.random_bool(self.config.crossover_rate)
-            {
-                subtree_crossover(
-                    &parent_a.theorem.statement,
-                    &parent_b.theorem.statement,
-                    rng,
-                )
-            } else {
-                (
-                    parent_a.theorem.statement.clone(),
-                    parent_b.theorem.statement.clone(),
-                )
-            };
+            let (mut child_stmt_a, mut child_stmt_b) =
+                if rng.random_bool(self.config.crossover_rate) {
+                    subtree_crossover(
+                        &parent_a.theorem.statement,
+                        &parent_b.theorem.statement,
+                        rng,
+                    )
+                } else {
+                    (
+                        parent_a.theorem.statement.clone(),
+                        parent_b.theorem.statement.clone(),
+                    )
+                };
 
             // Mutation — when `store` is `Some`, AxiomInjection samples
             // from it (domain-biased per `domain_hint`). When `None`,
@@ -366,13 +359,11 @@ impl Island {
 
         // Sort by NSGA-II criteria: lower rank first, then higher crowding distance
         combined.sort_by(|a, b| {
-            a.pareto_rank
-                .cmp(&b.pareto_rank)
-                .then_with(|| {
-                    b.crowding_distance
-                        .partial_cmp(&a.crowding_distance)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
+            a.pareto_rank.cmp(&b.pareto_rank).then_with(|| {
+                b.crowding_distance
+                    .partial_cmp(&a.crowding_distance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         });
         combined.truncate(pop_size);
 
@@ -448,7 +439,14 @@ fn generate_expr_recursive(
     }
 
     // Generate a binary operation
-    let ops = [BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div, BinOp::Pow, BinOp::Eq];
+    let ops = [
+        BinOp::Add,
+        BinOp::Sub,
+        BinOp::Mul,
+        BinOp::Div,
+        BinOp::Pow,
+        BinOp::Eq,
+    ];
     let op = ops[rng.random_range(0..ops.len())].clone();
     let left = generate_expr_recursive(vars, consts, max_depth, current_depth + 1, rng);
     let right = generate_expr_recursive(vars, consts, max_depth, current_depth + 1, rng);
@@ -459,12 +457,8 @@ fn generate_expr_recursive(
 fn random_leaf(vars: &[&str], consts: &[PhysConst], rng: &mut impl Rng) -> Expr {
     let choice = rng.random_range(0..3u32);
     match choice {
-        0 if !vars.is_empty() => {
-            Expr::Var(vars[rng.random_range(0..vars.len())].to_string())
-        }
-        1 if !consts.is_empty() => {
-            Expr::Const(consts[rng.random_range(0..consts.len())].clone())
-        }
+        0 if !vars.is_empty() => Expr::Var(vars[rng.random_range(0..vars.len())].to_string()),
+        1 if !consts.is_empty() => Expr::Const(consts[rng.random_range(0..consts.len())].clone()),
         _ => {
             // Small integer literal
             let n = rng.random_range(1..=4);

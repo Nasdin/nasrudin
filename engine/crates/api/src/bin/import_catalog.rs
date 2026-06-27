@@ -9,22 +9,25 @@
 //! theorem in-place (same id from `axiom_id_from_name`).
 
 use anyhow::{Context, Result};
-use nasrudin_derive::physlean_import::load_catalog_split;
 use nasrudin_derive::AxiomStore;
+use nasrudin_derive::physlean_import::load_catalog_split;
 use nasrudin_rocks::TheoremDb;
 use std::path::Path;
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let mut args = std::env::args().skip(1);
-    let db_path = args.next().context("usage: import_catalog <rocksdb_path> <catalog_path>")?;
-    let catalog_path = args.next().context("usage: import_catalog <rocksdb_path> <catalog_path>")?;
+    let db_path = args
+        .next()
+        .context("usage: import_catalog <rocksdb_path> <catalog_path>")?;
+    let catalog_path = args
+        .next()
+        .context("usage: import_catalog <rocksdb_path> <catalog_path>")?;
 
     let db = TheoremDb::new(&db_path).context("open rocksdb")?;
     let mut store = AxiomStore::new();
     let started = std::time::Instant::now();
-    let (axioms, theorems) =
-        load_catalog_split(Path::new(&catalog_path), &mut store, &db)?;
+    let (axioms, theorems) = load_catalog_split(Path::new(&catalog_path), &mut store, &db)?;
     println!(
         "Imported in {:.2}s: {axioms} axioms (AxiomStore-only, in-process), {theorems} derived theorems written to {db_path}",
         started.elapsed().as_secs_f64(),

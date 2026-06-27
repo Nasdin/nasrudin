@@ -15,7 +15,7 @@ use stripe_shared::{CheckoutSessionMode, SubscriptionStatus};
 use stripe_types::Expandable;
 use stripe_webhook::{Event, EventObject, Webhook, WebhookError};
 
-use crate::billing::stripe_client::{customer_id_from_expandable, first_price_id, BillingConfig};
+use crate::billing::stripe_client::{BillingConfig, customer_id_from_expandable, first_price_id};
 use crate::billing::tier::PlanTier;
 
 /// Translate a Stripe price id into our internal sponsorship tier
@@ -89,8 +89,8 @@ pub async fn dispatch(
     match &event.data.object {
         EventObject::CustomerSubscriptionCreated(sub)
         | EventObject::CustomerSubscriptionUpdated(sub) => {
-            let customer_id = customer_id_from_expandable(&sub.customer)
-                .ok_or(DispatchError::NoCustomer)?;
+            let customer_id =
+                customer_id_from_expandable(&sub.customer).ok_or(DispatchError::NoCustomer)?;
             // Stripe's status enum: any of these terminal states means
             // "treat as cancelled" even when arriving via .updated.
             let cancelled = matches!(
@@ -100,16 +100,12 @@ pub async fn dispatch(
                     | SubscriptionStatus::Unpaid
             );
             if cancelled {
-                nasrudin_pg::query::billing::apply_subscription_cancelled(pg, &customer_id)
-                    .await?;
+                nasrudin_pg::query::billing::apply_subscription_cancelled(pg, &customer_id).await?;
                 // Mirror to the public-profile ledger.
                 let now = chrono::Utc::now();
-                let _ = nasrudin_pg::query::user_sponsorships::mark_canceled(
-                    pg,
-                    sub.id.as_str(),
-                    now,
-                )
-                .await;
+                let _ =
+                    nasrudin_pg::query::user_sponsorships::mark_canceled(pg, sub.id.as_str(), now)
+                        .await;
                 return Ok(());
             }
             let price_id = first_price_id(sub).unwrap_or_default();
@@ -125,12 +121,10 @@ pub async fn dispatch(
                 .first()
                 .map(|i| (i.current_period_start, i.current_period_end))
                 .unwrap_or((sub.start_date, sub.start_date));
-            let cycle_start =
-                chrono::DateTime::<chrono::Utc>::from_timestamp(cycle_start_ts, 0)
-                    .unwrap_or_else(chrono::Utc::now);
-            let period_end =
-                chrono::DateTime::<chrono::Utc>::from_timestamp(period_end_ts, 0)
-                    .unwrap_or_else(chrono::Utc::now);
+            let cycle_start = chrono::DateTime::<chrono::Utc>::from_timestamp(cycle_start_ts, 0)
+                .unwrap_or_else(chrono::Utc::now);
+            let period_end = chrono::DateTime::<chrono::Utc>::from_timestamp(period_end_ts, 0)
+                .unwrap_or_else(chrono::Utc::now);
             // Credits grant runs BEFORE apply_subscription_active so
             // it can read the user's PREVIOUS plan_cycle_start to
             // detect a fresh period. apply_subscription_active then
@@ -179,8 +173,7 @@ pub async fn dispatch(
             // source of truth for entitlement; the ledger is
             // best-effort decoration for the profile badge).
             if let Ok(Some(user)) =
-                nasrudin_pg::query::users::find_by_stripe_customer_id(pg, &customer_id)
-                    .await
+                nasrudin_pg::query::users::find_by_stripe_customer_id(pg, &customer_id).await
             {
                 let amount_cents = sub
                     .items
@@ -213,8 +206,8 @@ pub async fn dispatch(
             Ok(())
         }
         EventObject::CustomerSubscriptionDeleted(sub) => {
-            let customer_id = customer_id_from_expandable(&sub.customer)
-                .ok_or(DispatchError::NoCustomer)?;
+            let customer_id =
+                customer_id_from_expandable(&sub.customer).ok_or(DispatchError::NoCustomer)?;
             nasrudin_pg::query::billing::apply_subscription_cancelled(pg, &customer_id).await?;
             let canceled_at = sub
                 .canceled_at
@@ -242,12 +235,9 @@ pub async fn dispatch(
             // Idempotency belt-and-braces: the partial unique index
             // on stripe_event_id catches replays at the DB layer,
             // but checking here lets us short-circuit cheaply.
-            if nasrudin_pg::query::user_sponsorships::event_already_processed(
-                pg,
-                event.id.as_str(),
-            )
-            .await
-            .unwrap_or(false)
+            if nasrudin_pg::query::user_sponsorships::event_already_processed(pg, event.id.as_str())
+                .await
+                .unwrap_or(false)
             {
                 return Ok(());
             }
@@ -255,11 +245,8 @@ pub async fn dispatch(
                 Some(c) => customer_id_from_expandable(c).ok_or(DispatchError::NoCustomer)?,
                 None => return Ok(()), // anonymous donations skipped
             };
-            let user = match nasrudin_pg::query::users::find_by_stripe_customer_id(
-                pg,
-                &customer_id,
-            )
-            .await?
+            let user = match nasrudin_pg::query::users::find_by_stripe_customer_id(pg, &customer_id)
+                .await?
             {
                 Some(u) => u,
                 None => return Ok(()), // donation by a customer with no user account; nothing to attribute
@@ -283,7 +270,7 @@ pub async fn dispatch(
                 .unwrap_or_else(chrono::Utc::now);
             // For the open-amount donate flow we tag the price as
             // `sponsor_open`; any other one-time charge falls back
-                // to NULL.
+            // to NULL.
             let tier = session
                 .metadata
                 .as_ref()

@@ -42,7 +42,11 @@ fn test_derivation_without_lean() {
     let engine = DerivationEngine::with_sr_axioms();
     let result = engine.derive_rest_energy();
 
-    assert!(result.is_ok(), "derivation should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "derivation should succeed: {:?}",
+        result.err()
+    );
 
     let r = result.unwrap();
     println!("Theorem: {}", r.theorem.to_canonical());

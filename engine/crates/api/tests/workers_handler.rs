@@ -28,7 +28,8 @@ async fn list_endpoint_returns_workers_array() {
     // Harness seeds a single "test-worker" row.
     let arr = body.as_array().unwrap();
     assert!(
-        arr.iter().any(|v| v.get("id").and_then(|s| s.as_str()) == Some("test-worker")),
+        arr.iter()
+            .any(|v| v.get("id").and_then(|s| s.as_str()) == Some("test-worker")),
         "expected seeded test-worker in list, got {body}"
     );
 }

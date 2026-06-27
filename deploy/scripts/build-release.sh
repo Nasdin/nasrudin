@@ -196,7 +196,14 @@ rm -rf "$OUT_DIR/frontend"
 # --node-linker=hoisted: flat node_modules tree (no symlinks) so node's ESM
 # resolver can walk react -> exports['./jsx-runtime'] correctly. The default
 # isolated/symlink layout breaks ESM resolution under realpath-following.
-pnpm --filter nasrudin-frontend deploy --prod --node-linker=hoisted "$OUT_DIR/frontend"
+# --frozen-lockfile: without it `pnpm deploy` RE-RESOLVES dependencies from
+# the package.json caret ranges, ignoring pnpm-lock.yaml ("prohibits to read
+# or write a lockfile" warning). That drifted @tanstack/react-router from the
+# pinned 1.169.1 up to 1.170.8 — a minor bump that ships a breaking hydration
+# change and produced a global client-side "Invariant failed" → blank site.
+# Forcing the frozen lockfile keeps the deployed tree identical to the tested
+# `pnpm install --frozen-lockfile` above.
+pnpm --filter nasrudin-frontend deploy --prod --frozen-lockfile --node-linker=hoisted "$OUT_DIR/frontend"
 cp -R nasrudin-frontend/dist/. "$OUT_DIR/frontend/"
 # TanStack Start v1's node-server preset emits a Web-Fetch handler module,
 # not a standalone server. This wrapper boots a Node http listener.

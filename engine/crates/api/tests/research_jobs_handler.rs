@@ -7,7 +7,7 @@
 
 mod test_app;
 
-use axum::body::{to_bytes, Body};
+use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
@@ -155,6 +155,9 @@ async fn steering_endpoint_anonymous_returns_200_with_etag() {
     let resp = test_app::get(&app, "/api/steering").await;
     assert_eq!(resp.status, StatusCode::OK);
     let body: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
-    assert!(body.get("config").is_some(), "steering body must have config");
+    assert!(
+        body.get("config").is_some(),
+        "steering body must have config"
+    );
     assert!(body.get("mode").is_some(), "steering body must have mode");
 }

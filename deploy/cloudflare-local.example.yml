@@ -1,0 +1,23 @@
+# Example Cloudflare Tunnel config for running Nasrudin on a local desktop.
+# Copy to ~/.cloudflared/config.yml after creating a tunnel with:
+#   cloudflared tunnel create nasrudin-local
+#   cloudflared tunnel route dns nasrudin-local nasrudin.org
+#   cloudflared tunnel route dns nasrudin-local api.nasrudin.org
+#
+# Then run the app locally:
+#   just up
+#
+# And start the tunnel:
+#   cloudflared tunnel run nasrudin-local
+#
+# Cloudflare terminates public TLS. The local services stay bound to localhost.
+
+tunnel: nasrudin-local
+credentials-file: /Users/YOUR_USER/.cloudflared/nasrudin-local.json
+
+ingress:
+  - hostname: nasrudin.org
+    service: http://localhost:5173
+  - hostname: api.nasrudin.org
+    service: http://localhost:3001
+  - service: http_status:404

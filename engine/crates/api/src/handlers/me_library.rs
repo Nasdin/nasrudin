@@ -183,14 +183,16 @@ pub async fn unsave_theorem(
         Ok(b) => b,
         Err(e) => return e.into_response(),
     };
-    match nasrudin_pg::query::library::unsave_theorem(&auth_sess.backend.db, auth.user.id, &id_bytes)
-        .await
+    match nasrudin_pg::query::library::unsave_theorem(
+        &auth_sess.backend.db,
+        auth.user.id,
+        &id_bytes,
+    )
+    .await
     {
-        Ok(res) if res.rows_affected > 0 => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "deleted": true })),
-        )
-            .into_response(),
+        Ok(res) if res.rows_affected > 0 => {
+            (StatusCode::OK, Json(serde_json::json!({ "deleted": true }))).into_response()
+        }
         Ok(_) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "not_saved" })),
@@ -306,11 +308,7 @@ pub async fn create_folder(
 
 pub async fn list_folders(auth: AuthOrApiKey, auth_sess: AuthSess) -> impl IntoResponse {
     match nasrudin_pg::query::library::list_folders(&auth_sess.backend.db, auth.user.id).await {
-        Ok(rows) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "folders": rows })),
-        )
-            .into_response(),
+        Ok(rows) => (StatusCode::OK, Json(serde_json::json!({ "folders": rows }))).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": format!("{e}") })),
@@ -376,11 +374,9 @@ pub async fn delete_folder(
 ) -> impl IntoResponse {
     match nasrudin_pg::query::library::delete_folder(&auth_sess.backend.db, auth.user.id, id).await
     {
-        Ok(res) if res.rows_affected > 0 => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "deleted": true })),
-        )
-            .into_response(),
+        Ok(res) if res.rows_affected > 0 => {
+            (StatusCode::OK, Json(serde_json::json!({ "deleted": true }))).into_response()
+        }
         Ok(_) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "folder not found" })),

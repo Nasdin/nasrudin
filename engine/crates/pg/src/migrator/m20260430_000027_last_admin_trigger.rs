@@ -12,8 +12,10 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.get_connection().execute_unprepared(
-            r#"
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
             CREATE OR REPLACE FUNCTION prevent_last_admin_demotion() RETURNS TRIGGER AS $func$
             BEGIN
                 IF OLD.is_admin = TRUE AND NEW.is_admin = FALSE THEN
@@ -31,8 +33,8 @@ impl MigrationTrait for Migration {
                 FOR EACH ROW WHEN (OLD.is_admin = TRUE AND NEW.is_admin = FALSE)
                 EXECUTE FUNCTION prevent_last_admin_demotion();
             "#,
-        )
-        .await?;
+            )
+            .await?;
         Ok(())
     }
 

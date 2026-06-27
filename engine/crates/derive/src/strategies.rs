@@ -17,11 +17,8 @@ pub trait DerivationStrategy: std::fmt::Debug {
     fn name(&self) -> &str;
 
     /// Execute the strategy, populating the context with steps.
-    fn execute(
-        &self,
-        store: &AxiomStore,
-        ctx: &mut DerivationContext,
-    ) -> Result<Expr, DeriveError>;
+    fn execute(&self, store: &AxiomStore, ctx: &mut DerivationContext)
+    -> Result<Expr, DeriveError>;
 }
 
 /// Derive E = mc² from the mass-shell condition.
@@ -55,11 +52,12 @@ impl DerivationStrategy for DeriveRestEnergy {
         let zero = Expr::Lit(0, 1);
 
         // Step 1: Load mass-shell condition
-        let axiom = store.get("mass_shell_condition").ok_or_else(|| {
-            DeriveError::AxiomNotFound {
-                name: "mass_shell_condition".into(),
-            }
-        })?;
+        let axiom =
+            store
+                .get("mass_shell_condition")
+                .ok_or_else(|| DeriveError::AxiomNotFound {
+                    name: "mass_shell_condition".into(),
+                })?;
         let introduce = IntroduceAxiom {
             axiom_name: "mass_shell_condition".into(),
             statement: axiom.statement.clone(),
@@ -73,7 +71,11 @@ impl DerivationStrategy for DeriveRestEnergy {
         let p_sq_c_sq = Expr::BinOp(BinOp::Mul, Box::new(p_sq), Box::new(c_sq.clone()));
         let mc_sq = Expr::BinOp(BinOp::Mul, Box::new(m.clone()), Box::new(c_sq.clone()));
         let mc_sq_squared = Expr::BinOp(BinOp::Pow, Box::new(mc_sq.clone()), Box::new(two.clone()));
-        let em_rhs = Expr::BinOp(BinOp::Add, Box::new(p_sq_c_sq.clone()), Box::new(mc_sq_squared.clone()));
+        let em_rhs = Expr::BinOp(
+            BinOp::Add,
+            Box::new(p_sq_c_sq.clone()),
+            Box::new(mc_sq_squared.clone()),
+        );
         let em_relation = Expr::BinOp(BinOp::Eq, Box::new(e_sq.clone()), Box::new(em_rhs));
 
         let rearrange = RearrangeEquation {
@@ -89,11 +91,7 @@ impl DerivationStrategy for DeriveRestEnergy {
         // "SubstituteValue not justified by any chain fact". The rest
         // frame is a postulate of the derivation (existence of a frame
         // where spatial momentum vanishes), so we register it here.
-        let p_eq_zero = Expr::BinOp(
-            BinOp::Eq,
-            Box::new(p.clone()),
-            Box::new(zero.clone()),
-        );
+        let p_eq_zero = Expr::BinOp(BinOp::Eq, Box::new(p.clone()), Box::new(zero.clone()));
         ctx.assume("rest_frame: p = 0", p_eq_zero);
 
         // Step 3b: Substitute p = 0 (rest frame)
@@ -212,8 +210,7 @@ impl DerivationStrategy for DeriveRestEnergyFromUpstream {
         let e_sq = Expr::BinOp(BinOp::Pow, Box::new(e.clone()), Box::new(two.clone()));
         let c_sq = Expr::BinOp(BinOp::Pow, Box::new(c.clone()), Box::new(two.clone()));
         let mc_sq = Expr::BinOp(BinOp::Mul, Box::new(m.clone()), Box::new(c_sq.clone()));
-        let mc_sq_squared =
-            Expr::BinOp(BinOp::Pow, Box::new(mc_sq.clone()), Box::new(two.clone()));
+        let mc_sq_squared = Expr::BinOp(BinOp::Pow, Box::new(mc_sq.clone()), Box::new(two.clone()));
         let e_sq_eq_mc_sq_sq = Expr::BinOp(
             BinOp::Eq,
             Box::new(e_sq.clone()),
@@ -237,6 +234,17 @@ impl DerivationStrategy for DeriveRestEnergyFromUpstream {
             e_sq_eq_mc_sq_sq,
         );
 
+        // `TakePositiveRoot` requires non-negativity facts in scope
+        // for both bases. Add the sign postulates as facts without
+        // introducing them as current steps, so `current` stays in the
+        // required `E² = (m·c²)²` shape.
+        if let Some(ax) = store.get("energy_nonneg") {
+            ctx.add_fact("energy_nonneg", ax.statement.clone());
+        }
+        if let Some(ax) = store.get("mass_nonneg") {
+            ctx.add_fact("mass_nonneg", ax.statement.clone());
+        }
+
         // ── Step 6: Take positive root → E = m·c² ────────────────
         TakePositiveRoot.apply(ctx)?;
 
@@ -244,3 +252,29 @@ impl DerivationStrategy for DeriveRestEnergyFromUpstream {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upstream_rest_energy_strategy_executes_without_mass_shell_axiom() {
+        let mut store = AxiomStore::new();
+        store.load_special_relativity_upstream();
+        assert!(store.get("mass_shell_condition").is_none());
+
+        let mut ctx = DerivationContext::new();
+        let result = DeriveRestEnergyFromUpstream
+            .execute(&store, &mut ctx)
+            .unwrap();
+
+        let e = Expr::Var("E".into());
+        let m = Expr::Var("m".into());
+        let c = Expr::Const(PhysConst::SpeedOfLight);
+        let two = Expr::Lit(2, 1);
+        let c_sq = Expr::BinOp(BinOp::Pow, Box::new(c), Box::new(two));
+        let mc_sq = Expr::BinOp(BinOp::Mul, Box::new(m), Box::new(c_sq));
+        let expected = Expr::BinOp(BinOp::Eq, Box::new(e), Box::new(mc_sq));
+
+        assert_eq!(result, expected);
+    }
+}

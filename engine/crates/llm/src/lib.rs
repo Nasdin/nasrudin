@@ -13,7 +13,7 @@ pub mod provider;
 pub mod registry;
 
 pub use anthropic::AnthropicProvider;
-pub use encryption::{decrypt, encrypt, key_hint, EncryptedKey};
+pub use encryption::{EncryptedKey, decrypt, encrypt, key_hint};
 pub use gradient::GradientProvider;
 pub use ollama::OllamaProvider;
 pub use openai::OpenAiProvider;

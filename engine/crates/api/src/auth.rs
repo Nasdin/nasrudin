@@ -112,7 +112,10 @@ pub struct AuthSess {
 impl AuthSess {
     /// Persist `user.id` into the cookie session, returning the populated
     /// `AuthUser`. Mirrors what `axum_login::AuthSession::login` used to do.
-    pub async fn install(&mut self, user: AuthUser) -> Result<AuthUser, tower_sessions::session::Error> {
+    pub async fn install(
+        &mut self,
+        user: AuthUser,
+    ) -> Result<AuthUser, tower_sessions::session::Error> {
         // Cycle the session ID on login so a pre-auth fixation token can't
         // be reused post-auth (defence-in-depth; tower-sessions's default
         // cookie scope already mitigates this).
@@ -339,7 +342,11 @@ pub async fn firebase_session(
             .into_response();
     }
 
-    (StatusCode::OK, Json(serde_json::to_value(&auth_user).unwrap())).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(&auth_user).unwrap()),
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------

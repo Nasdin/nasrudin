@@ -47,7 +47,11 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_index(Index::drop().name("idx_users_stripe_customer_id").to_owned())
+            .drop_index(
+                Index::drop()
+                    .name("idx_users_stripe_customer_id")
+                    .to_owned(),
+            )
             .await?;
         manager
             .alter_table(

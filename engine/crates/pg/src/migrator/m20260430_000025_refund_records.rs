@@ -11,8 +11,10 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.get_connection().execute_unprepared(
-            r#"
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
             CREATE TABLE IF NOT EXISTS refund_records (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id UUID NOT NULL REFERENCES users(id),
@@ -34,8 +36,8 @@ impl MigrationTrait for Migration {
             CREATE INDEX IF NOT EXISTS refund_records_charge
                 ON refund_records (stripe_charge_id);
             "#,
-        )
-        .await?;
+            )
+            .await?;
         Ok(())
     }
 

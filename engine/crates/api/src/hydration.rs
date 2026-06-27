@@ -44,9 +44,7 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
-};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 
 use nasrudin_core::{
     Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremId, TheoremOrigin, VerificationStatus,

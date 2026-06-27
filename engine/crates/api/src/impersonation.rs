@@ -78,8 +78,7 @@ pub fn verify_token(secret: &[u8], token: &str) -> Result<TokenPayload, TokenErr
     let body = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(body_b64)
         .map_err(|_| TokenError::Malformed)?;
-    let payload: TokenPayload =
-        serde_json::from_slice(&body).map_err(|_| TokenError::Malformed)?;
+    let payload: TokenPayload = serde_json::from_slice(&body).map_err(|_| TokenError::Malformed)?;
     if payload.expires_at < Utc::now() {
         return Err(TokenError::Expired);
     }

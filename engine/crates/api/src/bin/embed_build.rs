@@ -53,12 +53,7 @@ fn main() -> Result<()> {
     let texts: Vec<(nasrudin_core::TheoremId, String)> = verified
         .iter()
         .map(|t| {
-            let body = format!(
-                "{}\n{}\n{}",
-                t.canonical,
-                t.latex,
-                domain_string(&t.domain)
-            );
+            let body = format!("{}\n{}\n{}", t.canonical, t.latex, domain_string(&t.domain));
             (t.id, body)
         })
         .collect();

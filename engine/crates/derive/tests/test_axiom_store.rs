@@ -87,10 +87,7 @@ fn iter_excluding_skips_forbidden_axioms() {
     let mut forbidden = HashSet::new();
     forbidden.insert(forbidden_id);
 
-    let names: Vec<String> = store
-        .iter_excluding(&forbidden)
-        .map(|a| a.name)
-        .collect();
+    let names: Vec<String> = store.iter_excluding(&forbidden).map(|a| a.name).collect();
     assert!(
         !names.iter().any(|n| n == forbidden_name),
         "{forbidden_name} must be filtered out"

@@ -356,7 +356,10 @@ pub fn gr_einstein_field_equation() -> TargetSpec {
     let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
     let final_target = eq(
         g_einstein(),
-        mul(div(mul(lit(8), mul(pi_const(), big_g())), pow(c(), lit(4))), t_stress()),
+        mul(
+            div(mul(lit(8), mul(pi_const(), big_g())), pow(c(), lit(4))),
+            t_stress(),
+        ),
     );
     TargetSpec {
         name: "gr_einstein_field_equation",
@@ -481,7 +484,10 @@ pub fn chain_coverage(
             collect_symbols_into(&ax.statement, &mut prefix_syms);
         }
     }
-    let hit = target_syms.iter().filter(|s| prefix_syms.contains(*s)).count();
+    let hit = target_syms
+        .iter()
+        .filter(|s| prefix_syms.contains(*s))
+        .count();
     hit as f64 / target_syms.len() as f64
 }
 
@@ -545,10 +551,10 @@ pub(crate) fn collect_symbols(expr: &Expr) -> HashSet<String> {
 fn collect_symbols_into(expr: &Expr, out: &mut HashSet<String>) {
     match expr {
         Expr::Var(name) => {
-            out.insert(format!("var:{name}"));
+            out.insert(canonical_symbol_key("var", name));
         }
         Expr::Const(c) => {
-            out.insert(format!("const:{c:?}"));
+            out.insert(canonical_const_symbol_key(c));
         }
         Expr::Lit(num, den) => {
             out.insert(format!("lit:{num}/{den}"));
@@ -565,6 +571,26 @@ fn collect_symbols_into(expr: &Expr, out: &mut HashSet<String>) {
             collect_symbols_into(x, out);
         }
         _ => {}
+    }
+}
+
+fn canonical_symbol_key(kind: &str, name: &str) -> String {
+    match (kind, name) {
+        // Physics notation aliases. These keep local fitness and
+        // pre-Lake filters semantic enough to recognise equivalent
+        // forms without calling the LLM.
+        ("var", "Eph") => "var:E".to_string(),
+        ("var", "hbar") => "const:ReducedPlanck".to_string(),
+        ("var", "h_planck") => "const:PlanckConst".to_string(),
+        _ => format!("{kind}:{name}"),
+    }
+}
+
+fn canonical_const_symbol_key(c: &PhysConst) -> String {
+    match c {
+        PhysConst::ReducedPlanck => "const:ReducedPlanck".to_string(),
+        PhysConst::PlanckConst => "const:PlanckConst".to_string(),
+        _ => format!("const:{c:?}"),
     }
 }
 
@@ -658,6 +684,24 @@ mod tests {
             score > 0.5,
             "structurally close shape should score > 0.5, got {score}"
         );
+    }
+
+    #[test]
+    fn planck_einstein_aliases_match_upstream_symbols() {
+        let candidate = eq(
+            Expr::Var("Eph".into()),
+            mul(Expr::Var("hbar".into()), Expr::Var("omega".into())),
+        );
+        let spec = qm_planck_einstein();
+
+        assert_eq!(symbol_overlap(&candidate, &spec.final_target), 1.0);
+        assert!(
+            ladder_score(&candidate, &spec) >= 0.3,
+            "upstream Planck-Einstein form must pass default pre-Lake ladder floor"
+        );
+        let target_syms = collect_symbols(&spec.final_target);
+        let cand_syms = collect_symbols(&candidate);
+        assert!(target_syms.iter().all(|s| cand_syms.contains(s)));
     }
 
     #[test]

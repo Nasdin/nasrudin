@@ -36,11 +36,7 @@ impl MigrationTrait for Migration {
                             .array(ColumnType::Text)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(Theorems::ChainJson)
-                            .json_binary()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Theorems::ChainJson).json_binary().not_null())
                     .col(
                         ColumnDef::new(Theorems::Parents)
                             .array(ColumnType::Binary(8))

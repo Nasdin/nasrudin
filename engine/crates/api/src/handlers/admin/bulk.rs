@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::admin::bulk_runner::{spawn_run, BulkAction};
+use crate::admin::bulk_runner::{BulkAction, spawn_run};
 use crate::admin::require_admin::RequireAdmin;
 use crate::state::AppState;
 

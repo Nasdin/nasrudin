@@ -6,7 +6,7 @@
 //! - always-promote when trusted+rate=1 OR untrusted
 //! - approximately-uniform 1-in-N for trusted+rate=N
 
-use physics_api::trust::{should_promote, TrustDecision, TrustSource};
+use physics_api::trust::{TrustDecision, TrustSource, should_promote};
 use proptest::prelude::*;
 
 fn dec(trusted: bool, rate: u32) -> TrustDecision {

@@ -30,10 +30,8 @@ impl MigrationTrait for Migration {
             .await?;
 
         // 4. Add firebase_uid + unique index.
-        conn.execute_unprepared(
-            "ALTER TABLE users ADD COLUMN firebase_uid TEXT NOT NULL UNIQUE",
-        )
-        .await?;
+        conn.execute_unprepared("ALTER TABLE users ADD COLUMN firebase_uid TEXT NOT NULL UNIQUE")
+            .await?;
         Ok(())
     }
 
@@ -49,10 +47,8 @@ impl MigrationTrait for Migration {
             .await?;
         conn.execute_unprepared("ALTER TABLE users ADD COLUMN github_login TEXT")
             .await?;
-        conn.execute_unprepared(
-            "CREATE UNIQUE INDEX users_github_id_unique ON users (github_id)",
-        )
-        .await?;
+        conn.execute_unprepared("CREATE UNIQUE INDEX users_github_id_unique ON users (github_id)")
+            .await?;
         Ok(())
     }
 }

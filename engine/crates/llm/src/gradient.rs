@@ -29,6 +29,7 @@ use crate::provider::{
 };
 
 const DEFAULT_BASE_URL: &str = "https://inference.do-ai.run";
+const DEFAULT_MAX_ATTEMPTS: u32 = 4;
 // Names mirror DigitalOcean Gradient's serverless catalog. The list is
 // advisory — `list_models()` queries the live catalog at boot and the
 // daemon doesn't hard-reject anything not listed here, so adding a
@@ -52,6 +53,7 @@ pub struct GradientProvider {
     client: reqwest::Client,
     api_key: String,
     base_url: String,
+    max_attempts: u32,
 }
 
 impl GradientProvider {
@@ -74,6 +76,7 @@ impl GradientProvider {
                 .expect("reqwest client"),
             api_key,
             base_url: DEFAULT_BASE_URL.into(),
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
         }
     }
 
@@ -95,6 +98,14 @@ impl GradientProvider {
 
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = url.into();
+        self
+    }
+
+    /// Limit completion retry attempts. The cluster steerer uses this
+    /// to make its per-refresh token ceiling meaningful; other callers
+    /// can keep the default transient-failure retries.
+    pub fn with_max_attempts(mut self, max_attempts: u32) -> Self {
+        self.max_attempts = max_attempts.max(1);
         self
     }
 
@@ -126,7 +137,10 @@ impl GradientProvider {
                 body,
             });
         }
-        let r: R = resp.json().await.map_err(|e| LlmError::Parse(e.to_string()))?;
+        let r: R = resp
+            .json()
+            .await
+            .map_err(|e| LlmError::Parse(e.to_string()))?;
         Ok(r.data.into_iter().map(|m| m.id).collect())
     }
 }
@@ -238,61 +252,98 @@ impl LlmProvider for GradientProvider {
             response_format,
         };
         let url = format!("{}/v1/chat/completions", self.base_url);
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(match status.as_u16() {
-                401 | 403 => LlmError::Unauthorized(text),
-                429 => LlmError::RateLimited {
-                    retry_after_ms: 1000,
-                },
-                _ => LlmError::Http {
-                    status: status.as_u16(),
-                    body: text,
-                },
-            });
+
+        // inference.do-ai.run drops connections intermittently (transport
+        // errors / 5xx). A single failed attempt used to silently leave
+        // theorem display_names NULL ("gen N" in the UI) and abort steerer
+        // cycles. Retry transient failures with exponential backoff; do NOT
+        // retry deterministic failures (auth, 4xx) — those won't fix
+        // themselves and would just waste the budget.
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            let outcome: Result<CompletionResponse, LlmError> = async {
+                let resp = self
+                    .client
+                    .post(&url)
+                    .bearer_auth(&self.api_key)
+                    .header("content-type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await?;
+                let status = resp.status();
+                if !status.is_success() {
+                    let text = resp.text().await.unwrap_or_default();
+                    return Err(match status.as_u16() {
+                        401 | 403 => LlmError::Unauthorized(text),
+                        429 => LlmError::RateLimited {
+                            retry_after_ms: 1000,
+                        },
+                        _ => LlmError::Http {
+                            status: status.as_u16(),
+                            body: text,
+                        },
+                    });
+                }
+                let parsed: ChatResponse = resp
+                    .json()
+                    .await
+                    .map_err(|e| LlmError::Parse(e.to_string()))?;
+                let choice = parsed
+                    .choices
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| LlmError::Parse("no choices".into()))?;
+                let usage = parsed.usage.unwrap_or(Usage {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                });
+                Ok(CompletionResponse {
+                    model: if parsed.model.is_empty() {
+                        req.model.clone()
+                    } else {
+                        parsed.model
+                    },
+                    // Prefer `content` (final answer); fall back to
+                    // `reasoning_content` so a truncated cycle still yields the
+                    // best-available text instead of an empty string that
+                    // breaks downstream JSON-schema parsing.
+                    text: choice
+                        .message
+                        .content
+                        .filter(|s| !s.is_empty())
+                        .or(choice.message.reasoning_content)
+                        .unwrap_or_default(),
+                    input_tokens: usage.prompt_tokens,
+                    output_tokens: usage.completion_tokens,
+                    stop_reason: choice.finish_reason.unwrap_or_else(|| "stop".into()),
+                })
+            }
+            .await;
+
+            match outcome {
+                Ok(r) => return Ok(r),
+                Err(e) => {
+                    let retryable = matches!(
+                        &e,
+                        LlmError::Transport(_) | LlmError::RateLimited { .. } | LlmError::Parse(_)
+                    ) || matches!(&e, LlmError::Http { status, .. } if *status >= 500);
+                    if retryable && attempt < self.max_attempts {
+                        let backoff_ms = 300u64 * 2u64.pow(attempt - 1); // 300, 600, 1200
+                        tracing::warn!(
+                            attempt,
+                            max_attempts = self.max_attempts,
+                            backoff_ms,
+                            error = %e,
+                            "gradient call failed; retrying after backoff"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
         }
-        let parsed: ChatResponse = resp
-            .json()
-            .await
-            .map_err(|e| LlmError::Parse(e.to_string()))?;
-        let choice = parsed
-            .choices
-            .into_iter()
-            .next()
-            .ok_or_else(|| LlmError::Parse("no choices".into()))?;
-        let usage = parsed.usage.unwrap_or(Usage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-        });
-        Ok(CompletionResponse {
-            model: if parsed.model.is_empty() {
-                req.model.clone()
-            } else {
-                parsed.model
-            },
-            // Prefer `content` (final answer); fall back to
-            // `reasoning_content` so a truncated cycle still yields the
-            // best-available text instead of an empty string that
-            // breaks downstream JSON-schema parsing.
-            text: choice
-                .message
-                .content
-                .filter(|s| !s.is_empty())
-                .or(choice.message.reasoning_content)
-                .unwrap_or_default(),
-            input_tokens: usage.prompt_tokens,
-            output_tokens: usage.completion_tokens,
-            stop_reason: choice.finish_reason.unwrap_or_else(|| "stop".into()),
-        })
     }
 
     async fn stream<'a>(
@@ -322,6 +373,15 @@ mod tests {
         // K2.5 stays during migration so deployments mid-upgrade
         // don't hard-fail.
         assert!(p.supported_models().contains(&"kimi-k2.5"));
+    }
+
+    #[test]
+    fn max_attempts_can_be_limited_for_budgeted_callers() {
+        let p = GradientProvider::new("test".into()).with_max_attempts(1);
+        assert_eq!(p.max_attempts, 1);
+
+        let p = GradientProvider::new("test".into()).with_max_attempts(0);
+        assert_eq!(p.max_attempts, 1);
     }
 
     #[test]

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::admin::audit::{actions, perform_audited, RequestMeta};
+use crate::admin::audit::{RequestMeta, actions, perform_audited};
 use crate::auth::AuthUser;
 use crate::state::AppState;
 
@@ -62,8 +62,7 @@ pub fn spawn_run(
             match run_one(&pg, &actor, &action, uid, &reason).await {
                 Ok(()) => {
                     completed += 1;
-                    let _ =
-                        nasrudin_pg::query::bulk_runs::increment_completed(&pg, run_id).await;
+                    let _ = nasrudin_pg::query::bulk_runs::increment_completed(&pg, run_id).await;
                 }
                 Err(e) => {
                     failed += 1;
@@ -157,10 +156,9 @@ async fn run_one(
                         Ok::<_, sea_orm::DbErr>(((), json!({"plan_tier": plan_tier})))
                     }
                     BulkAction::AdjustCredits { delta } => {
-                        let new = nasrudin_pg::query::admin_users::adjust_credits(
-                            txn, target, delta,
-                        )
-                        .await?;
+                        let new =
+                            nasrudin_pg::query::admin_users::adjust_credits(txn, target, delta)
+                                .await?;
                         Ok::<_, sea_orm::DbErr>(((), json!({"research_credits": new})))
                     }
                     BulkAction::SetSpotCheckRate { rate } => {

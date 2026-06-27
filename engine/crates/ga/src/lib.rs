@@ -5,11 +5,13 @@
 //! different physics areas in parallel.
 
 pub mod auto_size;
+pub mod beam;
 pub mod cache_bundle;
 pub mod chain_engine;
 pub mod chain_ga;
 pub mod clustering;
 pub mod config;
+pub mod corpus_sync;
 pub mod crossover;
 pub mod dedup;
 pub mod engine;
@@ -17,8 +19,6 @@ pub mod fitness;
 pub mod individual;
 pub mod island;
 pub mod mutation;
-pub mod beam;
-pub mod corpus_sync;
 pub mod paid_jobs_client;
 pub mod paid_slice;
 pub mod population;

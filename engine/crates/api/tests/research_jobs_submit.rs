@@ -53,7 +53,10 @@ fn gen_kp() -> Kp {
     let mut rng = rand_08::thread_rng();
     let pk = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
     let priv_pem = pk.to_pkcs1_pem(LineEnding::LF).unwrap().to_string();
-    let pub_pem = pk.to_public_key().to_public_key_pem(LineEnding::LF).unwrap();
+    let pub_pem = pk
+        .to_public_key()
+        .to_public_key_pem(LineEnding::LF)
+        .unwrap();
     Kp {
         enc: EncodingKey::from_rsa_pem(priv_pem.as_bytes()).unwrap(),
         dec: DecodingKey::from_rsa_pem(pub_pem.as_bytes()).unwrap(),
@@ -61,7 +64,10 @@ fn gen_kp() -> Kp {
 }
 
 fn now() -> usize {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize
 }
 
 fn mint(uid: &str, email: &str, kp: &Kp) -> String {
@@ -74,7 +80,9 @@ fn mint(uid: &str, email: &str, kp: &Kp) -> String {
         aud: TEST_PROJECT.into(),
         exp: now() + 3600,
         iat: now() - 5,
-        firebase: WireFirebase { sign_in_provider: "google.com".into() },
+        firebase: WireFirebase {
+            sign_in_provider: "google.com".into(),
+        },
     };
     let mut h = Header::new(Algorithm::RS256);
     h.kid = Some(TEST_KID.into());
@@ -198,7 +206,9 @@ async fn read_job(app: &test_app::TestApp, job_id: &str) -> (i32, i32) {
 
 #[tokio::test]
 async fn submit_defaults_to_one_credit_and_priority_5() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-default", 3).await;
 
     let (status, body) = post_json(
@@ -219,7 +229,9 @@ async fn submit_defaults_to_one_credit_and_priority_5() {
 
 #[tokio::test]
 async fn submit_with_credits_budget_3_sets_quota_288() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-budget3", 5).await;
 
     let (status, body) = post_json(
@@ -246,7 +258,9 @@ async fn submit_with_credits_budget_3_sets_quota_288() {
 
 #[tokio::test]
 async fn submit_with_rush_charges_extra_credit_and_priority_6() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-rush", 5).await;
 
     let (status, body) = post_json(
@@ -274,7 +288,9 @@ async fn submit_with_rush_charges_extra_credit_and_priority_6() {
 
 #[tokio::test]
 async fn submit_with_zero_credits_budget_returns_400_and_does_not_decrement() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-zero-budget", 5).await;
 
     let (status, body) = post_json(
@@ -294,7 +310,9 @@ async fn submit_with_zero_credits_budget_returns_400_and_does_not_decrement() {
 
 #[tokio::test]
 async fn submit_402_when_insufficient_credits_with_required_remaining_body() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-poor", 2).await;
 
     let (status, body) = post_json(
@@ -316,7 +334,9 @@ async fn submit_402_when_insufficient_credits_with_required_remaining_body() {
 
 #[tokio::test]
 async fn submit_402_when_rush_pushes_total_over_remaining() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-rush-poor", 1).await;
 
     // 1 budget + 1 rush = 2 needed, only 1 remaining.
@@ -338,7 +358,9 @@ async fn submit_402_when_rush_pushes_total_over_remaining() {
 
 #[tokio::test]
 async fn submit_with_empty_hunch_returns_400_does_not_decrement() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-empty-hunch", 5).await;
 
     let (status, _) = post_json(

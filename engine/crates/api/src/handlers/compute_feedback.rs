@@ -5,7 +5,7 @@
 //! as `/api/directive-feedback` minus the `action` field —
 //! compute is a single global knob, not per-action.
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -68,11 +68,8 @@ pub async fn handler(
         }
 
         // LinUCB rank-1 update (per-island compute bandit).
-        if let Ok(Some(row)) = nasrudin_pg::query::cluster_compute_linucb::get(
-            pg,
-            &e.island_domain,
-        )
-        .await
+        if let Ok(Some(row)) =
+            nasrudin_pg::query::cluster_compute_linucb::get(pg, &e.island_domain).await
         {
             let mut a_flat = row.a_matrix;
             let mut b_vec = row.b_vector;
@@ -81,11 +78,7 @@ pub async fn handler(
                 crate::steerer::directive_bandit::MAX_MULTIPLIER_CHOICES - 1,
                 8,
             );
-            let x = crate::steerer::linucb::features(
-                s_mid,
-                e.multiplier_choice as u8,
-                max_choice,
-            );
+            let x = crate::steerer::linucb::features(s_mid, e.multiplier_choice as u8, max_choice);
             crate::steerer::linucb::update_in_place(&mut a_flat, &mut b_vec, &x, reward);
             if let Err(err) = nasrudin_pg::query::cluster_compute_linucb::save_update(
                 pg,

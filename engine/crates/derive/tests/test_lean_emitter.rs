@@ -1,6 +1,6 @@
 use nasrudin_core::{BinOp, Expr, PhysConst};
-use nasrudin_derive::lean_emitter::{emit_lean_file, expr_to_lean, LeanEmitConfig};
 use nasrudin_derive::DerivationEngine;
+use nasrudin_derive::lean_emitter::{LeanEmitConfig, emit_lean_file, expr_to_lean};
 
 #[test]
 fn test_expr_to_lean_variable() {
@@ -10,10 +10,7 @@ fn test_expr_to_lean_variable() {
 
 #[test]
 fn test_expr_to_lean_constant() {
-    assert_eq!(
-        expr_to_lean(&Expr::Const(PhysConst::SpeedOfLight)),
-        "c"
-    );
+    assert_eq!(expr_to_lean(&Expr::Const(PhysConst::SpeedOfLight)), "c");
     assert_eq!(
         expr_to_lean(&Expr::Const(PhysConst::PlanckConst)),
         "h_planck"

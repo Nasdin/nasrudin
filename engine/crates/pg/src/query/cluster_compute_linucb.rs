@@ -13,7 +13,9 @@ pub async fn ensure_row(
     island_domain: &str,
     lambda: f64,
 ) -> Result<(), DbErr> {
-    let exists = Entity::find_by_id(island_domain.to_string()).one(db).await?;
+    let exists = Entity::find_by_id(island_domain.to_string())
+        .one(db)
+        .await?;
     if exists.is_some() {
         return Ok(());
     }
@@ -32,10 +34,7 @@ pub async fn ensure_row(
     Ok(())
 }
 
-pub async fn get(
-    db: &DatabaseConnection,
-    island_domain: &str,
-) -> Result<Option<Model>, DbErr> {
+pub async fn get(db: &DatabaseConnection, island_domain: &str) -> Result<Option<Model>, DbErr> {
     Entity::find_by_id(island_domain.to_string()).one(db).await
 }
 
@@ -53,7 +52,9 @@ pub async fn save_update(
     b_vector: Vec<f64>,
     new_pulls: i64,
 ) -> Result<(), DbErr> {
-    let arm = Entity::find_by_id(island_domain.to_string()).one(db).await?;
+    let arm = Entity::find_by_id(island_domain.to_string())
+        .one(db)
+        .await?;
     let mut am: ActiveModel = match arm {
         Some(m) => m.into(),
         None => ActiveModel {

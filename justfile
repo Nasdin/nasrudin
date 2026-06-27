@@ -17,7 +17,14 @@ up:
       cp .env.example .env
     fi
     set -a; . .env; set +a
+    export LLM_STEER_INTERVAL_SECONDS="${LLM_STEER_INTERVAL_SECONDS:-7200}"
+    export LLM_STEER_MAX_TOTAL_TOKENS="${LLM_STEER_MAX_TOTAL_TOKENS:-10000}"
+    export LLM_STEER_MAX_COMPLETION_TOKENS="${LLM_STEER_MAX_COMPLETION_TOKENS:-2048}"
+    export LLM_NAMING_ENABLED="${LLM_NAMING_ENABLED:-0}"
+    export NASRUDIN_NO_PAID_JOBS="${NASRUDIN_NO_PAID_JOBS:-1}"
+    export NASRUDIN_RL_HALF_LIFE_HOURS="${NASRUDIN_RL_HALF_LIFE_HOURS:-168}"
     API_PORT="${API_PORT:-3001}"
+    echo "[up] low-LLM defaults: strategy_interval=${LLM_STEER_INTERVAL_SECONDS}s max_total_tokens=${LLM_STEER_MAX_TOTAL_TOKENS} naming=${LLM_NAMING_ENABLED} no_paid_jobs=${NASRUDIN_NO_PAID_JOBS}"
     echo "[up] starting postgres..."
     docker compose up -d postgres
     echo "[up] waiting for postgres..."
@@ -58,6 +65,7 @@ up:
     (cd engine && PATH="$HOME/.elan/bin:$PATH" \
       NASRUDIN_API_URL="http://localhost:${API_PORT}" \
       NASRUDIN_WORKER_ID="local-dev-worker" \
+      NASRUDIN_NO_PAID_JOBS="${NASRUDIN_NO_PAID_JOBS}" \
       ./target/release/worker --domain sr --verify ../prover 2>&1 \
       | sed -u 's/^/[worker] /') &
     wait
@@ -267,6 +275,30 @@ spontaneous-emc2:
     cd engine && PATH="$HOME/.elan/bin:$PATH" ./target/release/derive_emc2_upstream \
         --emit ../prover/PhysicsGenerator/Derived/AutoRestEnergyUpstream.lean \
         --verify ../prover
+
+# Local verification-only smoke for the GA workhorse path. No API key,
+# no server submission, no paid theorem-naming jobs. Expected result:
+# one Lake attempt, one Lake pass, and the spontaneous E=mc² banner.
+smoke-emc2-local:
+    cd engine && PATH="$HOME/.elan/bin:$PATH" NASRUDIN_NO_PAID_JOBS=1 cargo run -p nasrudin-ga --bin worker -- \
+        --domain sr --target sr_rest_energy \
+        --verify ../prover \
+        --gens 1 --pop 8 --chunks 1 --max-lake 1 \
+        --no-persistent-elaborator \
+        --no-submit \
+        --submit-top-k 0
+
+# Local verification-only quantum smoke. Same low-cost constraints as
+# smoke-emc2-local, but runs the QM island against the Planck-Einstein
+# target and verifies the generated theorem locally.
+smoke-qm-local:
+    cd engine && PATH="$HOME/.elan/bin:$PATH" NASRUDIN_NO_PAID_JOBS=1 cargo run -p nasrudin-ga --bin worker -- \
+        --domain qm --target qm_planck_einstein \
+        --verify ../prover \
+        --gens 1 --pop 8 --chunks 1 --max-lake 1 \
+        --no-persistent-elaborator \
+        --no-submit \
+        --submit-top-k 0
 
 # Run the chain-based GA discovery and lake-verify the top novel
 # candidates per generation (Phase 8.2). The GA evolves chains over

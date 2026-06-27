@@ -1,5 +1,5 @@
 use nasrudin_core::{Domain, Expr, ProofTree};
-use nasrudin_lean_bridge::export::{render_lean_file, ExportConfig, ExportableProof};
+use nasrudin_lean_bridge::export::{ExportConfig, ExportableProof, render_lean_file};
 
 #[test]
 fn test_render_lean_file_tactic_proof() {
@@ -46,10 +46,7 @@ fn test_render_lean_file_tactic_proof() {
         "should contain theorem name"
     );
     assert!(lean.contains("ℝ"), "should use real numbers");
-    assert!(
-        lean.contains("Real.sqrt_sq"),
-        "should contain sqrt tactic"
-    );
+    assert!(lean.contains("Real.sqrt_sq"), "should contain sqrt tactic");
     assert!(
         lean.contains("namespace PhysicsGenerator.Exported"),
         "should have namespace"

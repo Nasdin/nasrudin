@@ -59,7 +59,7 @@
 use axum::{
     body::Body,
     extract::State,
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use bytes::Bytes;
@@ -96,10 +96,7 @@ struct DumpLine<'a> {
 /// Returns 304 Not Modified when the client's `If-None-Match`
 /// matches the current `count-version` ETag — the worker's local
 /// cold tier is in sync, no need to re-hydrate.
-pub async fn corpus_dump(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn corpus_dump(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     // The cold tier lives on the AxiomStore; it's a `None` only on
     // hot-only stores (tests, CLI tools). Production always has a
     // cold tier — `with_corpus(...)` is called in `main.rs` boot.
@@ -177,7 +174,8 @@ pub async fn corpus_dump(
                 // `/api/seed`'s `domain` field. The worker accepts
                 // either Display or Debug forms when re-parsing.
                 domain: format!("{}", axiom.domain),
-                statement: serde_json::to_value(&axiom.statement).unwrap_or(serde_json::Value::Null),
+                statement: serde_json::to_value(&axiom.statement)
+                    .unwrap_or(serde_json::Value::Null),
                 description: &axiom.description,
             };
             buf.clear();
@@ -245,11 +243,9 @@ mod tests {
     async fn dump_streams_every_cold_axiom() {
         let tmp = TempDir::new().unwrap();
         let db = TheoremDb::new(tmp.path().to_str().unwrap()).unwrap();
-        let cdb = Arc::new(CorpusDb::on_existing_db(db.shared_db()))
-            as Arc<dyn CorpusBackend>;
+        let cdb = Arc::new(CorpusDb::on_existing_db(db.shared_db())) as Arc<dyn CorpusBackend>;
         for i in 0..50u32 {
-            cdb.put(&mk(&format!("ax_{i}"), Domain::PureMath))
-                .unwrap();
+            cdb.put(&mk(&format!("ax_{i}"), Domain::PureMath)).unwrap();
         }
         cdb.finish_hydration(50).unwrap();
         let store = AxiomStore::with_corpus(Arc::clone(&cdb));

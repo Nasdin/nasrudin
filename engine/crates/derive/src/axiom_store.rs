@@ -370,15 +370,13 @@ impl AxiomStore {
     pub fn iter(&self) -> Box<dyn Iterator<Item = Axiom> + '_> {
         let hot_iter = self.hot.values().cloned();
         if let Some(cold) = &self.cold {
-            let cold_iter = cold
-                .iter()
-                .filter_map(|r| match r {
-                    Ok((_, a)) => Some(a),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "cold iter skip");
-                        None
-                    }
-                });
+            let cold_iter = cold.iter().filter_map(|r| match r {
+                Ok((_, a)) => Some(a),
+                Err(e) => {
+                    tracing::warn!(error = %e, "cold iter skip");
+                    None
+                }
+            });
             Box::new(hot_iter.chain(cold_iter))
         } else {
             Box::new(hot_iter)
@@ -409,9 +407,7 @@ impl AxiomStore {
     ) -> Vec<Axiom> {
         self.by_domain(domain)
             .into_iter()
-            .filter(|axiom| {
-                !forbidden.contains(&nasrudin_core::axiom_id_from_name(&axiom.name))
-            })
+            .filter(|axiom| !forbidden.contains(&nasrudin_core::axiom_id_from_name(&axiom.name)))
             .collect()
     }
 
@@ -479,6 +475,26 @@ impl AxiomStore {
     /// the much larger Mathlib math-corpus uses the streaming
     /// [`Self::hydrate_math_corpus_to_cold`] instead.
     pub fn load_from_catalog(&mut self, catalog_path: &std::path::Path) -> anyhow::Result<usize> {
+        let (loaded, _skipped) = self.load_from_catalog_filtered(catalog_path, |_| true)?;
+        Ok(loaded)
+    }
+
+    /// Load axioms from a PhysLean catalog JSON file into the hot tier,
+    /// applying a caller-provided safety/relevance filter before each
+    /// registration.
+    ///
+    /// Returns `(loaded, skipped)`. This is used by standalone workers
+    /// to dynamically ingest local PhysLean facts while rejecting
+    /// non-composable plumbing or headline-result leaks before they
+    /// become GA seed axioms.
+    pub fn load_from_catalog_filtered<F>(
+        &mut self,
+        catalog_path: &std::path::Path,
+        mut keep: F,
+    ) -> anyhow::Result<(usize, usize)>
+    where
+        F: FnMut(&Axiom) -> bool,
+    {
         let content = std::fs::read_to_string(catalog_path)?;
         // serde_json's default recursion limit is 128. The full Mathlib
         // math_corpus has Lean dependent-type expressions deeper than
@@ -488,24 +504,27 @@ impl AxiomStore {
         let mut deser = serde_json::Deserializer::from_str(&content);
         deser.disable_recursion_limit();
         let deser = serde_stacker::Deserializer::new(&mut deser);
-        let catalog: serde_json::Value =
-            serde::Deserialize::deserialize(deser)?;
+        let catalog: serde_json::Value = serde::Deserialize::deserialize(deser)?;
 
         let mut count: usize = 0;
+        let mut skipped: usize = 0;
         let mut ast_count: usize = 0;
         if let Some(theorems) = catalog.get("theorems").and_then(|t| t.as_array()) {
             for thm in theorems {
                 let axiom = parse_catalog_theorem(thm, &mut ast_count);
-                self.register(axiom);
-                count += 1;
+                if keep(&axiom) {
+                    self.register(axiom);
+                    count += 1;
+                } else {
+                    skipped += 1;
+                }
             }
         }
 
         tracing::info!(
-            "Loaded {count} axioms from catalog ({ast_count} with structured Expr AST, {} placeholder)",
-            count - ast_count
+            "Loaded {count} axioms from catalog ({skipped} skipped, {ast_count} with structured Expr AST)"
         );
-        Ok(count)
+        Ok((count, skipped))
     }
 
     /// Parse a PhysLean catalog JSON file and return the canonical-form
@@ -627,9 +646,8 @@ impl AxiomStore {
         let mut deser = serde_json::Deserializer::from_reader(reader);
         deser.disable_recursion_limit();
         let deser = serde_stacker::Deserializer::new(&mut deser);
-        let catalog: serde_json::Value =
-            serde::Deserialize::deserialize(deser)
-                .map_err(|e| anyhow::anyhow!("parse math_corpus.json: {e}"))?;
+        let catalog: serde_json::Value = serde::Deserialize::deserialize(deser)
+            .map_err(|e| anyhow::anyhow!("parse math_corpus.json: {e}"))?;
 
         let mut total: u64 = 0;
         let mut ast_count: u64 = 0;
@@ -706,18 +724,13 @@ impl AxiomStore {
         // p²
         let p_sq = Expr::BinOp(BinOp::Pow, Box::new(p.clone()), Box::new(two.clone()));
         // c²
-        let c_sq = Expr::BinOp(
-            BinOp::Pow,
-            Box::new(c.clone()),
-            Box::new(two.clone()),
-        );
+        let c_sq = Expr::BinOp(BinOp::Pow, Box::new(c.clone()), Box::new(two.clone()));
         // p²c²
         let p_sq_c_sq = Expr::BinOp(BinOp::Mul, Box::new(p_sq), Box::new(c_sq.clone()));
         // mc²
         let mc_sq = Expr::BinOp(BinOp::Mul, Box::new(m.clone()), Box::new(c_sq.clone()));
         // (mc²)²
-        let mc_sq_squared =
-            Expr::BinOp(BinOp::Pow, Box::new(mc_sq.clone()), Box::new(two.clone()));
+        let mc_sq_squared = Expr::BinOp(BinOp::Pow, Box::new(mc_sq.clone()), Box::new(two.clone()));
         // E² - p²c²
         let lhs = Expr::BinOp(BinOp::Sub, Box::new(e_sq), Box::new(p_sq_c_sq));
         // E² - p²c² = (mc²)²
@@ -731,11 +744,7 @@ impl AxiomStore {
         });
 
         // E ≥ 0
-        let e_nonneg = Expr::BinOp(
-            BinOp::Ge,
-            Box::new(e.clone()),
-            Box::new(Expr::Lit(0, 1)),
-        );
+        let e_nonneg = Expr::BinOp(BinOp::Ge, Box::new(e.clone()), Box::new(Expr::Lit(0, 1)));
         self.register(Axiom {
             name: "energy_nonneg".into(),
             domain: Domain::SpecialRelativity,
@@ -744,11 +753,7 @@ impl AxiomStore {
         });
 
         // m ≥ 0
-        let m_nonneg = Expr::BinOp(
-            BinOp::Ge,
-            Box::new(m.clone()),
-            Box::new(Expr::Lit(0, 1)),
-        );
+        let m_nonneg = Expr::BinOp(BinOp::Ge, Box::new(m.clone()), Box::new(Expr::Lit(0, 1)));
         self.register(Axiom {
             name: "mass_nonneg".into(),
             domain: Domain::SpecialRelativity,
@@ -757,11 +762,7 @@ impl AxiomStore {
         });
 
         // c > 0
-        let c_pos = Expr::BinOp(
-            BinOp::Gt,
-            Box::new(c.clone()),
-            Box::new(Expr::Lit(0, 1)),
-        );
+        let c_pos = Expr::BinOp(BinOp::Gt, Box::new(c.clone()), Box::new(Expr::Lit(0, 1)));
         self.register(Axiom {
             name: "c_positive".into(),
             domain: Domain::SpecialRelativity,
@@ -813,14 +814,20 @@ impl AxiomStore {
         // c · p0 = E
         let four_mom_time = Expr::BinOp(
             BinOp::Eq,
-            Box::new(Expr::BinOp(BinOp::Mul, Box::new(c.clone()), Box::new(p0.clone()))),
+            Box::new(Expr::BinOp(
+                BinOp::Mul,
+                Box::new(c.clone()),
+                Box::new(p0.clone()),
+            )),
             Box::new(e.clone()),
         );
         self.register(Axiom {
             name: "four_momentum_time_component".into(),
             domain: Domain::SpecialRelativity,
             statement: four_mom_time,
-            description: "Definition: c · p0 = E (energy is c times the time component of four-momentum)".into(),
+            description:
+                "Definition: c · p0 = E (energy is c times the time component of four-momentum)"
+                    .into(),
         });
 
         // Msq = p0² − psq
@@ -828,24 +835,26 @@ impl AxiomStore {
         let invariant_def = Expr::BinOp(
             BinOp::Eq,
             Box::new(big_m_sq.clone()),
-            Box::new(Expr::BinOp(BinOp::Sub, Box::new(p0_sq), Box::new(psq.clone()))),
+            Box::new(Expr::BinOp(
+                BinOp::Sub,
+                Box::new(p0_sq),
+                Box::new(psq.clone()),
+            )),
         );
         self.register(Axiom {
             name: "minkowski_invariant_def".into(),
             domain: Domain::SpecialRelativity,
             statement: invariant_def,
-            description: "Definition: Msq = p0² − psq (Minkowski invariant of four-momentum)".into(),
+            description: "Definition: Msq = p0² − psq (Minkowski invariant of four-momentum)"
+                .into(),
         });
 
         // Msq = m² · c²
         let m_sq = Expr::BinOp(BinOp::Pow, Box::new(m.clone()), Box::new(two.clone()));
         let c_sq = Expr::BinOp(BinOp::Pow, Box::new(c.clone()), Box::new(two.clone()));
         let m_sq_c_sq = Expr::BinOp(BinOp::Mul, Box::new(m_sq), Box::new(c_sq));
-        let mass_postulate = Expr::BinOp(
-            BinOp::Eq,
-            Box::new(big_m_sq.clone()),
-            Box::new(m_sq_c_sq),
-        );
+        let mass_postulate =
+            Expr::BinOp(BinOp::Eq, Box::new(big_m_sq.clone()), Box::new(m_sq_c_sq));
         self.register(Axiom {
             name: "invariant_mass_postulate".into(),
             domain: Domain::SpecialRelativity,
@@ -915,7 +924,11 @@ impl AxiomStore {
         let photon_energy = Expr::BinOp(
             BinOp::Eq,
             Box::new(e_ph.clone()),
-            Box::new(Expr::BinOp(BinOp::Mul, Box::new(hbar.clone()), Box::new(omega.clone()))),
+            Box::new(Expr::BinOp(
+                BinOp::Mul,
+                Box::new(hbar.clone()),
+                Box::new(omega.clone()),
+            )),
         );
         self.register(Axiom {
             name: "photon_energy_def".into(),
@@ -928,7 +941,11 @@ impl AxiomStore {
         let photon_momentum = Expr::BinOp(
             BinOp::Eq,
             Box::new(p_ph.clone()),
-            Box::new(Expr::BinOp(BinOp::Mul, Box::new(hbar.clone()), Box::new(k.clone()))),
+            Box::new(Expr::BinOp(
+                BinOp::Mul,
+                Box::new(hbar.clone()),
+                Box::new(k.clone()),
+            )),
         );
         self.register(Axiom {
             name: "photon_momentum_def".into(),
@@ -941,7 +958,11 @@ impl AxiomStore {
         let dispersion = Expr::BinOp(
             BinOp::Eq,
             Box::new(omega.clone()),
-            Box::new(Expr::BinOp(BinOp::Mul, Box::new(c.clone()), Box::new(k.clone()))),
+            Box::new(Expr::BinOp(
+                BinOp::Mul,
+                Box::new(c.clone()),
+                Box::new(k.clone()),
+            )),
         );
         self.register(Axiom {
             name: "dispersion_relation".into(),
@@ -979,7 +1000,10 @@ impl AxiomStore {
 /// hot tier) and [`AxiomStore::hydrate_math_corpus_to_cold`] (Mathlib
 /// math-corpus, cold tier) — same wire shape, same parse rules.
 fn parse_catalog_theorem(thm: &serde_json::Value, ast_count: &mut usize) -> Axiom {
-    let name = thm.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+    let name = thm
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("unknown");
     let physlean_name = thm.get("physlean_name").and_then(|n| n.as_str());
     let domain_str = thm.get("domain").and_then(|d| d.as_str());
     let doc = thm
@@ -1191,10 +1215,8 @@ mod tests {
 
     #[test]
     fn iter_streams_both_tiers() {
-        let cold = MockCorpus::from_axioms(vec![
-            mk("c1", Domain::PureMath),
-            mk("c2", Domain::PureMath),
-        ]);
+        let cold =
+            MockCorpus::from_axioms(vec![mk("c1", Domain::PureMath), mk("c2", Domain::PureMath)]);
         let mut store = AxiomStore::with_corpus(cold);
         store.register(mk("h1", Domain::SpecialRelativity));
         let names: Vec<String> = store.iter().map(|a| a.name).collect();
@@ -1211,6 +1233,42 @@ mod tests {
         assert_eq!(store.iter().count(), 1);
         assert_eq!(store.by_domain(&Domain::PureMath).len(), 1);
         assert!(store.cold_names().is_empty());
+    }
+
+    #[test]
+    fn load_from_catalog_filtered_skips_rejected_entries() {
+        let catalog_json = serde_json::json!({
+            "theorems": [
+                {
+                    "name": "good_eq",
+                    "domain": "PureMath",
+                    "doc_string": "usable equation",
+                    "expr_ast": {"BinOp": ["Eq", {"Var": "x"}, {"Var": "x"}]}
+                },
+                {
+                    "name": "decorative_placeholder",
+                    "domain": "PureMath",
+                    "doc_string": "not useful to the GA",
+                    "expr_ast": null
+                }
+            ]
+        });
+        let path = std::env::temp_dir().join(format!(
+            "nasrudin_filtered_catalog_{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, catalog_json.to_string()).expect("write catalog");
+
+        let mut store = AxiomStore::new();
+        let (loaded, skipped) = store
+            .load_from_catalog_filtered(&path, |axiom| is_propositional(&axiom.statement))
+            .expect("load filtered catalog");
+
+        assert_eq!(loaded, 1);
+        assert_eq!(skipped, 1);
+        assert!(store.get("good_eq").is_some());
+        assert!(store.get("decorative_placeholder").is_none());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -1331,7 +1389,10 @@ mod tests {
         // Confirm round-trip with canonical_hash.
         let hash_a = nasrudin_core::canonical_hash(&bare);
         let hash_b = nasrudin_core::canonical_hash(&wrapped);
-        assert_eq!(hash_a, hash_b, "Pi-wrapped should hash identically to bare Eq");
+        assert_eq!(
+            hash_a, hash_b,
+            "Pi-wrapped should hash identically to bare Eq"
+        );
     }
 
     /// M3 acceptance test: build a tiny in-memory mock catalog with three
@@ -1390,10 +1451,7 @@ mod tests {
         // Write to a tempfile (no extra crate dep — std::env::temp_dir
         // is good enough for a unit test).
         let tmpdir = std::env::temp_dir();
-        let path = tmpdir.join(format!(
-            "nasrudin_m3_catalog_{}.json",
-            std::process::id()
-        ));
+        let path = tmpdir.join(format!("nasrudin_m3_catalog_{}.json", std::process::id()));
         {
             let mut f = std::fs::File::create(&path).expect("create tmp catalog");
             f.write_all(catalog_json.to_string().as_bytes())

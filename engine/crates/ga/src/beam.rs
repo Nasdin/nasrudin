@@ -38,7 +38,7 @@ use nasrudin_derive::{
     AxiomStore, Chain, DerivationContext, RuleStep, strategies::DerivationStrategy,
 };
 
-use crate::target::{ladder_score, shape_similarity, TargetSpec};
+use crate::target::{TargetSpec, ladder_score, shape_similarity};
 
 /// Configuration for [`beam_search`].
 #[derive(Debug, Clone)]
@@ -115,7 +115,13 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
             let shape = shape_similarity(&expr, &target.final_target);
             let ladder = ladder_score(&expr, target);
             let coverage = crate::target::chain_coverage(&chain.0, store, target);
-            Some(BeamState { chain, expr, ladder, shape, coverage })
+            Some(BeamState {
+                chain,
+                expr,
+                ladder,
+                shape,
+                coverage,
+            })
         })
         .collect();
 
@@ -160,7 +166,13 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
                     let shape = shape_similarity(&expr, &target.final_target);
                     let ladder = ladder_score(&expr, target);
                     let coverage = crate::target::chain_coverage(&next_chain.0, store, target);
-                    next.push(BeamState { chain: next_chain, expr, ladder, shape, coverage });
+                    next.push(BeamState {
+                        chain: next_chain,
+                        expr,
+                        ladder,
+                        shape,
+                        coverage,
+                    });
                 }
             }
             // 2. AlgebraicSimplify (parameter-free).
@@ -170,7 +182,13 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
                 let shape = shape_similarity(&expr, &target.final_target);
                 let ladder = ladder_score(&expr, target);
                 let coverage = crate::target::chain_coverage(&next_chain.0, store, target);
-                next.push(BeamState { chain: next_chain, expr, ladder, shape, coverage });
+                next.push(BeamState {
+                    chain: next_chain,
+                    expr,
+                    ladder,
+                    shape,
+                    coverage,
+                });
             }
             // 3. RearrangeEquation toward each ladder rung. The
             //    DerivationContext accumulates all introduced axioms as
@@ -190,7 +208,13 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
                     let shape = shape_similarity(&expr, &target.final_target);
                     let ladder = ladder_score(&expr, target);
                     let coverage = crate::target::chain_coverage(&next_chain.0, store, target);
-                    next.push(BeamState { chain: next_chain, expr, ladder, shape, coverage });
+                    next.push(BeamState {
+                        chain: next_chain,
+                        expr,
+                        ladder,
+                        shape,
+                        coverage,
+                    });
                 }
             }
             // 4. TakePositiveRoot when applicable: only meaningful when
@@ -208,7 +232,13 @@ pub fn beam_search(store: &AxiomStore, target: &TargetSpec, cfg: &BeamConfig) ->
                     let shape = shape_similarity(&expr, &target.final_target);
                     let ladder = ladder_score(&expr, target);
                     let coverage = crate::target::chain_coverage(&next_chain.0, store, target);
-                    next.push(BeamState { chain: next_chain, expr, ladder, shape, coverage });
+                    next.push(BeamState {
+                        chain: next_chain,
+                        expr,
+                        ladder,
+                        shape,
+                        coverage,
+                    });
                 }
             }
         }
@@ -299,11 +329,7 @@ fn run_chain(chain: &Chain, store: &AxiomStore) -> Option<Expr> {
 }
 
 fn sort_and_truncate(states: &mut Vec<BeamState>, width: usize) {
-    states.sort_by(|a, b| {
-        b.score()
-            .partial_cmp(&a.score())
-            .unwrap_or(Ordering::Equal)
-    });
+    states.sort_by(|a, b| b.score().partial_cmp(&a.score()).unwrap_or(Ordering::Equal));
     if states.len() > width {
         states.truncate(width);
     }

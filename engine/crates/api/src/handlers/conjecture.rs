@@ -5,18 +5,16 @@
 use std::sync::Arc;
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use uuid::Uuid;
 
 use crate::auth::{AuthOrApiKey, AuthSess, WorkerAuth};
-use crate::conjecture::orchestrate::{run_llm_phase, OrchestrateError};
-use crate::conjecture::{
-    types::*, ConjectureEvent,
-};
+use crate::conjecture::orchestrate::{OrchestrateError, run_llm_phase};
+use crate::conjecture::{ConjectureEvent, types::*};
 use crate::state::AppState;
 
 fn err(status: StatusCode, code: &str) -> Response {
@@ -55,13 +53,10 @@ pub async fn create(
         .plan_cycle_start
         .map(|d| d.with_timezone(&chrono::Utc));
     let period_start = crate::billing::period_start(cycle_start, now);
-    let used = nasrudin_pg::query::targeted_search_usage::count_in_period(
-        pg,
-        user_id,
-        period_start,
-    )
-    .await
-    .unwrap_or(0);
+    let used =
+        nasrudin_pg::query::targeted_search_usage::count_in_period(pg, user_id, period_start)
+            .await
+            .unwrap_or(0);
     if used >= quota as u64 {
         return (
             StatusCode::PAYMENT_REQUIRED,
@@ -97,13 +92,8 @@ pub async fn create(
     // Record usage immediately after the row exists so re-issued requests
     // reflect the new count. Best-effort: a record-failure won't undo the
     // already-created job — we'd rather double-count than refund silently.
-    if let Err(e) = nasrudin_pg::query::targeted_search_usage::record(
-        pg,
-        user_id,
-        job_id,
-        period_start,
-    )
-    .await
+    if let Err(e) =
+        nasrudin_pg::query::targeted_search_usage::record(pg, user_id, job_id, period_start).await
     {
         tracing::warn!("targeted_search_usage record failed for job {job_id}: {e}");
     }
@@ -131,26 +121,25 @@ pub async fn create(
             return err(StatusCode::SERVICE_UNAVAILABLE, "key_encrypt_unset");
         }
         Err(OrchestrateError::DecryptFailed) => {
-            tracing::warn!("decrypt failed for user {user_id} provider {}", body.provider);
+            tracing::warn!(
+                "decrypt failed for user {user_id} provider {}",
+                body.provider
+            );
             let _ = nasrudin_pg::query::conjecture_jobs::mark_failed(pg, job_id, "decrypt_failed")
                 .await;
             return err(StatusCode::INTERNAL_SERVER_ERROR, "decrypt_failed");
         }
         Err(OrchestrateError::InvalidLlmJson(msg)) => {
             tracing::warn!("llm returned non-json for job {job_id}: {msg}");
-            let _ = nasrudin_pg::query::conjecture_jobs::mark_failed(
-                pg,
-                job_id,
-                "llm_invalid_json",
-            )
-            .await;
+            let _ =
+                nasrudin_pg::query::conjecture_jobs::mark_failed(pg, job_id, "llm_invalid_json")
+                    .await;
             return err(StatusCode::BAD_GATEWAY, "llm_invalid_json");
         }
         Err(e) => {
             tracing::warn!("llm phase failed for job {job_id}: {e}");
-            let _ =
-                nasrudin_pg::query::conjecture_jobs::mark_failed(pg, job_id, "llm_call_failed")
-                    .await;
+            let _ = nasrudin_pg::query::conjecture_jobs::mark_failed(pg, job_id, "llm_call_failed")
+                .await;
             return err(StatusCode::BAD_GATEWAY, "llm_call_failed");
         }
     };
@@ -230,13 +219,8 @@ pub async fn start(
         .clone()
         .unwrap_or_else(|| serde_json::to_value(chosen).unwrap_or(serde_json::Value::Null));
 
-    if let Err(e) = nasrudin_pg::query::conjecture_jobs::set_chosen_seed(
-        pg,
-        id,
-        body.chosen_index,
-        seed,
-    )
-    .await
+    if let Err(e) =
+        nasrudin_pg::query::conjecture_jobs::set_chosen_seed(pg, id, body.chosen_index, seed).await
     {
         tracing::warn!("set chosen seed failed: {e}");
         return err(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
@@ -454,15 +438,14 @@ pub async fn claim(State(state): State<Arc<AppState>>, auth: WorkerAuth) -> Resp
         return err(StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable");
     };
 
-    let claimed =
-        match nasrudin_pg::query::conjecture_jobs::claim_next(pg, &worker_id).await {
-            Ok(Some(c)) => c,
-            Ok(None) => return (StatusCode::NO_CONTENT, "").into_response(),
-            Err(e) => {
-                tracing::warn!("conjecture claim_next failed: {e}");
-                return err(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
-            }
-        };
+    let claimed = match nasrudin_pg::query::conjecture_jobs::claim_next(pg, &worker_id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return (StatusCode::NO_CONTENT, "").into_response(),
+        Err(e) => {
+            tracing::warn!("conjecture claim_next failed: {e}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        }
+    };
 
     let event_payload = serde_json::json!({
         "from": "QueuedForWorker",
@@ -548,13 +531,9 @@ pub async fn heartbeat(
         "candidates_verified": body.candidates_verified,
         "time_elapsed_s": body.time_elapsed_s,
     });
-    if let Ok(event_id) = nasrudin_pg::query::conjecture_jobs::insert_event(
-        pg,
-        id,
-        "progress",
-        event_payload.clone(),
-    )
-    .await
+    if let Ok(event_id) =
+        nasrudin_pg::query::conjecture_jobs::insert_event(pg, id, "progress", event_payload.clone())
+            .await
     {
         let _ = state.conjecture_event_tx.send(ConjectureEvent {
             id: event_id,
@@ -635,7 +614,10 @@ pub async fn submit(
 
     // Only Pending items count as "candidates verified" — the ingest
     // helper queues for reverify; we tally + emit the event here.
-    if matches!(result.status, crate::handlers::ingest::IngestStatus::Pending) {
+    if matches!(
+        result.status,
+        crate::handlers::ingest::IngestStatus::Pending
+    ) {
         let bytes = match hex::decode(&result.theorem_id) {
             Ok(b) => b,
             Err(_) => {
@@ -643,13 +625,9 @@ pub async fn submit(
                 return err(StatusCode::INTERNAL_SERVER_ERROR, "bad_theorem_id");
             }
         };
-        let _ = nasrudin_pg::query::conjecture_jobs::append_verified_theorem(
-            pg,
-            id,
-            &worker_id,
-            bytes,
-        )
-        .await;
+        let _ =
+            nasrudin_pg::query::conjecture_jobs::append_verified_theorem(pg, id, &worker_id, bytes)
+                .await;
 
         let event_payload = serde_json::json!({
             "theorem_id": result.theorem_id,
@@ -775,8 +753,8 @@ pub async fn start_paper_draft(
     let pg_arc = pg.clone();
 
     tokio::spawn(async move {
-        if let Err(e) = run_paper_stream(state_arc, pg_arc, id, user_id, view, provider, model)
-            .await
+        if let Err(e) =
+            run_paper_stream(state_arc, pg_arc, id, user_id, view, provider, model).await
         {
             tracing::warn!("paper stream for {id} failed: {e}");
         }
@@ -805,9 +783,9 @@ async fn run_paper_stream(
 ) -> Result<(), String> {
     use futures::StreamExt;
     use nasrudin_llm::{
-        encryption::{decrypt, EncryptedKey},
         AnthropicProvider, CompletionRequest, LlmProvider, OllamaProvider, OpenAiProvider,
         ResponseFormat,
+        encryption::{EncryptedKey, decrypt},
     };
 
     let encrypt_key = state
@@ -818,8 +796,8 @@ async fn run_paper_stream(
         .await
         .map_err(|e| format!("db: {e}"))?
         .ok_or_else(|| "no_provider_key".to_string())?;
-    let api_key = decrypt(&EncryptedKey(cipher), encrypt_key)
-        .map_err(|_| "decrypt_failed".to_string())?;
+    let api_key =
+        decrypt(&EncryptedKey(cipher), encrypt_key).map_err(|_| "decrypt_failed".to_string())?;
 
     let req = CompletionRequest {
         model: model.clone(),
@@ -852,7 +830,9 @@ async fn run_paper_stream(
             Ok(chunk) => {
                 if !chunk.text.is_empty() {
                     let _ = nasrudin_pg::query::conjecture_jobs::append_paper_chunk(
-                        &pg, job_id, &chunk.text,
+                        &pg,
+                        job_id,
+                        &chunk.text,
                     )
                     .await;
                     let payload = serde_json::json!({"text": chunk.text});
@@ -864,13 +844,16 @@ async fn run_paper_stream(
                     )
                     .await
                     {
-                        let _ = state.conjecture_event_tx.send(crate::conjecture::ConjectureEvent {
-                            id: event_id,
-                            job_id,
-                            kind: "paper_chunk".into(),
-                            payload,
-                            at: chrono::Utc::now(),
-                        });
+                        let _ =
+                            state
+                                .conjecture_event_tx
+                                .send(crate::conjecture::ConjectureEvent {
+                                    id: event_id,
+                                    job_id,
+                                    kind: "paper_chunk".into(),
+                                    payload,
+                                    at: chrono::Utc::now(),
+                                });
                     }
                 }
                 if chunk.finish_reason.is_some() {
@@ -883,13 +866,16 @@ async fn run_paper_stream(
                     )
                     .await
                     {
-                        let _ = state.conjecture_event_tx.send(crate::conjecture::ConjectureEvent {
-                            id: event_id,
-                            job_id,
-                            kind: "paper_done".into(),
-                            payload,
-                            at: chrono::Utc::now(),
-                        });
+                        let _ =
+                            state
+                                .conjecture_event_tx
+                                .send(crate::conjecture::ConjectureEvent {
+                                    id: event_id,
+                                    job_id,
+                                    kind: "paper_done".into(),
+                                    payload,
+                                    at: chrono::Utc::now(),
+                                });
                     }
                     break;
                 }
@@ -903,13 +889,15 @@ async fn run_paper_stream(
                     payload.clone(),
                 )
                 .await;
-                let _ = state.conjecture_event_tx.send(crate::conjecture::ConjectureEvent {
-                    id: 0,
-                    job_id,
-                    kind: "paper_error".into(),
-                    payload,
-                    at: chrono::Utc::now(),
-                });
+                let _ = state
+                    .conjecture_event_tx
+                    .send(crate::conjecture::ConjectureEvent {
+                        id: 0,
+                        job_id,
+                        kind: "paper_error".into(),
+                        payload,
+                        at: chrono::Utc::now(),
+                    });
                 return Err(e.to_string());
             }
         }
@@ -943,7 +931,10 @@ pub async fn get_paper(
     };
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/markdown; charset=utf-8",
+        )],
         draft,
     )
         .into_response()
@@ -1001,13 +992,9 @@ pub async fn complete_handler(
         "outcome": body.outcome,
         "reason": body.reason,
     });
-    if let Ok(event_id) = nasrudin_pg::query::conjecture_jobs::insert_event(
-        pg,
-        id,
-        "complete",
-        event_payload.clone(),
-    )
-    .await
+    if let Ok(event_id) =
+        nasrudin_pg::query::conjecture_jobs::insert_event(pg, id, "complete", event_payload.clone())
+            .await
     {
         let _ = state.conjecture_event_tx.send(ConjectureEvent {
             id: event_id,

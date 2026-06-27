@@ -127,10 +127,7 @@ pub async fn verify(
         }
     };
 
-    let wait = body
-        .wait_seconds
-        .unwrap_or(30)
-        .min(120);
+    let wait = body.wait_seconds.unwrap_or(30).min(120);
     let started_at = std::time::Instant::now();
     let outcome = promotion
         .await_promotion(id_bytes, Duration::from_secs(wait))
@@ -168,7 +165,14 @@ pub async fn verify(
                 .into_response()
         }
         _ => {
-            log_manual_verify(&state, &actor_id, &id_bytes, "in_flight_timeout", duration_ms).await;
+            log_manual_verify(
+                &state,
+                &actor_id,
+                &id_bytes,
+                "in_flight_timeout",
+                duration_ms,
+            )
+            .await;
             (
                 StatusCode::ACCEPTED,
                 [(axum::http::header::RETRY_AFTER, "60".to_string())],

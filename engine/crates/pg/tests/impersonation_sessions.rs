@@ -39,18 +39,22 @@ async fn impersonation_session_lifecycle() {
     )
     .await
     .unwrap();
-    assert!(query::impersonation::find_active(&db, row.id)
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        query::impersonation::find_active(&db, row.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     query::impersonation::end(&db, row.id, "manual_end")
         .await
         .unwrap();
-    assert!(query::impersonation::find_active(&db, row.id)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        query::impersonation::find_active(&db, row.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     let expired_row = query::impersonation::start(
         &db,

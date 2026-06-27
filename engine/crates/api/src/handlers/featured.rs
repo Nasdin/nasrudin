@@ -4,18 +4,13 @@
 //! along with their actual discovery status from the corpus. If a formula has been
 //! discovered, it returns real theorem data; otherwise, it returns a "searching" state.
 
-use axum::{
-    Json,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::state::AppState;
 
-use crate::headline_registry::{Headline, HEADLINES};
+use crate::headline_registry::{HEADLINES, Headline};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeaturedDiscovery {
@@ -179,8 +174,17 @@ async fn find_matching_theorem(
         // real Lean-verified derivation that happens to live at the
         // GA's bootstrap generation. Excluding it falsely leaves the
         // landing page in "still searching" forever for E=mc².
-        .order_by_desc(nasrudin_pg::entity::theorems::Column::VerifiedAt)
-        .limit(200)
+        // Stability: prefer the LOWEST-generation match (the original,
+        // most-fundamental derivation) and, ties broken, the earliest
+        // verified. Previously this ordered by verified_at DESC and took
+        // the *newest* match — so a later, junkier theorem (e.g. a gen-44
+        // `m·c²·E² + 2 = …` whose canonical merely *contains* the
+        // `(* v:m (^ c:SpeedOfLight n:2)` substring) would displace the
+        // real gen-0 `E = m·c²` from the featured card. A correct,
+        // verified headline must never be replaced by a newer theorem.
+        .order_by_asc(nasrudin_pg::entity::theorems::Column::Generation)
+        .order_by_asc(nasrudin_pg::entity::theorems::Column::VerifiedAt)
+        .limit(400)
         .all(db)
         .await
         .ok()?;

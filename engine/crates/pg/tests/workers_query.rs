@@ -100,11 +100,17 @@ async fn list_all_returns_ordered_by_contribution() {
 
 #[tokio::test]
 async fn count_active_workers_within_threshold() {
-    let Some((db, _g)) = fresh_db().await else { return };
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
 
     // Two registered workers, both with last_seen = now (set by register()).
-    workers::register(&db, "active-a", None, None).await.unwrap();
-    workers::register(&db, "active-b", None, None).await.unwrap();
+    workers::register(&db, "active-a", None, None)
+        .await
+        .unwrap();
+    workers::register(&db, "active-b", None, None)
+        .await
+        .unwrap();
 
     let n = workers::count_active_workers(&db, chrono::Duration::minutes(5))
         .await
@@ -121,19 +127,18 @@ async fn count_active_workers_within_threshold() {
 
 #[tokio::test]
 async fn count_distinct_contributors_returns_distinct_user_ids() {
-    let Some((db, _g)) = fresh_db().await else { return };
+    let Some((db, _g)) = fresh_db().await else {
+        return;
+    };
 
     // Two users, with one and two worker keys respectively → 2 distinct contributors.
-    let alice = nasrudin_pg::query::users::create_firebase_user(
-        &db, "fb_alice", "alice@test", None,
-    )
-    .await
-    .unwrap();
-    let bob = nasrudin_pg::query::users::create_firebase_user(
-        &db, "fb_bob", "bob@test", None,
-    )
-    .await
-    .unwrap();
+    let alice =
+        nasrudin_pg::query::users::create_firebase_user(&db, "fb_alice", "alice@test", None)
+            .await
+            .unwrap();
+    let bob = nasrudin_pg::query::users::create_firebase_user(&db, "fb_bob", "bob@test", None)
+        .await
+        .unwrap();
 
     nasrudin_pg::query::api_keys::create(
         &db,

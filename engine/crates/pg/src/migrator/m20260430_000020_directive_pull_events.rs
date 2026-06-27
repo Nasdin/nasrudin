@@ -81,19 +81,11 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_index(
-                Index::drop()
-                    .name("idx_directive_events_recent")
-                    .to_owned(),
-            )
+            .drop_index(Index::drop().name("idx_directive_events_recent").to_owned())
             .await
             .ok();
         manager
-            .drop_table(
-                Table::drop()
-                    .table(DirectivePullEvents::Table)
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(DirectivePullEvents::Table).to_owned())
             .await
     }
 }

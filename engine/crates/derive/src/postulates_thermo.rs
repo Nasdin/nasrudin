@@ -57,10 +57,9 @@ pub fn thermodynamics_postulates() -> Vec<Axiom> {
             name: "thermo_zeroth_law".into(),
             domain: Domain::Thermodynamics,
             statement: gt(t(), zero()),
-            description:
-                "Zeroth law: every equilibrium state has a positive empirical \
+            description: "Zeroth law: every equilibrium state has a positive empirical \
                  temperature T > 0 (Callen §1.5)."
-                    .into(),
+                .into(),
         },
         // First law (rate form): dU/dt = dQ/dt - dW/dt. ΔU = Q - W in
         // integrated form; differential is more convenient for chains.
@@ -68,10 +67,9 @@ pub fn thermodynamics_postulates() -> Vec<Axiom> {
             name: "thermo_first_law".into(),
             domain: Domain::Thermodynamics,
             statement: eq(du_dt(), sub(dq_dt(), dw_dt())),
-            description:
-                "First law of thermodynamics (rate form): dU/dt = dQ/dt - dW/dt. \
+            description: "First law of thermodynamics (rate form): dU/dt = dQ/dt - dW/dt. \
                  Conservation of energy in thermodynamic systems (Callen §2.1)."
-                    .into(),
+                .into(),
         },
         // Second law (Clausius form, rate inequality): dS/dt ≥ 0 for
         // an isolated system.
@@ -79,10 +77,9 @@ pub fn thermodynamics_postulates() -> Vec<Axiom> {
             name: "thermo_second_law".into(),
             domain: Domain::Thermodynamics,
             statement: ge(ds_dt(), zero()),
-            description:
-                "Second law (Clausius): the entropy of an isolated system never \
+            description: "Second law (Clausius): the entropy of an isolated system never \
                  decreases, dS/dt ≥ 0 (Callen §4.6)."
-                    .into(),
+                .into(),
         },
         // Third law (Nernst): S → 0 as T → 0. Encoded as the limit
         // statement S = 0 at T = 0, expressed via implication.
@@ -94,30 +91,27 @@ pub fn thermodynamics_postulates() -> Vec<Axiom> {
                 Box::new(eq(t(), zero())),
                 Box::new(eq(s(), zero())),
             ),
-            description:
-                "Third law (Nernst-Planck): a perfect crystal's entropy approaches \
+            description: "Third law (Nernst-Planck): a perfect crystal's entropy approaches \
                  zero as T → 0 (Callen §11.1)."
-                    .into(),
+                .into(),
         },
         // Reversible heat transfer: dQ = T·dS (defining relation).
         Axiom {
             name: "thermo_reversible_heat".into(),
             domain: Domain::Thermodynamics,
             statement: eq(dq_dt(), mul(t(), ds_dt())),
-            description:
-                "Reversible heat transfer (rate form): dQ/dt = T·dS/dt. Defines \
+            description: "Reversible heat transfer (rate form): dQ/dt = T·dS/dt. Defines \
                  the thermodynamic temperature scale (Callen §3.4)."
-                    .into(),
+                .into(),
         },
         // Quasistatic mechanical work: dW = P·dV (rate form).
         Axiom {
             name: "thermo_quasistatic_work".into(),
             domain: Domain::Thermodynamics,
             statement: eq(dw_dt(), mul(p(), Expr::Deriv(Box::new(v()), "t".into()))),
-            description:
-                "Quasistatic mechanical work: dW/dt = P·dV/dt. PV-work for a fluid \
+            description: "Quasistatic mechanical work: dW/dt = P·dV/dt. PV-work for a fluid \
                  system (Callen §1.7)."
-                    .into(),
+                .into(),
         },
         // Ideal gas equation of state: P·V = n·k_B·T (here using k_B
         // rather than R; equivalent up to Avogadro factor for n in
@@ -126,52 +120,36 @@ pub fn thermodynamics_postulates() -> Vec<Axiom> {
             name: "thermo_ideal_gas_law".into(),
             domain: Domain::Thermodynamics,
             statement: eq(mul(p(), v()), mul(mul(n(), r_gas()), t())),
-            description:
-                "Ideal gas equation of state: PV = n·k_B·T (in number-of-particles \
+            description: "Ideal gas equation of state: PV = n·k_B·T (in number-of-particles \
                  form). Captures the dilute-gas limit (Callen §3.5)."
-                    .into(),
+                .into(),
         },
         // Internal energy of an ideal monoatomic gas: U = (3/2) n k_B T.
         Axiom {
             name: "thermo_ideal_monoatomic_energy".into(),
             domain: Domain::Thermodynamics,
-            statement: eq(
-                u(),
-                mul(
-                    Expr::Lit(3, 2),
-                    mul(mul(n(), r_gas()), t()),
-                ),
-            ),
-            description:
-                "Internal energy of an ideal monoatomic gas: U = (3/2) n k_B T. \
+            statement: eq(u(), mul(Expr::Lit(3, 2), mul(mul(n(), r_gas()), t()))),
+            description: "Internal energy of an ideal monoatomic gas: U = (3/2) n k_B T. \
                  Equipartition over 3 translational DOF (Reif §2.1)."
-                    .into(),
+                .into(),
         },
         // Enthalpy: H = U + PV (definition).
         Axiom {
             name: "thermo_enthalpy_def".into(),
             domain: Domain::Thermodynamics,
-            statement: eq(
-                Expr::Var("H".into()),
-                add(u(), mul(p(), v())),
-            ),
-            description:
-                "Enthalpy: H = U + PV. Natural variable for constant-pressure \
+            statement: eq(Expr::Var("H".into()), add(u(), mul(p(), v()))),
+            description: "Enthalpy: H = U + PV. Natural variable for constant-pressure \
                  processes (Callen §6.4)."
-                    .into(),
+                .into(),
         },
         // Helmholtz free energy: F = U - TS.
         Axiom {
             name: "thermo_helmholtz_def".into(),
             domain: Domain::Thermodynamics,
-            statement: eq(
-                Expr::Var("F".into()),
-                sub(u(), mul(t(), s())),
-            ),
-            description:
-                "Helmholtz free energy: F = U - TS. Natural variable for \
+            statement: eq(Expr::Var("F".into()), sub(u(), mul(t(), s()))),
+            description: "Helmholtz free energy: F = U - TS. Natural variable for \
                  constant-temperature, constant-volume processes (Callen §6.4)."
-                    .into(),
+                .into(),
         },
         // Gibbs free energy: G = H - TS = U + PV - TS.
         Axiom {
@@ -181,21 +159,19 @@ pub fn thermodynamics_postulates() -> Vec<Axiom> {
                 Expr::Var("G".into()),
                 sub(add(u(), mul(p(), v())), mul(t(), s())),
             ),
-            description:
-                "Gibbs free energy: G = U + PV - TS. Natural variable for \
+            description: "Gibbs free energy: G = U + PV - TS. Natural variable for \
                  constant-T constant-P processes; equilibrium ↔ G minimum \
                  (Callen §6.4)."
-                    .into(),
+                .into(),
         },
         // Boltzmann constant positivity: k_B > 0. Convention.
         Axiom {
             name: "thermo_kb_positive".into(),
             domain: Domain::Thermodynamics,
             statement: gt(r_gas(), Expr::Lit(0, 1)),
-            description:
-                "Boltzmann constant k_B > 0. Sign convention; underpins entropy \
+            description: "Boltzmann constant k_B > 0. Sign convention; underpins entropy \
                  positivity and the second law."
-                    .into(),
+                .into(),
         },
         // Hold n positive (sanity).
         Axiom {

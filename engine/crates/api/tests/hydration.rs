@@ -74,7 +74,9 @@ async fn empty_rocks_hydrates_from_pg() {
             ..Default::default()
         };
         theorems::insert_pending(&pg, row).await.unwrap();
-        theorems::mark_verified(&pg, &id, "A", "rfl", 1).await.unwrap();
+        theorems::mark_verified(&pg, &id, "A", "rfl", 1)
+            .await
+            .unwrap();
     }
 
     let rocks_dir = tempdir().unwrap();
@@ -128,7 +130,9 @@ async fn nonempty_rocks_skips_hydration() {
         ..Default::default()
     };
     theorems::insert_pending(&pg, row).await.unwrap();
-    theorems::mark_verified(&pg, &id, "A", "rfl", 1).await.unwrap();
+    theorems::mark_verified(&pg, &id, "A", "rfl", 1)
+        .await
+        .unwrap();
 
     let rocks_dir = tempdir().unwrap();
     let rocks = Arc::new(TheoremDb::new(rocks_dir.path().to_str().unwrap()).unwrap());

@@ -10,8 +10,10 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.get_connection().execute_unprepared(
-            r#"
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
             CREATE TABLE IF NOT EXISTS bulk_runs (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 started_by_admin_id UUID NOT NULL REFERENCES users(id),
@@ -30,8 +32,8 @@ impl MigrationTrait for Migration {
             CREATE INDEX IF NOT EXISTS bulk_runs_admin
                 ON bulk_runs (started_by_admin_id, started_at DESC);
             "#,
-        )
-        .await?;
+            )
+            .await?;
         Ok(())
     }
 

@@ -30,7 +30,9 @@ impl MigrationTrait for Migration {
                             .default(false),
                     )
                     .add_column_if_not_exists(
-                        ColumnDef::new(Theorems::WorkerSpotCheckRate).integer().null(),
+                        ColumnDef::new(Theorems::WorkerSpotCheckRate)
+                            .integer()
+                            .null(),
                     )
                     .to_owned(),
             )

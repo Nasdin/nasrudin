@@ -10,7 +10,7 @@ Named after [Nasrudin](https://en.wikipedia.org/wiki/Nasreddin), the wise fool o
 Mathematical Axioms (Mathlib full corpus) + Physics Postulates (~43)
         |
         v
-[ LLM Steerer (Kimi K2.6) ]  <-- emits SteeringConfig every 10 min:
+[ LLM Steerer (Kimi K2.6) ]  <-- emits SteeringConfig every 2 hours (configurable):
         |                         domain weights, mutation knobs,
         |                         per-cluster directives, target proposals
         v
@@ -36,7 +36,7 @@ Mathematical Axioms (Mathlib full corpus) + Physics Postulates (~43)
                  plus intrinsic-motivation novelty bonus)
 ```
 
-Nasrudin doesn't know what physics looks like. It generates candidate mathematical statements by combining and mutating existing theorems, then uses Lean4 to formally prove or reject them. An LLM steers the search and four bandits learn online which knobs work — no offline training pipeline, no GPU, just CPU. Over time, the system builds up a corpus of verified mathematical truths, with the steering loop continuously self-tuning toward more productive directions. Some of those truths turn out to be real physics; the longer it runs, the more original the discoveries.
+Nasrudin doesn't know what physics looks like. It generates candidate mathematical statements by combining and mutating existing theorems, then uses Lean4 to formally prove or reject them. An LLM sets coarse strategy every two hours (or as configured), while four bandits update continuously every `STEERER_CADENCE_SECONDS` using verification rewards. Over time, the system builds up a corpus of verified mathematical truths, with the steering loop continuously self-tuning toward more productive directions. Some of those truths turn out to be real physics; the longer it runs, the more original the discoveries.
 
 Every theorem carries its full Lean4 proof. Academics can inspect proofs in the web UI, download any theorem as a standalone `.lean` file, and independently re-verify it with `lake build` -- no trust in the server required.
 
@@ -90,7 +90,7 @@ Workers also pull a fresh `SteeringConfig` (see below) from `/api/seed` on every
 
 ## LLM-Driven Cluster Steering
 
-A naïve genetic algorithm running across thousands of volunteer workers is unfocused: it grinds through the entire axiom space with no notion of what the corpus actually needs next. Nasrudin solves this by having an LLM **steer the cluster** every 10 minutes.
+A naïve genetic algorithm running across thousands of volunteer workers is unfocused: it grinds through the entire axiom space with no notion of what the corpus actually needs next. Nasrudin solves this by having an LLM **steer the cluster** every `LLM_STEER_INTERVAL_SECONDS` (default 2h), while RL bandits apply feedback on each `STEERER_CADENCE_SECONDS` tick. The refresh gate is claimed in persisted `cluster_steering` history before any prompt construction or provider call, so restarts and multiple API processes do not reset or duplicate the two-hour budget window. LLM spend is separately capped with `LLM_STEER_MAX_TOTAL_TOKENS` (default 10000) and `LLM_STEER_MAX_COMPLETION_TOKENS` (default 2048); if a refresh cannot fit the budget or Gradient fails, the daemon reuses the last validated strategy and the RL/GA loop keeps running.
 
 ```
    Aggregate user demand            Last 10 cycles' outcomes
@@ -128,7 +128,78 @@ Each cycle's *outcome* (theorems verified, actual domain distribution, cascade r
 
 **Validation & safety.** Every emitted `SteeringConfig` is range-checked (domain weights sum to 1, mutation rate ∈ [0.05, 0.30], population size ∈ [32, 512], etc.). On any failure — Gradient outage, parse error, validator reject — the daemon transparently falls back to the last-known-good config and flags the row in `cluster_steering`. The cluster keeps running with stale-but-validated steering indefinitely.
 
-The Gradient API key (`GRADIENT_API_KEY`) is server-owned and lives only in the daemon's environment. It is never exposed to clients and is distinct from the per-user encrypted-key flow used by the FunSearch-style conjecture creator.
+The Gradient API key (`GRADIENT_API_KEY`) is server-owned and lives only in the daemon's environment. It is never exposed to clients and is distinct from the per-user encrypted-key flow used by the FunSearch-style conjecture creator. By default, the server key is reserved for the two-hour strategy refresh path; cosmetic per-theorem LLM naming stays disabled unless `LLM_NAMING_ENABLED=1` is explicitly set.
+
+**AlphaEvolve-style strategy genomes.** The LLM steerer is not disabled locally; it is made sparse and high-leverage. In addition to ordinary `SteeringConfig` fields, the model can emit `extension.strategy_genome_v1`, a compact domain policy that workers expand into GA/RL moves:
+
+```json
+{
+  "extension": {
+    "strategy_genome_v1": {
+      "domain_policies": {
+        "special_relativity": {
+          "compute_scale": 1.5,
+          "mutation_rate_mult": 1.1,
+          "suffix_bias_delta": 0.2,
+          "elitism_delta": 0.05,
+          "operator_bias": {
+            "append_productive_suffix": 1.6
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Workers apply only the matching domain policy in scope C, clamp every value, fingerprint the policy, and store local reward history for repeated genomes. Each repeated genome gets a tiny local evolution-strategy controller over macro-policy strength: the worker samples antithetic strength perturbations across chunks, rewards them by novelty, Lake pass rate, and verified theorem yield, then updates the controller mean/sigma in `worker_rl_state.json`. Strong genomes are amplified, weak genomes are dampened toward neutral, and promising variants keep improving between LLM refreshes and restarts. This is the intended 10k-token/2h pattern: the LLM proposes compact strategic variants; RL/ES and the GA do the expensive evaluation.
+
+**Local desktop low-LLM profile.** `just up` defaults to the safe local profile even when `.env` contains a real Gradient key:
+
+- `LLM_STEER_INTERVAL_SECONDS=7200`
+- `LLM_STEER_MAX_TOTAL_TOKENS=10000`
+- `LLM_STEER_MAX_COMPLETION_TOKENS=2048`
+- `LLM_NAMING_ENABLED=0`
+- `NASRUDIN_NO_PAID_JOBS=1`
+- `NASRUDIN_RL_HALF_LIFE_HOURS=168`
+- `NASRUDIN_WORKER_LOAD_CATALOG=1`
+
+Override these only when you intentionally want different behavior. The local worker persists scoped RL/QD state in `~/.local/share/nasrudin-worker/worker_rl_state.json`, while the LLM remains a high-level strategy source rather than the workhorse. When `physlean-extract/output/catalog.json` is present, standalone workers also load safe local PhysLean catalog propositions into the hot tier before chunks run; the loader skips non-propositional placeholders and any canonical statement on the no-cheat headline deny-list.
+
+**Cloudflare desktop deployment.** For running the frontend and API from your desktop behind Cloudflare, use [deploy/cloudflare-local.example.yml](deploy/cloudflare-local.example.yml) as the tunnel template. It routes `nasrudin.org` to the local frontend and `api.nasrudin.org` to the local API while keeping both services bound to localhost.
+
+**Local no-cheat E=mc² smoke.** To prove the workhorse path without an API key or submission daemon, run:
+
+```bash
+just smoke-emc2-local
+```
+
+Or invoke the SR worker directly with local Lake verification only:
+
+```bash
+NASRUDIN_NO_PAID_JOBS=1 \
+cargo run -p nasrudin-ga --bin worker -- \
+  --domain sr \
+  --target sr_rest_energy \
+  --verify ../prover \
+  --gens 1 \
+  --pop 8 \
+  --chunks 1 \
+  --max-lake 1 \
+  --no-persistent-elaborator \
+  --no-submit \
+  --submit-top-k 0
+```
+
+The expected smoke result is `Lake attempts: 1`, `Lake passed: 1`, and the `E = m·c² SPONTANEOUSLY DERIVED AND VERIFIED` banner. This uses upstream SR postulates and confirms `mass_shell_condition` is not loaded as an axiom.
+
+**Local quantum smoke.** To prove the same GA/RL/Lake path can run a quantum target locally, run:
+
+```bash
+just smoke-qm-local
+```
+
+Expected result: one Lake attempt, one Lake pass, and the `QUANTUM PLANCK-EINSTEIN RELATION DERIVED AND VERIFIED` banner. This runs `--domain qm --target qm_planck_einstein` with no API submission and the same low-LLM local profile.
 
 ## Reinforcement-Learning Layer
 

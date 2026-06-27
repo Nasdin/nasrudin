@@ -13,10 +13,10 @@
 use std::sync::Arc;
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -96,11 +96,10 @@ pub async fn claim(
     {
         Ok(Some(job)) => {
             state.capacity.add_paid_slots(committed_slots);
-            let remaining =
-                crate::jobs::quota::quota_remaining_hours(
-                    job.lake_slot_hours_quota,
-                    job.lake_slot_hours_consumed,
-                );
+            let remaining = crate::jobs::quota::quota_remaining_hours(
+                job.lake_slot_hours_quota,
+                job.lake_slot_hours_consumed,
+            );
             crate::handlers::research_jobs::emit_job_event(
                 &state,
                 job.id,
@@ -163,11 +162,10 @@ pub async fn heartbeat(
     // budget exhaustion (the heartbeat helper reads it internally for
     // the sanity-cap math; we duplicate the lookup here so the
     // capacity counter stays in sync).
-    let allocated_slots: u32 =
-        match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
-            Ok(Some(j)) => (j.allocated_slots as u32).max(MIN_SLOTS_PER_JOB),
-            _ => SLOTS_PER_JOB,
-        };
+    let allocated_slots: u32 = match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
+        Ok(Some(j)) => (j.allocated_slots as u32).max(MIN_SLOTS_PER_JOB),
+        _ => SLOTS_PER_JOB,
+    };
     match nasrudin_pg::query::conjecture_jobs::heartbeat_paid(
         pg,
         id,
@@ -255,11 +253,10 @@ pub async fn release(
         Some(p) => p,
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
-    let allocated_slots: u32 =
-        match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
-            Ok(Some(j)) => (j.allocated_slots as u32).max(MIN_SLOTS_PER_JOB),
-            _ => SLOTS_PER_JOB,
-        };
+    let allocated_slots: u32 = match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
+        Ok(Some(j)) => (j.allocated_slots as u32).max(MIN_SLOTS_PER_JOB),
+        _ => SLOTS_PER_JOB,
+    };
     match nasrudin_pg::query::conjecture_jobs::release_paid_claim(
         pg,
         id,
@@ -308,11 +305,10 @@ pub async fn mark_proved(
         Some(p) => p,
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
-    let allocated_slots: u32 =
-        match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
-            Ok(Some(j)) => (j.allocated_slots as u32).max(MIN_SLOTS_PER_JOB),
-            _ => SLOTS_PER_JOB,
-        };
+    let allocated_slots: u32 = match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
+        Ok(Some(j)) => (j.allocated_slots as u32).max(MIN_SLOTS_PER_JOB),
+        _ => SLOTS_PER_JOB,
+    };
     match nasrudin_pg::query::conjecture_jobs::mark_paid_proved(
         pg,
         id,

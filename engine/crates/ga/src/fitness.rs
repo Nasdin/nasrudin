@@ -111,8 +111,7 @@ fn symmetry_score(expr: &Expr) -> f64 {
                     // Ratio of smaller to larger side
                     let ratio = ln.min(rn) / ln.max(rn);
                     // Blend with children's symmetry
-                    let child_sym =
-                        (symmetry_score(l) + symmetry_score(r)) / 2.0;
+                    let child_sym = (symmetry_score(l) + symmetry_score(r)) / 2.0;
                     0.5 * ratio + 0.5 * child_sym
                 }
                 _ => {
@@ -272,17 +271,22 @@ fn contains_var(expr: &Expr, name: &str) -> bool {
         Expr::Lam(_, ty, body) | Expr::Pi(_, ty, body) | Expr::Let(_, ty, body) => {
             contains_var(ty, name) || contains_var(body, name)
         }
-        Expr::Integral { body, lower, upper, .. } => {
+        Expr::Integral {
+            body, lower, upper, ..
+        } => {
             contains_var(body, name)
                 || lower.as_ref().is_some_and(|l| contains_var(l, name))
                 || upper.as_ref().is_some_and(|u| contains_var(u, name))
         }
-        Expr::Sum { body, lower, upper, .. } | Expr::Prod { body, lower, upper, .. } => {
-            contains_var(body, name) || contains_var(lower, name) || contains_var(upper, name)
+        Expr::Sum {
+            body, lower, upper, ..
         }
-        Expr::Limit { body, approaching, .. } => {
-            contains_var(body, name) || contains_var(approaching, name)
-        }
+        | Expr::Prod {
+            body, lower, upper, ..
+        } => contains_var(body, name) || contains_var(lower, name) || contains_var(upper, name),
+        Expr::Limit {
+            body, approaching, ..
+        } => contains_var(body, name) || contains_var(approaching, name),
         _ => false,
     }
 }
@@ -293,14 +297,19 @@ fn contains_const(expr: &Expr, c: &PhysConst) -> bool {
         Expr::BinOp(_, l, r) => contains_const(l, c) || contains_const(r, c),
         Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => contains_const(e, c),
         Expr::App(f, x) => contains_const(f, c) || contains_const(x, c),
-        Expr::Integral { body, lower, upper, .. } => {
+        Expr::Integral {
+            body, lower, upper, ..
+        } => {
             contains_const(body, c)
                 || lower.as_ref().is_some_and(|l| contains_const(l, c))
                 || upper.as_ref().is_some_and(|u| contains_const(u, c))
         }
-        Expr::Sum { body, lower, upper, .. } | Expr::Prod { body, lower, upper, .. } => {
-            contains_const(body, c) || contains_const(lower, c) || contains_const(upper, c)
+        Expr::Sum {
+            body, lower, upper, ..
         }
+        | Expr::Prod {
+            body, lower, upper, ..
+        } => contains_const(body, c) || contains_const(lower, c) || contains_const(upper, c),
         _ => false,
     }
 }
@@ -375,9 +384,7 @@ fn has_pow_const(expr: &Expr, c: &PhysConst, n: i64) -> bool {
         Expr::BinOp(BinOp::Pow, base, exp) => {
             let base_match = matches!(base.as_ref(), Expr::Const(k) if k == c);
             let exp_match = matches!(exp.as_ref(), Expr::Lit(m, 1) if *m == n);
-            (base_match && exp_match)
-                || has_pow_const(base, c, n)
-                || has_pow_const(exp, c, n)
+            (base_match && exp_match) || has_pow_const(base, c, n) || has_pow_const(exp, c, n)
         }
         Expr::BinOp(_, l, r) => has_pow_const(l, c, n) || has_pow_const(r, c, n),
         Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => has_pow_const(e, c, n),
@@ -438,7 +445,9 @@ fn collect_vars(expr: &Expr, vars: &mut std::collections::HashSet<String>) {
             collect_vars(ty, vars);
             collect_vars(body, vars);
         }
-        Expr::Integral { body, lower, upper, .. } => {
+        Expr::Integral {
+            body, lower, upper, ..
+        } => {
             collect_vars(body, vars);
             if let Some(l) = lower {
                 collect_vars(l, vars);
@@ -447,12 +456,16 @@ fn collect_vars(expr: &Expr, vars: &mut std::collections::HashSet<String>) {
                 collect_vars(u, vars);
             }
         }
-        Expr::Sum { body, lower, upper, .. } => {
+        Expr::Sum {
+            body, lower, upper, ..
+        } => {
             collect_vars(body, vars);
             collect_vars(lower, vars);
             collect_vars(upper, vars);
         }
-        Expr::Limit { body, approaching, .. } => {
+        Expr::Limit {
+            body, approaching, ..
+        } => {
             collect_vars(body, vars);
             collect_vars(approaching, vars);
         }
@@ -587,6 +600,9 @@ mod tests {
             )),
         );
         let score = complexity_score(&expr);
-        assert!(score > 0.5, "Moderate complexity should score well: {score}");
+        assert!(
+            score > 0.5,
+            "Moderate complexity should score well: {score}"
+        );
     }
 }

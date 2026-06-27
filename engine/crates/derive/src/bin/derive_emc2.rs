@@ -9,12 +9,12 @@
 //!   derive_emc2 --db ./physics_data --verify <pr>  # full pipeline: derive → store → verify
 
 use nasrudin_core::{
-    compute_theorem_id, Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremOrigin,
-    VerificationStatus,
+    Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremOrigin, VerificationStatus,
+    compute_theorem_id,
 };
 use nasrudin_derive::derivation::DerivationEngine;
 use nasrudin_derive::dimension_checker::{check_equation_dimensions, sr_variable_dimensions};
-use nasrudin_derive::lean_emitter::{emit_lean_file, LeanEmitConfig};
+use nasrudin_derive::lean_emitter::{LeanEmitConfig, emit_lean_file};
 use nasrudin_derive::lean_verify::{LeanVerifier, LeanVerifyResult};
 use nasrudin_rocks::TheoremDb;
 
@@ -324,7 +324,10 @@ fn dump_database(db: &TheoremDb) -> Result<(), Box<dyn std::error::Error>> {
 
     // List all theorems
     let theorems = db.list_theorems()?;
-    println!("── Theorems ({}) ─────────────────────────────────────", theorems.len());
+    println!(
+        "── Theorems ({}) ─────────────────────────────────────",
+        theorems.len()
+    );
     for t in &theorems {
         let status = match &t.verified {
             VerificationStatus::Verified { tactic_used, .. } => {

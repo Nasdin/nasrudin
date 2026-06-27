@@ -7,7 +7,7 @@
 //! [0, 1]. Auth reuses the worker bearer token middleware (same as
 //! `/api/ingest`, `/api/cluster-report`).
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -108,12 +108,8 @@ pub async fn handler(
         // so the system has *both* a per-arm point estimate AND a
         // smooth predictor across the (strength, choice) plane —
         // worker-side selection blends them via the snapshot.
-        if let Ok(Some(row)) = nasrudin_pg::query::cluster_directive_linucb::get(
-            pg,
-            &e.island_domain,
-            &e.action,
-        )
-        .await
+        if let Ok(Some(row)) =
+            nasrudin_pg::query::cluster_directive_linucb::get(pg, &e.island_domain, &e.action).await
         {
             let mut a_flat = row.a_matrix;
             let mut b_vec = row.b_vector;
@@ -122,11 +118,7 @@ pub async fn handler(
             // [0.0, 0.2, 0.4, 0.6, 0.8] → [0.1, 0.3, 0.5, 0.7, 0.9].
             let s_mid = (e.strength_bucket as f64 + 0.5) / 5.0;
             let max_choice = (crate::steerer::directive_bandit::MAX_MULTIPLIER_CHOICES - 1).min(8);
-            let x = crate::steerer::linucb::features(
-                s_mid,
-                e.multiplier_choice as u8,
-                max_choice,
-            );
+            let x = crate::steerer::linucb::features(s_mid, e.multiplier_choice as u8, max_choice);
             crate::steerer::linucb::update_in_place(&mut a_flat, &mut b_vec, &x, reward);
             if let Err(err) = nasrudin_pg::query::cluster_directive_linucb::save_update(
                 pg,

@@ -16,10 +16,7 @@ use physics_api::steerer::schema::ProposedTarget;
 
 const TEST_MODEL: &str = "kimi-k2.6";
 
-async fn count_platform_rows(
-    pg: &sea_orm::DatabaseConnection,
-    hunch: &str,
-) -> u64 {
+async fn count_platform_rows(pg: &sea_orm::DatabaseConnection, hunch: &str) -> u64 {
     conjecture_jobs::Entity::find()
         .filter(conjecture_jobs::Column::Tier.eq("platform"))
         .filter(conjecture_jobs::Column::Hunch.eq(hunch))

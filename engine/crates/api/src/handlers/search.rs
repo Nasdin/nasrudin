@@ -235,7 +235,9 @@ pub async fn search(
                     .collect();
                 unify_hits.push(row_to_match(
                     cand.clone(),
-                    MatchKind::Unify { bindings: bindings_json },
+                    MatchKind::Unify {
+                        bindings: bindings_json,
+                    },
                 ));
                 if unify_hits.len() as u64 >= limit {
                     break;
@@ -296,7 +298,11 @@ pub async fn search(
             })
             .collect();
 
-        let tier = if matches.is_empty() { Tier::Empty } else { Tier::NearMiss };
+        let tier = if matches.is_empty() {
+            Tier::Empty
+        } else {
+            Tier::NearMiss
+        };
         return ok(SearchResponse {
             tier,
             matches,
@@ -313,11 +319,17 @@ pub async fn search(
         .map(|row| {
             row_to_match(
                 row,
-                MatchKind::Unify { bindings: serde_json::Map::new() },
+                MatchKind::Unify {
+                    bindings: serde_json::Map::new(),
+                },
             )
         })
         .collect();
-    let tier = if matches.is_empty() { Tier::Empty } else { Tier::Unify };
+    let tier = if matches.is_empty() {
+        Tier::Empty
+    } else {
+        Tier::Unify
+    };
     ok(SearchResponse {
         tier,
         matches,
@@ -331,9 +343,7 @@ fn ok(resp: SearchResponse) -> axum::response::Response {
     (StatusCode::OK, Json(resp)).into_response()
 }
 
-fn parse_or_err<E: std::fmt::Display>(
-    r: Result<Expr, E>,
-) -> (Option<Expr>, Option<String>) {
+fn parse_or_err<E: std::fmt::Display>(r: Result<Expr, E>) -> (Option<Expr>, Option<String>) {
     match r {
         Ok(e) => (Some(e), None),
         Err(e) => (None, Some(e.to_string())),
@@ -367,9 +377,7 @@ fn token_levenshtein(a: &str, b: &str) -> u32 {
         cur[0] = i as u32;
         for j in 1..=n {
             let cost = if av[i - 1] == bv[j - 1] { 0 } else { 1 };
-            cur[j] = (cur[j - 1] + 1)
-                .min(prev[j] + 1)
-                .min(prev[j - 1] + cost);
+            cur[j] = (cur[j - 1] + 1).min(prev[j] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut cur);
     }

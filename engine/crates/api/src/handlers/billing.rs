@@ -151,10 +151,9 @@ pub async fn me(State(state): State<Arc<AppState>>, auth: AuthOrApiKey) -> Respo
         nasrudin_pg::query::targeted_search_usage::count_in_period(pg, auth.user.id, period_start)
             .await
             .unwrap_or(0);
-    let used_today =
-        nasrudin_pg::query::api_usage::count_today(pg, auth.user.id, now.date_naive())
-            .await
-            .unwrap_or(0);
+    let used_today = nasrudin_pg::query::api_usage::count_today(pg, auth.user.id, now.date_naive())
+        .await
+        .unwrap_or(0);
 
     Json(serde_json::json!({
         "plan_tier": plan_tier.as_db(),
@@ -233,7 +232,6 @@ pub async fn webhook(
     let result = webhook::dispatch(&event, &billing.cfg, pg).await;
     let err_msg_owned = result.as_ref().err().map(|e| e.to_string());
     let err_msg = err_msg_owned.as_deref();
-    let _ =
-        nasrudin_pg::query::billing::mark_event_processed(pg, event.id.as_str(), err_msg).await;
+    let _ = nasrudin_pg::query::billing::mark_event_processed(pg, event.id.as_str(), err_msg).await;
     (StatusCode::OK, "").into_response()
 }

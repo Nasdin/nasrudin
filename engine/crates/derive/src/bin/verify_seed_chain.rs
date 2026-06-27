@@ -11,10 +11,8 @@
 //!   verify_seed_chain --verify <prover_root>
 
 use nasrudin_derive::{
-    Chain, DerivationContext, DerivationEngine, DerivationStrategy,
-    emit_lean_file,
+    Chain, DerivationContext, DerivationEngine, DerivationStrategy, LeanEmitConfig, emit_lean_file,
     lean_verify::{LeanVerifier, LeanVerifyResult},
-    LeanEmitConfig,
 };
 
 fn main() {

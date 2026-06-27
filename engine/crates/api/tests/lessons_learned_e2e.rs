@@ -25,7 +25,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
-use physics_api::steerer::cycle::{run_one_cycle, CycleError, LlmCaller};
+use physics_api::steerer::cycle::{CycleError, LlmCaller, run_one_cycle};
 
 /// Stateful caller: returns a queue of canned responses in order,
 /// and captures every prompt it receives so the test can inspect
@@ -43,10 +43,7 @@ impl LlmCaller for ScriptedLlmCaller {
         _system: &str,
         user: &str,
     ) -> Result<(String, Option<i32>, Option<i32>), CycleError> {
-        self.captured_prompts
-            .lock()
-            .unwrap()
-            .push(user.to_string());
+        self.captured_prompts.lock().unwrap().push(user.to_string());
         let next = self
             .responses
             .lock()
@@ -102,8 +99,7 @@ async fn lessons_round_trip_across_two_cycles() {
 
     let cycle_1_lessons =
         "Boost@SR strength=0.5 → 1.5× worked. Diversify@QM strength=0.7 hurt yields.";
-    let cycle_2_lessons =
-        "(updated) SR boost still working — extending to 2.0× this cycle. \
+    let cycle_2_lessons = "(updated) SR boost still working — extending to 2.0× this cycle. \
          QM remains noisy; trying Exploit@QM instead. Compute scaling 1.5× sweet spot.";
 
     let mut queue = std::collections::VecDeque::new();
@@ -121,7 +117,7 @@ async fn lessons_round_trip_across_two_cycles() {
 
     // ── Cycle 1 ─────────────────────────────────────────────
     eprintln!("┌─ CYCLE 1 ──────────────────────────────");
-    run_one_cycle(&app.state(), &app.pg, &fake, "test-model")
+    run_one_cycle(&app.state(), &app.pg, &fake, "test-model", true)
         .await
         .expect("cycle 1 ran");
 
@@ -144,9 +140,7 @@ async fn lessons_round_trip_across_two_cycles() {
                 .map(|s| &s[..120.min(s.len())])
                 .unwrap_or("(not found)")
         );
-        eprintln!(
-            "│  Prompt seen by LLM:  previous_lessons_learned = \"\"  (cold boot, no LKG)"
-        );
+        eprintln!("│  Prompt seen by LLM:  previous_lessons_learned = \"\"  (cold boot, no LKG)");
     }
     eprintln!("│  LLM emitted lessons: {:?}", cycle_1_lessons);
 
@@ -162,12 +156,15 @@ async fn lessons_round_trip_across_two_cycles() {
         .and_then(|v| v.as_str())
         .unwrap_or("");
     assert_eq!(lessons_1, cycle_1_lessons, "cycle 1 lessons must persist");
-    eprintln!("│  PG row id={}: config_json.lessons_learned = {:?}", after_1.id, lessons_1);
+    eprintln!(
+        "│  PG row id={}: config_json.lessons_learned = {:?}",
+        after_1.id, lessons_1
+    );
     eprintln!("└──────────────────────────────────────────\n");
 
     // ── Cycle 2 ─────────────────────────────────────────────
     eprintln!("┌─ CYCLE 2 ──────────────────────────────");
-    run_one_cycle(&app.state(), &app.pg, &fake, "test-model")
+    run_one_cycle(&app.state(), &app.pg, &fake, "test-model", true)
         .await
         .expect("cycle 2 ran");
 
@@ -229,7 +226,10 @@ async fn lessons_round_trip_across_two_cycles() {
         !lessons_2.contains("Diversify@QM strength=0.7"),
         "cycle 2 lessons must not contain cycle 1's text (rolling, not appending)"
     );
-    eprintln!("│  PG row id={}: config_json.lessons_learned = {:?}", after_2.id, lessons_2);
+    eprintln!(
+        "│  PG row id={}: config_json.lessons_learned = {:?}",
+        after_2.id, lessons_2
+    );
     eprintln!("└──────────────────────────────────────────\n");
     eprintln!("✓ ROUND-TRIP VERIFIED:");
     eprintln!("  · Cycle 1 → PG (cold-boot lessons persisted)");
@@ -258,7 +258,7 @@ async fn cold_boot_surfaces_empty_lessons_then_first_emission_persists() {
         captured_prompts: Arc::clone(&captured),
     };
 
-    run_one_cycle(&app.state(), &app.pg, &fake, "test-model")
+    run_one_cycle(&app.state(), &app.pg, &fake, "test-model", true)
         .await
         .expect("cold-boot cycle ran");
 

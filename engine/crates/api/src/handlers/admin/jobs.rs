@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::admin::audit::{actions, perform_audited, RequestMeta};
+use crate::admin::audit::{RequestMeta, actions, perform_audited};
 use crate::admin::require_admin::RequireAdmin;
 use crate::state::AppState;
 
@@ -71,10 +71,9 @@ pub async fn cancel(
                      RETURNING user_id, state",
                     [id.into()],
                 );
-                let row =
-                    <Row as sea_orm::FromQueryResult>::find_by_statement(stmt)
-                        .one(txn)
-                        .await?;
+                let row = <Row as sea_orm::FromQueryResult>::find_by_statement(stmt)
+                    .one(txn)
+                    .await?;
                 let after = match row {
                     Some(r) => {
                         if refund {

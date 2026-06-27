@@ -16,12 +16,7 @@ use std::time::Duration;
 
 use nasrudin_pg::sea_orm::DatabaseConnection;
 
-pub fn spawn(
-    pg: DatabaseConnection,
-    http: reqwest::Client,
-    base_url: String,
-    secret: String,
-) {
+pub fn spawn(pg: DatabaseConnection, http: reqwest::Client, base_url: String, secret: String) {
     if secret.is_empty() {
         tracing::info!("refund reconciler disabled (STRIPE_SECRET_KEY unset)");
         return;
@@ -80,7 +75,10 @@ pub async fn tick_once(
         match matched {
             Some(m) => {
                 let stripe_id = m.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-                let status = m.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+                let status = m
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("pending");
                 if status == "succeeded" {
                     let _ = nasrudin_pg::query::refund_records::mark_succeeded(
                         pg, record.id, stripe_id,

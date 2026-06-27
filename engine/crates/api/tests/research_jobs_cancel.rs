@@ -52,7 +52,10 @@ fn gen_kp() -> Kp {
     let mut rng = rand_08::thread_rng();
     let pk = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
     let priv_pem = pk.to_pkcs1_pem(LineEnding::LF).unwrap().to_string();
-    let pub_pem = pk.to_public_key().to_public_key_pem(LineEnding::LF).unwrap();
+    let pub_pem = pk
+        .to_public_key()
+        .to_public_key_pem(LineEnding::LF)
+        .unwrap();
     Kp {
         enc: EncodingKey::from_rsa_pem(priv_pem.as_bytes()).unwrap(),
         dec: DecodingKey::from_rsa_pem(pub_pem.as_bytes()).unwrap(),
@@ -60,7 +63,10 @@ fn gen_kp() -> Kp {
 }
 
 fn now() -> usize {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize
 }
 
 fn mint(uid: &str, kp: &Kp) -> String {
@@ -224,7 +230,9 @@ async fn force_verified(app: &test_app::TestApp, job_id: &str, verified: i32) {
 
 #[tokio::test]
 async fn cancel_zero_consumed_full_refund() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-cancel-full", 5).await;
     let job = submit_job(&app, &cookie, 5, false).await;
     // After submit: user has 0 credits, job has quota=480, consumed=0.
@@ -247,7 +255,9 @@ async fn cancel_zero_consumed_full_refund() {
 
 #[tokio::test]
 async fn cancel_partial_consumed_proportional_refund() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-cancel-partial", 5).await;
     let job = submit_job(&app, &cookie, 5, false).await;
     // 5 credits → quota 480. Force 192 consumed (40%).
@@ -270,7 +280,9 @@ async fn cancel_partial_consumed_proportional_refund() {
 
 #[tokio::test]
 async fn cancel_with_verified_no_refund() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-cancel-verified", 5).await;
     let job = submit_job(&app, &cookie, 5, false).await;
     force_verified(&app, &job, 1).await;
@@ -292,7 +304,9 @@ async fn cancel_with_verified_no_refund() {
 
 #[tokio::test]
 async fn cancel_already_terminal_returns_409() {
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-cancel-409", 5).await;
     let job = submit_job(&app, &cookie, 1, false).await;
 
@@ -320,7 +334,9 @@ async fn cancel_already_terminal_returns_409() {
 async fn cancel_double_call_refunds_exactly_once() {
     // Idempotency at HTTP level: even if two concurrent requests
     // arrive, only one transitions the row and only one refunds.
-    let Some((app, kp)) = build_app().await else { return };
+    let Some((app, kp)) = build_app().await else {
+        return;
+    };
     let cookie = signed_in_with_credits(&app, &kp, "fb-cancel-double", 5).await;
     let job = submit_job(&app, &cookie, 3, false).await;
     // user should now have 2 credits.

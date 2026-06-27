@@ -16,11 +16,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(Users::Table)
-                    .add_column_if_not_exists(
-                        ColumnDef::new(Users::CountryCode)
-                            .char_len(2)
-                            .null(),
-                    )
+                    .add_column_if_not_exists(ColumnDef::new(Users::CountryCode).char_len(2).null())
                     .to_owned(),
             )
             .await

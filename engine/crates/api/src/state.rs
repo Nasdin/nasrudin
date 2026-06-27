@@ -94,7 +94,6 @@ pub struct AppState {
     pub ga_status: Arc<Mutex<GaStatusSnapshot>>,
 
     // Phase 9 additions ---------------------------------------------------
-
     /// Lake builder pool (verifies submitted Lean against the trusted
     /// `prover/` template). Shared with the reverify queue and the future
     /// `/api/submit` ingest path.
@@ -141,8 +140,7 @@ pub struct AppState {
     /// callbacks. Receivers: per-job `/api/conjecture/{id}/sse`
     /// subscribers, filtered by `job_id`. Persisted twin lives in
     /// `conjecture_events` for replay.
-    pub conjecture_event_tx:
-        tokio::sync::broadcast::Sender<crate::conjecture::ConjectureEvent>,
+    pub conjecture_event_tx: tokio::sync::broadcast::Sender<crate::conjecture::ConjectureEvent>,
     /// Lazy lake-build promotion (P-Task 2). Hot path is chain-replay
     /// primary; this drain promotes ChainVerified theorems to
     /// LakeVerified on consumption (download, seed-inclusion, manual
@@ -160,14 +158,8 @@ pub struct AppState {
     /// reflected immediately. With 4 workers polling /api/seed every
     /// chunk boundary (~60s), this saves ~13MB/min of redundant JSON
     /// serialisation work.
-    pub seed_cache: Arc<
-        Mutex<
-            std::collections::HashMap<
-                SeedCacheKey,
-                (std::time::Instant, Arc<String>),
-            >,
-        >,
-    >,
+    pub seed_cache:
+        Arc<Mutex<std::collections::HashMap<SeedCacheKey, (std::time::Instant, Arc<String>)>>>,
     /// Latest LLM-driven cluster steering snapshot. Initialised at
     /// boot to a `default_config()` snapshot; mutated atomically by
     /// the steerer task at every cycle. Read by `/api/steering` and
@@ -194,12 +186,8 @@ pub struct AppState {
     pub capacity: Arc<crate::jobs::capacity::CapacityTracker>,
     /// Per-job SSE broadcast channels for paid Researcher progress.
     /// Lazily inserted on first subscribe / first emit.
-    pub job_events: Arc<
-        dashmap::DashMap<
-            uuid::Uuid,
-            tokio::sync::broadcast::Sender<crate::jobs::JobEvent>,
-        >,
-    >,
+    pub job_events:
+        Arc<dashmap::DashMap<uuid::Uuid, tokio::sync::broadcast::Sender<crate::jobs::JobEvent>>>,
     /// 60-second cache backing `GET /api/stats/landing`.
     pub landing_stats: Arc<crate::handlers::stats::LandingStatsCache>,
     /// 30-second cache backing `GET /api/workers` (public list).
@@ -226,8 +214,7 @@ pub struct AppState {
     /// Broadcast channel for cache invalidation. Admin handlers post
     /// `CacheInvalidation::{ApiKey,User,All}` after committing a trust
     /// mutation; a single tokio task subscribes and purges.
-    pub trust_invalidation_tx:
-        tokio::sync::broadcast::Sender<crate::trust::CacheInvalidation>,
+    pub trust_invalidation_tx: tokio::sync::broadcast::Sender<crate::trust::CacheInvalidation>,
     /// Default spot-check rate (`TRUSTED_SPOT_CHECK_RATE` env var).
     /// Used when neither the api_key nor the user has an override set.
     pub trusted_spot_check_rate: u32,
@@ -248,10 +235,8 @@ pub struct AppState {
     pub impersonation_signing_key: Option<Vec<u8>>,
     /// Per-run progress channel for bulk admin operations. Senders:
     /// the bulk runner task. Receivers: SSE handlers filtered by run_id.
-    pub bulk_run_progress_tx: tokio::sync::broadcast::Sender<(
-        uuid::Uuid,
-        crate::admin::bulk_runner::BulkProgress,
-    )>,
+    pub bulk_run_progress_tx:
+        tokio::sync::broadcast::Sender<(uuid::Uuid, crate::admin::bulk_runner::BulkProgress)>,
     /// Pre-built set of canonical hashes for every Eq-rooted PhysLean
     /// catalog entry. Built at boot from
     /// `physlean-extract/output/catalog.json` (path discovery mirrors
@@ -262,10 +247,10 @@ pub struct AppState {
     /// endpoint then degrades to returning all non-imported GA
     /// theorems.
     pub catalog_hashes: CatalogHashSet,
-    /// LLM-naming client (Kimi K2.6 via Gradient). `None` when
-    /// `GRADIENT_API_KEY` is unset — the post-verify hook and the
-    /// backfill admin endpoint both degrade to no-op + 503 in that
-    /// state instead of failing the ingest path.
+    /// LLM-naming client (Kimi K2.6 via Gradient). `None` unless
+    /// `LLM_NAMING_ENABLED=1` and `GRADIENT_API_KEY` is configured —
+    /// the post-verify hook and the backfill admin endpoint both
+    /// degrade to no-op + 503 in that state instead of failing ingest.
     pub naming_client: Option<Arc<crate::theorem_naming::NamingClient>>,
     /// Concurrency cap for LLM-naming calls. Default 3. Shared by the
     /// post-verify hook (one task per Verified flip) and the backfill

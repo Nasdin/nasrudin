@@ -3,7 +3,7 @@
 //! exclude the target itself + every theorem that transitively cites
 //! it (the set returned by `TheoremDb::forbidden_for_target`).
 
-use nasrudin_core::{axiom_id_from_name, Domain};
+use nasrudin_core::{Domain, axiom_id_from_name};
 use nasrudin_derive::AxiomStore;
 use nasrudin_ga::config::GaConfig;
 use nasrudin_ga::island::Island;

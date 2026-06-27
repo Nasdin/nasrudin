@@ -1,6 +1,6 @@
 use nasrudin_core::{BinOp, Dimension, Expr, PhysConst};
-use nasrudin_derive::dimension_checker::{check_equation_dimensions, sr_variable_dimensions};
 use nasrudin_derive::DerivationEngine;
+use nasrudin_derive::dimension_checker::{check_equation_dimensions, sr_variable_dimensions};
 
 #[test]
 fn test_derive_rest_energy_produces_result() {
@@ -68,7 +68,9 @@ fn test_derive_rest_energy_canonical_form() {
     let canonical = result.theorem.to_canonical();
     // Should contain: (= v:E (* v:m (^ c:SpeedOfLight n:2)))
     assert!(
-        canonical.contains("v:E") && canonical.contains("v:m") && canonical.contains("SpeedOfLight"),
+        canonical.contains("v:E")
+            && canonical.contains("v:m")
+            && canonical.contains("SpeedOfLight"),
         "canonical should represent E=mc²: {canonical}"
     );
 }

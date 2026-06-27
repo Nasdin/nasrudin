@@ -35,7 +35,7 @@ use crate::steerer::schema::ProposedTarget;
 use nasrudin_pg::sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -221,8 +221,7 @@ pub async fn ensure_platform_targets(pg: &DatabaseConnection) {
             .filter(conjecture_jobs::Column::Tier.eq("platform"))
             .filter(conjecture_jobs::Column::Hunch.eq(target.hunch))
             .filter(
-                conjecture_jobs::Column::State
-                    .is_in(["queued", "claimed", "running", "proved"]),
+                conjecture_jobs::Column::State.is_in(["queued", "claimed", "running", "proved"]),
             )
             .one(pg)
             .await;
@@ -453,7 +452,7 @@ pub async fn enqueue_proposed_targets(
 
 #[cfg(test)]
 mod tests {
-    use super::{check_proposed_target, platform_targets, ProposedTargetCheck};
+    use super::{ProposedTargetCheck, check_proposed_target, platform_targets};
     use crate::steerer::schema::ProposedTarget;
 
     /// Every platform target must parse as LaTeX (or the equivalent
@@ -539,10 +538,7 @@ mod tests {
         };
         match check_proposed_target(&t) {
             ProposedTargetCheck::Forbidden(label) => {
-                assert!(
-                    label.contains("emc"),
-                    "expected emc2 label, got {label}"
-                );
+                assert!(label.contains("emc"), "expected emc2 label, got {label}");
             }
             other => panic!("expected Forbidden, got {other:?}"),
         }
@@ -559,10 +555,7 @@ mod tests {
             rationale: "smuggling Planck-Einstein".into(),
         };
         assert!(
-            matches!(
-                check_proposed_target(&t),
-                ProposedTargetCheck::Forbidden(_)
-            ),
+            matches!(check_proposed_target(&t), ProposedTargetCheck::Forbidden(_)),
             "expected Forbidden, got {:?}",
             check_proposed_target(&t)
         );

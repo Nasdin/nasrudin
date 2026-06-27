@@ -3,7 +3,10 @@
 //! Full daemon: REST endpoints, SSE discovery stream, GA evolution thread,
 //! and Lean4 verification workers.
 
-use physics_api::{auth, handlers, rate_limit, state::{AppState, SharedAxiomStore}};
+use physics_api::{
+    auth, handlers, rate_limit,
+    state::{AppState, SharedAxiomStore},
+};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,8 +20,8 @@ use axum::{
 };
 use serde::Deserialize;
 use tower_governor::GovernorLayer;
-use tower_http::cors::CorsLayer;
 use tower_http::compression::CompressionLayer;
+use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -131,9 +134,8 @@ async fn main() -> anyhow::Result<()> {
         std::path::Path::new(&prover_root).join("../physlean-extract/output/math_corpus.json");
     const MATHLIB_MIN_ENTRIES: u64 = 10_000;
 
-    let corpus_db: Arc<dyn nasrudin_rocks::CorpusBackend> = Arc::new(
-        nasrudin_rocks::CorpusDb::on_existing_db(db.shared_db()),
-    );
+    let corpus_db: Arc<dyn nasrudin_rocks::CorpusBackend> =
+        Arc::new(nasrudin_rocks::CorpusDb::on_existing_db(db.shared_db()));
 
     // First-boot cold-tier hydration. Idempotent — running on an
     // already-hydrated DB is a no-op (we still bail loudly if the
@@ -148,10 +150,7 @@ async fn main() -> anyhow::Result<()> {
         let hydrate_path = math_corpus_path.clone();
         let hydrate_corpus = Arc::clone(&corpus_db);
         let hydrated = tokio::task::spawn_blocking(move || {
-            AxiomStore::hydrate_math_corpus_to_cold(
-                &*hydrate_corpus,
-                &hydrate_path,
-            )
+            AxiomStore::hydrate_math_corpus_to_cold(&*hydrate_corpus, &hydrate_path)
         })
         .await
         .map_err(|e| anyhow::anyhow!("hydration task join: {e}"))?;
@@ -216,8 +215,8 @@ async fn main() -> anyhow::Result<()> {
     // duplicate-key catch.
     let mut enqueued_for_pg = 0usize;
     let mut enqueue_failed = 0usize;
-    let on_imported = |theorem: &nasrudin_core::Theorem| {
-        match physlean_theorem_to_new_theorem(theorem) {
+    let on_imported =
+        |theorem: &nasrudin_core::Theorem| match physlean_theorem_to_new_theorem(theorem) {
             Ok(payload_bytes) => match db.enqueue_pg_insert(&theorem.id, &payload_bytes) {
                 Ok(()) => enqueued_for_pg += 1,
                 Err(e) => {
@@ -229,8 +228,7 @@ async fn main() -> anyhow::Result<()> {
                 enqueue_failed += 1;
                 tracing::debug!("pg_insert_queue payload build failed: {e}");
             }
-        }
-    };
+        };
 
     match nasrudin_derive::physlean_import::load_catalog_split_hooked(
         &catalog_path,
@@ -246,9 +244,7 @@ async fn main() -> anyhow::Result<()> {
             "load_catalog_split: routed catalog from {}",
             catalog_path.display(),
         ),
-        Err(e) => tracing::warn!(
-            "Failed to load catalog ({e}): continuing with upstream only"
-        ),
+        Err(e) => tracing::warn!("Failed to load catalog ({e}): continuing with upstream only"),
     }
     axiom_store.load_special_relativity_upstream();
     axiom_store.load_electromagnetism_upstream();
@@ -302,8 +298,7 @@ async fn main() -> anyhow::Result<()> {
             .map(std::path::PathBuf::from)
             .or_else(|| Some(catalog_path.clone()))
             .or_else(|| {
-                let local =
-                    std::path::PathBuf::from("physlean-extract/output/catalog.json");
+                let local = std::path::PathBuf::from("physlean-extract/output/catalog.json");
                 local.exists().then_some(local)
             });
         match resolved {
@@ -367,14 +362,14 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             match jwks_for_warm.warm().await {
                 Ok(_) => tracing::info!("firebase JWKs pre-warmed"),
-                Err(e) => tracing::warn!(error = %e, "firebase JWKs pre-warm failed; will lazy-fetch"),
+                Err(e) => {
+                    tracing::warn!(error = %e, "firebase JWKs pre-warm failed; will lazy-fetch")
+                }
             }
         });
         tracing::info!("Firebase Auth configured");
     } else {
-        tracing::info!(
-            "FIREBASE_PROJECT_ID unset — /api/auth/firebase-session returns 503"
-        );
+        tracing::info!("FIREBASE_PROJECT_ID unset — /api/auth/firebase-session returns 503");
     }
 
     // Cache layer (Phase A.5). Constructed unconditionally; per-flag
@@ -412,46 +407,46 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
-    let embed: Option<Arc<nasrudin_embed::EmbeddingIndex>> =
-        embed_path.as_ref().and_then(|p| {
-            if !p.exists() {
-                tracing::info!("embed: index not yet built at {p:?}; serving without");
-                return None;
+    let embed: Option<Arc<nasrudin_embed::EmbeddingIndex>> = embed_path.as_ref().and_then(|p| {
+        if !p.exists() {
+            tracing::info!("embed: index not yet built at {p:?}; serving without");
+            return None;
+        }
+        match nasrudin_embed::EmbeddingIndex::open(p) {
+            Ok(i) => Some(Arc::new(i)),
+            Err(e) => {
+                tracing::warn!("embed: open {p:?} failed: {e}");
+                None
             }
-            match nasrudin_embed::EmbeddingIndex::open(p) {
-                Ok(i) => Some(Arc::new(i)),
-                Err(e) => {
-                    tracing::warn!("embed: open {p:?} failed: {e}");
-                    None
-                }
-            }
-        });
+        }
+    });
 
     // Concept search: load the fastembed Embedder eagerly when the index
     // is open. ~1 s cold start; we'd rather pay it at boot than on the
     // first user request. NASRUDIN_SKIP_EMBED_DOWNLOAD=1 short-circuits
     // this for environments without the model cached (CI, etc.).
-    let embedder: Option<Arc<nasrudin_embed::Embedder>> = if embed.is_some()
-        && std::env::var("NASRUDIN_SKIP_EMBED_DOWNLOAD").is_err()
-    {
-        match nasrudin_embed::Embedder::new() {
-            Ok(e) => {
-                tracing::info!("embedder loaded (BGE-small-en-v1.5, ~150 MB resident)");
-                Some(Arc::new(e))
+    let embedder: Option<Arc<nasrudin_embed::Embedder>> =
+        if embed.is_some() && std::env::var("NASRUDIN_SKIP_EMBED_DOWNLOAD").is_err() {
+            match nasrudin_embed::Embedder::new() {
+                Ok(e) => {
+                    tracing::info!("embedder loaded (BGE-small-en-v1.5, ~150 MB resident)");
+                    Some(Arc::new(e))
+                }
+                Err(e) => {
+                    tracing::warn!("embedder init failed: {e}; concept search disabled");
+                    None
+                }
             }
-            Err(e) => {
-                tracing::warn!("embedder init failed: {e}; concept search disabled");
-                None
-            }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     if embed_enabled {
         if let Some(p) = embed_path.as_ref() {
-            let cron =
-                Arc::new(physics_api::embed_cron::EmbedCron::new(Arc::clone(&db), p.clone()));
+            let cron = Arc::new(physics_api::embed_cron::EmbedCron::new(
+                Arc::clone(&db),
+                p.clone(),
+            ));
             tokio::spawn(Arc::clone(&cron).run());
             tracing::info!("embed_cron spawned (out_path = {p:?})");
         }
@@ -528,8 +523,9 @@ async fn main() -> anyhow::Result<()> {
     // Phase 9: construct LakeBuilder + (optionally) ReverifyQueue before
     // AppState. The drain loop is only spawned when Postgres is configured,
     // because the queue's flip-verified path writes through to PG.
-    let prover_root_path: std::path::PathBuf =
-        std::env::var("PROVER_ROOT").unwrap_or_else(|_| "../prover".into()).into();
+    let prover_root_path: std::path::PathBuf = std::env::var("PROVER_ROOT")
+        .unwrap_or_else(|_| "../prover".into())
+        .into();
     let lake_workspace_root: std::path::PathBuf = std::env::var("LAKE_WORKSPACE_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
@@ -556,24 +552,39 @@ async fn main() -> anyhow::Result<()> {
     let (reverify_event_tx, _reverify_event_rx) =
         tokio::sync::broadcast::channel::<physics_api::reverify::DiscoveryEvent>(256);
 
-    let (conjecture_event_tx, _conjecture_event_rx) = tokio::sync::broadcast::channel::<
-        physics_api::conjecture::ConjectureEvent,
-    >(256);
+    let (conjecture_event_tx, _conjecture_event_rx) =
+        tokio::sync::broadcast::channel::<physics_api::conjecture::ConjectureEvent>(256);
 
+    let llm_naming_enabled = std::env::var("LLM_NAMING_ENABLED")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false);
     let naming_client: Option<Arc<physics_api::theorem_naming::NamingClient>> =
-        match physics_api::theorem_naming::NamingClient::from_env() {
-            Ok(c) => {
-                tracing::info!("LLM-naming client wired (Kimi K2.6)");
-                Some(Arc::new(c))
+        if llm_naming_enabled {
+            match physics_api::theorem_naming::NamingClient::from_env() {
+                Ok(c) => {
+                    tracing::info!("LLM-naming client wired (Kimi K2.6)");
+                    Some(Arc::new(c))
+                }
+                Err(e) => {
+                    tracing::info!(
+                        error = %e,
+                        "GRADIENT_API_KEY unset; LLM-naming disabled \
+                         (display_name + description columns stay NULL)"
+                    );
+                    None
+                }
             }
-            Err(e) => {
-                tracing::info!(
-                    error = %e,
-                    "GRADIENT_API_KEY unset; LLM-naming disabled \
-                     (display_name + description columns stay NULL)"
-                );
-                None
-            }
+        } else {
+            tracing::info!(
+                "LLM_NAMING_ENABLED unset/false; theorem naming LLM disabled \
+                 so Gradient spend is reserved for high-level steering"
+            );
+            None
         };
     let naming_semaphore = Arc::new(tokio::sync::Semaphore::new(
         std::env::var("NAMING_CONCURRENCY")
@@ -629,17 +640,13 @@ async fn main() -> anyhow::Result<()> {
     let initial_body = serde_json::to_vec(&initial_steering).unwrap_or_default();
     let initial_etag = xxhash_rust::xxh64::xxh64(&initial_body, 0);
     let initial_snapshot = physics_api::state::SteeringSnapshot {
-        config: serde_json::to_value(&initial_steering)
-            .unwrap_or(serde_json::Value::Null),
+        config: serde_json::to_value(&initial_steering).unwrap_or(serde_json::Value::Null),
         etag: initial_etag,
         started_at: chrono::Utc::now(),
     };
 
     // Trust-bypass plumbing (admin panel).
-    let trust_cache = physics_api::trust::TrustCache::new(
-        std::time::Duration::from_secs(30),
-        4096,
-    );
+    let trust_cache = physics_api::trust::TrustCache::new(std::time::Duration::from_secs(30), 4096);
     let (trust_invalidation_tx, _) =
         tokio::sync::broadcast::channel::<physics_api::trust::CacheInvalidation>(256);
     let trusted_spot_check_rate: u32 = std::env::var("TRUSTED_SPOT_CHECK_RATE")
@@ -666,9 +673,7 @@ async fn main() -> anyhow::Result<()> {
         conjecture_event_tx,
         lake_promotion,
         billing,
-        seed_cache: Arc::new(std::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
+        seed_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         steering: Arc::new(arc_swap::ArcSwap::from_pointee(initial_snapshot)),
         cluster_config: Arc::new(arc_swap::ArcSwap::from_pointee(
             physics_api::state::ClusterConfigSnapshot::default(),
@@ -683,10 +688,10 @@ async fn main() -> anyhow::Result<()> {
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
         workers_list_cache: Arc::new(physics_api::handlers::workers::WorkersListCache::new()),
-        contributors_list_cache: Arc::new(physics_api::handlers::contributors::ContributorsListCache::new()),
-        theorems_recent_cache: Arc::new(
-            physics_api::handlers::theorems::TheoremsRecentCache::new(),
+        contributors_list_cache: Arc::new(
+            physics_api::handlers::contributors::ContributorsListCache::new(),
         ),
+        theorems_recent_cache: Arc::new(physics_api::handlers::theorems::TheoremsRecentCache::new()),
         firebase_project_id,
         firebase_jwks,
         stripe_http: reqwest::Client::new(),
@@ -854,7 +859,12 @@ async fn main() -> anyhow::Result<()> {
     // `NASRUDIN_DISABLE_LAKE_PROMOTION=1` to skip both the drain and the
     // crawler so the worker gets uncontested compute. Off by default.
     let disable_lake_promotion = std::env::var("NASRUDIN_DISABLE_LAKE_PROMOTION")
-        .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
         .unwrap_or(false);
     if disable_lake_promotion {
         tracing::warn!(
@@ -883,8 +893,8 @@ async fn main() -> anyhow::Result<()> {
             use rand::RngExt as _;
             loop {
                 let jitter_ms: u64 = rand::rng().random_range(0..12_000);
-                let period =
-                    std::time::Duration::from_secs(54) + std::time::Duration::from_millis(jitter_ms);
+                let period = std::time::Duration::from_secs(54)
+                    + std::time::Duration::from_millis(jitter_ms);
                 tokio::time::sleep(period).await;
                 match physics_api::jobs::reaper::reap_dead_leases(&pg_for_reaper).await {
                     Ok(n) if n > 0 => {
@@ -910,8 +920,8 @@ async fn main() -> anyhow::Result<()> {
             use rand::RngExt as _;
             loop {
                 let jitter_ms: u64 = rand::rng().random_range(0..6_000);
-                let period =
-                    std::time::Duration::from_secs(27) + std::time::Duration::from_millis(jitter_ms);
+                let period = std::time::Duration::from_secs(27)
+                    + std::time::Duration::from_millis(jitter_ms);
                 tokio::time::sleep(period).await;
                 match physics_api::jobs::reaper::mark_stale_workers(&pg_for_worker_reaper).await {
                     Ok(n) if n > 0 => {
@@ -950,9 +960,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Compute-scaling bandit: 6 islands × 5 strength buckets ×
         // 5 multiplier choices = 150 rows. Idempotent.
-        if let Err(e) =
-            physics_api::steerer::directive_bandit::ensure_all_compute_arms(pg).await
-        {
+        if let Err(e) = physics_api::steerer::directive_bandit::ensure_all_compute_arms(pg).await {
             tracing::warn!(error=%e, "compute bandit ensure_all_compute_arms failed; \
                 test-time-compute scaling will fall back to baseline until next boot");
         } else {
@@ -962,9 +970,7 @@ async fn main() -> anyhow::Result<()> {
         // LinUCB contextual bandit sufficient-statistics rows: 24
         // rows (6 islands × 4 actions). Each row starts at A = λ·I,
         // b = 0. Math is pure CPU, runs inline in directive_feedback.
-        if let Err(e) =
-            physics_api::steerer::directive_bandit::ensure_all_linucb_rows(pg).await
-        {
+        if let Err(e) = physics_api::steerer::directive_bandit::ensure_all_linucb_rows(pg).await {
             tracing::warn!(error=%e, "LinUCB ensure_all_linucb_rows failed; \
                 contextual generalisation falls back to discrete UCB1 only");
         } else {
@@ -973,8 +979,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Compute-bandit LinUCB rows (6 islands).
         if let Err(e) =
-            physics_api::steerer::directive_bandit::ensure_all_compute_linucb_rows(pg)
-                .await
+            physics_api::steerer::directive_bandit::ensure_all_compute_linucb_rows(pg).await
         {
             tracing::warn!(error=%e, "compute LinUCB ensure_all_compute_linucb_rows \
                 failed; compute scaling falls back to discrete UCB1");
@@ -1054,8 +1059,8 @@ async fn main() -> anyhow::Result<()> {
         if !steerer_disabled {
             match nasrudin_llm::GradientProvider::from_env() {
                 Ok(provider) => {
-                    let model_id = std::env::var("STEERER_MODEL")
-                        .unwrap_or_else(|_| "kimi-k2.6".into());
+                    let model_id =
+                        std::env::var("STEERER_MODEL").unwrap_or_else(|_| "kimi-k2.6".into());
                     match provider.list_models().await {
                         Ok(models) => {
                             if !models.iter().any(|m| m == &model_id) {
@@ -1073,36 +1078,91 @@ async fn main() -> anyhow::Result<()> {
                             "Gradient /v1/models probe failed; steerer will run anyway"
                         ),
                     }
+                    let provider = provider.with_max_attempts(1);
                     let cadence_s: u64 = std::env::var("STEERER_CADENCE_SECONDS")
                         .ok()
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(600);
+                    let llm_interval_s: u64 = std::env::var("LLM_STEER_INTERVAL_SECONDS")
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(7_200);
+                    let llm_max_total_tokens: u32 = std::env::var("LLM_STEER_MAX_TOTAL_TOKENS")
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(10_000);
+                    let llm_max_completion_tokens: u32 =
+                        std::env::var("LLM_STEER_MAX_COMPLETION_TOKENS")
+                            .ok()
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(2_048);
                     let pg_for_steerer = pg.clone();
                     let state_for_steerer = Arc::clone(&state);
                     let caller = physics_api::steerer::cycle::GradientCaller::new(
                         provider,
                         model_id.clone(),
+                        llm_max_completion_tokens,
+                        llm_max_total_tokens,
                     );
                     tokio::spawn(async move {
-                        let mut tick = tokio::time::interval(
-                            std::time::Duration::from_secs(cadence_s),
-                        );
+                        let mut tick =
+                            tokio::time::interval(std::time::Duration::from_secs(cadence_s));
                         // Skip the immediate first tick — give the
                         // rest of the daemon a moment to settle and
                         // workers a chance to register their slots.
                         tick.tick().await;
+                        let steerer_started_at = chrono::Utc::now();
+                        let mut last_local_llm_attempt = steerer_started_at;
                         loop {
                             tick.tick().await;
-                            match physics_api::steerer::cycle::run_one_cycle(
+                            let now = chrono::Utc::now();
+                            let local_interval_elapsed = now
+                                .signed_duration_since(last_local_llm_attempt)
+                                .num_seconds()
+                                >= llm_interval_s as i64;
+                            let persisted_interval_elapsed =
+                                match nasrudin_pg::query::cluster_steering::most_recent_strategy_refresh(
+                                    &pg_for_steerer,
+                                )
+                                .await
+                                {
+                                    Ok(Some(row)) => now
+                                        .signed_duration_since(row.started_at.with_timezone(&chrono::Utc))
+                                        .num_seconds()
+                                        >= llm_interval_s as i64,
+                                    Ok(None) => now
+                                        .signed_duration_since(steerer_started_at)
+                                        .num_seconds()
+                                        >= llm_interval_s as i64,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            "failed to load last LLM strategy refresh; using cached strategy"
+                                        );
+                                        false
+                                    }
+                                };
+                            let should_refresh_strategy =
+                                local_interval_elapsed && persisted_interval_elapsed;
+                            if should_refresh_strategy {
+                                last_local_llm_attempt = now;
+                            }
+                            match physics_api::steerer::cycle::run_one_cycle_with_refresh_interval(
                                 &state_for_steerer,
                                 &pg_for_steerer,
                                 &caller,
                                 &model_id,
+                                should_refresh_strategy,
+                                llm_interval_s as i64,
                             )
                             .await
                             {
                                 Ok(id) => {
-                                    tracing::info!(cycle_id = %id, "steerer cycle persisted")
+                                    tracing::info!(
+                                        cycle_id = %id,
+                                        should_refresh_strategy,
+                                        "steerer cycle persisted"
+                                    )
                                 }
                                 Err(e) => {
                                     tracing::error!(error=%e, "steerer cycle failed")
@@ -1110,7 +1170,13 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                     });
-                    tracing::info!(cadence_s, "cluster steerer spawned");
+                    tracing::info!(
+                        cadence_s,
+                        llm_interval_s,
+                        llm_max_total_tokens,
+                        llm_max_completion_tokens,
+                        "cluster steerer spawned"
+                    );
                 }
                 Err(e) => {
                     tracing::info!(
@@ -1163,10 +1229,7 @@ async fn main() -> anyhow::Result<()> {
         // M3: novel-discovery feed. Returns GA-verified theorems whose
         // canonical_hash is NOT in the boot-loaded PhysLean catalog
         // hash set. See handlers/discoveries.rs for the filter spec.
-        .route(
-            "/api/discoveries/novel",
-            get(handlers::discoveries::novel),
-        )
+        .route("/api/discoveries/novel", get(handlers::discoveries::novel))
         .route(
             "/api/theorems/{hash}/lean",
             get(handlers::theorems::lean_download),
@@ -1261,10 +1324,7 @@ async fn main() -> anyhow::Result<()> {
             post(handlers::admin::steering::steering_force),
         )
         .route("/api/admin/users", get(handlers::admin::users::list))
-        .route(
-            "/api/admin/users/{id}",
-            get(handlers::admin::users::detail),
-        )
+        .route("/api/admin/users/{id}", get(handlers::admin::users::detail))
         .route(
             "/api/admin/users/{id}/admin",
             post(handlers::admin::users::set_admin),
@@ -1309,10 +1369,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/admin/impersonate/end",
             post(handlers::admin::impersonate::end_impersonation),
         )
-        .route(
-            "/api/admin/users/bulk",
-            post(handlers::admin::bulk::start),
-        )
+        .route("/api/admin/users/bulk", post(handlers::admin::bulk::start))
         .route(
             "/api/admin/users/bulk/{run_id}/stream",
             get(handlers::admin::bulk::stream),
@@ -1353,7 +1410,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/workers", get(handlers::workers::list))
         // Public contributors leaderboard — users ranked by theorems
         .route("/api/contributors", get(handlers::contributors::list))
-        .route("/api/contributors/{id}", get(handlers::contributors::get_user_workers))
+        .route(
+            "/api/contributors/{id}",
+            get(handlers::contributors::get_user_workers),
+        )
         // Public profile + sponsorship summary. No auth — these are
         // intentionally world-readable so contributors can link to
         // their profile pages from anywhere. Sensitive fields
@@ -1418,9 +1478,8 @@ async fn main() -> anyhow::Result<()> {
         // platform_user router and is allowed during impersonation — the
         // AuthUser substitution makes those reads naturally scoped to the
         // target.
-        let block_imp = || {
-            axum::middleware::from_fn(physics_api::impersonation::block_during_impersonation)
-        };
+        let block_imp =
+            || axum::middleware::from_fn(physics_api::impersonation::block_during_impersonation);
         let platform_user_sensitive = Router::new()
             .route(
                 "/api/api-keys",
@@ -1465,18 +1524,12 @@ async fn main() -> anyhow::Result<()> {
                 delete(handlers::llm_keys::revoke),
             )
             .route("/api/conjecture", post(handlers::conjecture::create))
-            .route(
-                "/api/conjecture/{id}",
-                get(handlers::conjecture::get_one),
-            )
+            .route("/api/conjecture/{id}", get(handlers::conjecture::get_one))
             .route(
                 "/api/conjecture/{id}/start",
                 post(handlers::conjecture::start),
             )
-            .route(
-                "/api/conjecture/{id}/sse",
-                get(handlers::conjecture::sse),
-            )
+            .route("/api/conjecture/{id}/sse", get(handlers::conjecture::sse))
             .route(
                 "/api/conjecture/{id}/paper",
                 post(handlers::conjecture::start_paper_draft),
@@ -1488,8 +1541,7 @@ async fn main() -> anyhow::Result<()> {
             .route("/api/me/conjectures", get(handlers::conjecture::list_mine))
             .route(
                 "/api/me/library/theorems",
-                post(handlers::me_library::save_theorem)
-                    .get(handlers::me_library::list_saved),
+                post(handlers::me_library::save_theorem).get(handlers::me_library::list_saved),
             )
             .route(
                 "/api/me/library/theorems/{id}",
@@ -1498,8 +1550,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .route(
                 "/api/me/library/folders",
-                post(handlers::me_library::create_folder)
-                    .get(handlers::me_library::list_folders),
+                post(handlers::me_library::create_folder).get(handlers::me_library::list_folders),
             )
             .route(
                 "/api/me/library/folders/{id}",
@@ -1508,8 +1559,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .route(
                 "/api/research/jobs",
-                post(handlers::research_jobs::create)
-                    .get(handlers::research_jobs::list),
+                post(handlers::research_jobs::create).get(handlers::research_jobs::list),
             )
             .route(
                 "/api/research/steering_options",
@@ -1547,10 +1597,7 @@ async fn main() -> anyhow::Result<()> {
                 "/api/workers/heartbeat",
                 axum::routing::post(handlers::workers::heartbeat),
             )
-            .route(
-                "/api/ingest",
-                axum::routing::post(handlers::ingest::ingest),
-            )
+            .route("/api/ingest", axum::routing::post(handlers::ingest::ingest))
             // Per-chunk per-cluster summaries pushed by workers; the
             // steerer reads recent rows for both UCB1 reward and the
             // LLM prompt's cluster_summaries field.
@@ -1618,8 +1665,8 @@ async fn main() -> anyhow::Result<()> {
         // Lives outside the auth_layer so it doesn't get a 401 from missing
         // session, and outside platform_user's IP rate-limit so a busy
         // webhook delivery isn't throttled.
-        let billing_webhook = Router::new()
-            .route("/api/billing/webhook", post(handlers::billing::webhook));
+        let billing_webhook =
+            Router::new().route("/api/billing/webhook", post(handlers::billing::webhook));
 
         // Impersonation layer: looks for X-Impersonate-Token, validates
         // it, and on a hit injects the target user's `AuthUser` into
@@ -1725,8 +1772,7 @@ async fn main() -> anyhow::Result<()> {
     let tcp_app = app.clone();
     let uds_app = app.layer(axum::middleware::from_fn(
         |mut req: axum::extract::Request, next: axum::middleware::Next| async move {
-            req.extensions_mut()
-                .insert(physics_api::trust::LocalSocket);
+            req.extensions_mut().insert(physics_api::trust::LocalSocket);
             next.run(req).await
         },
     ));
@@ -1947,10 +1993,34 @@ async fn stats(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
         Some(pg) => {
             let verified = nasrudin_pg::query::theorems::count_verified(pg).await.ok();
             let pending = nasrudin_pg::query::theorems::count_pending(pg).await.ok();
+            let rejected = nasrudin_pg::query::theorems::count_rejected(pg).await.ok();
+            // Postgres is the source of truth that every user-facing view
+            // (browse, featured, search) reads. The embedded RocksDB store
+            // can drift ahead of it — e.g. admin/manual status changes that
+            // landed in PG but not the engine store — so report the PG
+            // corpus-status counts as the headline, keeping /api/stats
+            // consistent with /browse instead of a stale 1840-vs-1635 split.
+            // The engine-store figure is preserved for drift diagnostics.
+            if let Some(map) = out.as_object_mut() {
+                map.insert(
+                    "engine_store_verified".to_string(),
+                    serde_json::json!(stats.total_verified),
+                );
+                if let Some(v) = verified {
+                    map.insert("total_verified".to_string(), serde_json::json!(v));
+                }
+                if let Some(p) = pending {
+                    map.insert("total_pending".to_string(), serde_json::json!(p));
+                }
+                if let Some(r) = rejected {
+                    map.insert("total_rejected".to_string(), serde_json::json!(r));
+                }
+            }
             serde_json::json!({
                 "available": true,
                 "verified": verified,
                 "pending": pending,
+                "rejected": rejected,
                 "queue_depth": queue_depth,
                 "drift": verified.map(|v| stats.total_verified.saturating_sub(v)),
             })
@@ -2010,7 +2080,11 @@ fn physlean_theorem_to_new_theorem(theorem: &Theorem) -> anyhow::Result<Vec<u8>>
         canonical_hash,
         canonical_ac_hash: None,
         canonical_statement: theorem.canonical.clone(),
-        latex: if theorem.latex.is_empty() { None } else { Some(theorem.latex.clone()) },
+        latex: if theorem.latex.is_empty() {
+            None
+        } else {
+            Some(theorem.latex.clone())
+        },
         lean_source: String::new(),
         domain: format!("{:?}", theorem.domain),
         axioms_used: Vec::new(),
@@ -2028,15 +2102,17 @@ fn physlean_theorem_to_new_theorem(theorem: &Theorem) -> anyhow::Result<Vec<u8>>
         fitness_axiom_efficiency: None,
         fitness_nasrudin_relevance: None,
         fitness_depth_score: None,
-        dimension: theorem.dimension.map(|d| vec![
-            d.length as i32,
-            d.mass as i32,
-            d.time as i32,
-            d.current as i32,
-            d.temperature as i32,
-            d.amount as i32,
-            d.luminosity as i32,
-        ]),
+        dimension: theorem.dimension.map(|d| {
+            vec![
+                d.length as i32,
+                d.mass as i32,
+                d.time as i32,
+                d.current as i32,
+                d.temperature as i32,
+                d.amount as i32,
+                d.luminosity as i32,
+            ]
+        }),
         engine_git_sha: "physlean".to_string(),
         lean_version: "physlean-import".to_string(),
         contributor_id: "physlean".to_string(),
@@ -2067,7 +2143,11 @@ fn inproc_theorem_to_new_theorem(theorem: &Theorem) -> anyhow::Result<Vec<u8>> {
         canonical_hash,
         canonical_ac_hash: None,
         canonical_statement: theorem.canonical.clone(),
-        latex: if theorem.latex.is_empty() { None } else { Some(theorem.latex.clone()) },
+        latex: if theorem.latex.is_empty() {
+            None
+        } else {
+            Some(theorem.latex.clone())
+        },
         lean_source: String::new(),
         domain: format!("{:?}", theorem.domain),
         axioms_used: Vec::new(),
@@ -2085,15 +2165,17 @@ fn inproc_theorem_to_new_theorem(theorem: &Theorem) -> anyhow::Result<Vec<u8>> {
         fitness_axiom_efficiency: None,
         fitness_nasrudin_relevance: None,
         fitness_depth_score: None,
-        dimension: theorem.dimension.map(|d| vec![
-            d.length as i32,
-            d.mass as i32,
-            d.time as i32,
-            d.current as i32,
-            d.temperature as i32,
-            d.amount as i32,
-            d.luminosity as i32,
-        ]),
+        dimension: theorem.dimension.map(|d| {
+            vec![
+                d.length as i32,
+                d.mass as i32,
+                d.time as i32,
+                d.current as i32,
+                d.temperature as i32,
+                d.amount as i32,
+                d.luminosity as i32,
+            ]
+        }),
         engine_git_sha: env!("CARGO_PKG_VERSION").to_string(),
         lean_version: "lake_build".to_string(),
         contributor_id: "inproc-ga".to_string(),
@@ -2197,7 +2279,10 @@ async fn list_domains(State(state): State<Arc<AppState>>) -> Json<serde_json::Va
                 let map: serde_json::Map<String, serde_json::Value> = rows
                     .into_iter()
                     .map(|(domain, cnt)| {
-                        (domain, serde_json::Value::Number(serde_json::Number::from(cnt)))
+                        (
+                            domain,
+                            serde_json::Value::Number(serde_json::Number::from(cnt)),
+                        )
                     })
                     .collect();
                 return Json(serde_json::Value::Object(map));
@@ -2282,4 +2367,3 @@ async fn list_axioms(
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
-

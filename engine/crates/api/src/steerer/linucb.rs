@@ -148,13 +148,7 @@ pub fn solve_quadratic_form(a_flat: &[f64], x: &[f64; D]) -> Option<f64> {
 /// LinUCB score for a candidate (strength, choice): predicted
 /// reward + α · sqrt(uncertainty). Returns None when A is singular
 /// (caller should fall through to UCB1).
-pub fn score(
-    a_flat: &[f64],
-    b: &[f64],
-    strength: f64,
-    choice: u8,
-    max_choice: u8,
-) -> Option<f64> {
+pub fn score(a_flat: &[f64], b: &[f64], strength: f64, choice: u8, max_choice: u8) -> Option<f64> {
     let x = features(strength, choice, max_choice);
     let theta = solve_a_b(a_flat, b)?;
     let mut mean = 0.0f64;

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use nasrudin_pg::sea_orm::DatabaseConnection;
 
-use crate::admin::audit::{actions, SYSTEM_ACTOR_ID};
+use crate::admin::audit::{SYSTEM_ACTOR_ID, actions};
 
 pub fn spawn(pg: DatabaseConnection) {
     tokio::spawn(async move {

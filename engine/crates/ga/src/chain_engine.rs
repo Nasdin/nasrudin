@@ -15,8 +15,7 @@
 //! verified candidate.
 
 use crate::chain_ga::{
-    ChainIndividual, ChainVerifyOutcome, splice_chains,
-    verify_chain_cached_full,
+    ChainIndividual, ChainVerifyOutcome, splice_chains, verify_chain_cached_full,
 };
 use crate::target::TargetSpec;
 use nasrudin_core::Expr;
@@ -51,6 +50,16 @@ struct PreLakeFilters {
     /// appear somewhere in the candidate's final expression. Reject
     /// rate ~5–15 %, cost ~1 µs.
     require_target_symbols: bool,
+    /// Filter 5: reject candidates whose final expression contains
+    /// formalization-internal "plumbing" symbols — PhysLean / Mathlib
+    /// tensor-category scaffolding like `complexLorentzTensor.leftMetric`,
+    /// `Lorentz.contrCoUnit`, `TensorSpecies.Tensor.permT`, `DFunLike.coe`.
+    /// These are dotted qualified names; real physics atoms (`E`, `m`,
+    /// `c`, `p0`, `Msq`) never contain a `.`. Without this gate the GA
+    /// farms trivially-true restatements (square / scale-by-c² both sides
+    /// of an opaque catalog axiom), which Lean rubber-stamps but which
+    /// carry zero physical meaning. Target-independent. Default on.
+    reject_plumbing_symbols: bool,
 }
 
 impl PreLakeFilters {
@@ -58,10 +67,12 @@ impl PreLakeFilters {
         static CACHED: OnceLock<PreLakeFilters> = OnceLock::new();
         CACHED.get_or_init(|| {
             let enabled = std::env::var("NASRUDIN_PRE_LAKE_FILTERS")
-                .map(|v| !matches!(
-                    v.trim().to_lowercase().as_str(),
-                    "0" | "false" | "no" | "off"
-                ))
+                .map(|v| {
+                    !matches!(
+                        v.trim().to_lowercase().as_str(),
+                        "0" | "false" | "no" | "off"
+                    )
+                })
                 .unwrap_or(true);
             let symbol_overlap_min = std::env::var("NASRUDIN_PRE_LAKE_SYMBOL_OVERLAP_MIN")
                 .ok()
@@ -76,14 +87,29 @@ impl PreLakeFilters {
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(3);
             let require_target_symbols = std::env::var("NASRUDIN_PRE_LAKE_REQUIRE_SYMBOLS")
-                .map(|v| !matches!(
-                    v.trim().to_lowercase().as_str(),
-                    "0" | "false" | "no" | "off"
-                ))
+                .map(|v| {
+                    !matches!(
+                        v.trim().to_lowercase().as_str(),
+                        "0" | "false" | "no" | "off"
+                    )
+                })
+                .unwrap_or(true);
+            let reject_plumbing_symbols = std::env::var("NASRUDIN_PRE_LAKE_REJECT_PLUMBING")
+                .map(|v| {
+                    !matches!(
+                        v.trim().to_lowercase().as_str(),
+                        "0" | "false" | "no" | "off"
+                    )
+                })
                 .unwrap_or(true);
             tracing::info!(
-                enabled, symbol_overlap_min, ladder_min, chain_min_steps,
-                require_target_symbols, "pre-lake filter knobs"
+                enabled,
+                symbol_overlap_min,
+                ladder_min,
+                chain_min_steps,
+                require_target_symbols,
+                reject_plumbing_symbols,
+                "pre-lake filter knobs"
             );
             PreLakeFilters {
                 enabled,
@@ -91,6 +117,7 @@ impl PreLakeFilters {
                 ladder_min,
                 chain_min_steps,
                 require_target_symbols,
+                reject_plumbing_symbols,
             }
         })
     }
@@ -110,13 +137,18 @@ impl PreLakeFilters {
         if chain.0.len() < self.chain_min_steps {
             return Some("chain_too_short");
         }
+        // Filter 5 — plumbing reject. Target-independent: it guards the
+        // explorer path (no target) which otherwise only had the
+        // chain-length gate, letting trivially-true restatements of
+        // opaque tensor-category catalog axioms flood the corpus.
+        if self.reject_plumbing_symbols && contains_plumbing_symbol(final_expr) {
+            return Some("plumbing_symbol");
+        }
         let Some(spec) = target else {
             return None;
         };
         // Filter 1 — symbol-overlap floor.
-        if crate::target::symbol_overlap(final_expr, &spec.final_target)
-            < self.symbol_overlap_min
-        {
+        if crate::target::symbol_overlap(final_expr, &spec.final_target) < self.symbol_overlap_min {
             return Some("symbol_overlap_below_floor");
         }
         // Filter 2 — ladder-score floor.
@@ -137,6 +169,49 @@ impl PreLakeFilters {
             }
         }
         None
+    }
+}
+
+/// Returns `true` if any `Var` symbol in `expr` is a formalization-internal
+/// "plumbing" name rather than a physical quantity. The signal is a dotted
+/// qualified path: PhysLean / Mathlib scaffolding is namespaced
+/// (`complexLorentzTensor.leftMetric`, `Lorentz.contrCoUnit`,
+/// `TensorSpecies.Tensor.permT`, `DFunLike.coe`, `Matrix.of`,
+/// `Action.Hom.mk`), whereas the physics atoms this engine reasons about
+/// (`E`, `m`, `c`, `p0`, `Msq`, `v`, `gamma`) are bare identifiers. Const
+/// names (`SpeedOfLight`, …) are curated and never dotted, so we only need
+/// to inspect `Var`s.
+pub fn contains_plumbing_symbol(expr: &Expr) -> bool {
+    use nasrudin_core::Expr as E;
+    match expr {
+        E::Var(name) => name.contains('.'),
+        E::Const(_) | E::Lit(_, _) => false,
+        E::BinOp(_, l, r) => contains_plumbing_symbol(l) || contains_plumbing_symbol(r),
+        E::UnOp(_, e) | E::Deriv(e, _) | E::PartialDeriv(e, _) => contains_plumbing_symbol(e),
+        E::App(f, x) => contains_plumbing_symbol(f) || contains_plumbing_symbol(x),
+        E::Lam(_, t, b) | E::Pi(_, t, b) | E::Let(_, t, b) => {
+            contains_plumbing_symbol(t) || contains_plumbing_symbol(b)
+        }
+        E::Integral {
+            body, lower, upper, ..
+        } => {
+            contains_plumbing_symbol(body)
+                || lower.as_ref().is_some_and(|l| contains_plumbing_symbol(l))
+                || upper.as_ref().is_some_and(|u| contains_plumbing_symbol(u))
+        }
+        E::Sum {
+            body, lower, upper, ..
+        }
+        | E::Prod {
+            body, lower, upper, ..
+        } => {
+            contains_plumbing_symbol(body)
+                || contains_plumbing_symbol(lower)
+                || contains_plumbing_symbol(upper)
+        }
+        E::Limit {
+            body, approaching, ..
+        } => contains_plumbing_symbol(body) || contains_plumbing_symbol(approaching),
     }
 }
 
@@ -214,9 +289,8 @@ pub struct DiscoveryConfig {
     /// Variable→dimension table used by the hard-reject gate. Domain-aware:
     /// the worker builds this from the active domain at boot. Empty map
     /// is fine for pure-math runs where no variable has a known dimension.
-    pub dimension_var_dims: std::sync::Arc<
-        std::collections::HashMap<String, nasrudin_core::Dimension>,
-    >,
+    pub dimension_var_dims:
+        std::sync::Arc<std::collections::HashMap<String, nasrudin_core::Dimension>>,
     /// Layer 1: persistent Lean elaborator. When `Some`, the verify path
     /// routes through the long-lived `lean --run nasrudin_server.lean`
     /// subprocess (~100–500ms per candidate against pre-loaded Mathlib)
@@ -311,6 +385,92 @@ pub struct ClusterMultiplier {
     pub diversify_fraction: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct QdCell {
+    chain_len_bin: u8,
+    axiom_count_bin: u8,
+    target_progress_bin: u8,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MutationOperatorStats {
+    pub pulls: [u32; 6],
+    pub total_reward: [f64; 6],
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct QdArchiveStats {
+    pub cells: Vec<QdArchiveCellStat>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QdArchiveCellStat {
+    pub chain_len_bin: u8,
+    pub axiom_count_bin: u8,
+    pub target_progress_bin: u8,
+    pub best_score: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct MutationOperatorBandit {
+    pulls: [u32; 6],
+    total_reward: [f64; 6],
+}
+
+impl MutationOperatorBandit {
+    fn from_stats(stats: MutationOperatorStats) -> Self {
+        Self {
+            pulls: stats.pulls,
+            total_reward: stats.total_reward,
+        }
+    }
+
+    fn stats(&self) -> MutationOperatorStats {
+        MutationOperatorStats {
+            pulls: self.pulls,
+            total_reward: self.total_reward,
+        }
+    }
+
+    fn weights(
+        &self,
+        priors: Option<&std::collections::HashMap<String, f32>>,
+        suffix_bias: f32,
+    ) -> [f32; 6] {
+        let mut weights = crate::chain_ga::resolve_weights_for_test(priors, suffix_bias);
+        let total_pulls: u32 = self.pulls.iter().sum();
+        if total_pulls == 0 {
+            return weights;
+        }
+        let ln_n = (total_pulls as f64).ln().max(1.0);
+        for (idx, weight) in weights.iter_mut().enumerate() {
+            if *weight <= 0.0 {
+                continue;
+            }
+            let multiplier = if self.pulls[idx] == 0 {
+                2.0
+            } else {
+                let mean = self.total_reward[idx] / self.pulls[idx] as f64;
+                let exploration = (2.0 * ln_n / self.pulls[idx] as f64).sqrt();
+                (mean + exploration).clamp(0.25, 4.0)
+            };
+            *weight *= multiplier as f32;
+        }
+        weights
+    }
+
+    fn observe(&mut self, op: u8, parent_score: f64, child_score: f64, qd_bonus: f64) {
+        let idx = op as usize;
+        if idx >= self.pulls.len() {
+            return;
+        }
+        let delta = child_score - parent_score;
+        let reward = (0.5 + 0.35 * delta.tanh() + qd_bonus.clamp(0.0, 0.15)).clamp(0.0, 1.0);
+        self.pulls[idx] = self.pulls[idx].saturating_add(1);
+        self.total_reward[idx] += reward;
+    }
+}
+
 impl Default for ClusterMultiplier {
     fn default() -> Self {
         Self {
@@ -356,18 +516,13 @@ pub fn local_mutation_rate(cfg: &DiscoveryConfig, individual_idx: usize) -> f64 
 /// Compute the elitism count for a specific cluster. Used when the
 /// GA performs its global elitism step but wants to honour a cluster
 /// directive that exploits one cluster harder than another.
-pub fn elite_count_with_cluster_multiplier(
-    cfg: &DiscoveryConfig,
-    cluster_id: u32,
-) -> usize {
+pub fn elite_count_with_cluster_multiplier(cfg: &DiscoveryConfig, cluster_id: u32) -> usize {
     let mult = cfg
         .cluster_multipliers
         .get(&cluster_id)
         .map(|m| m.elitism_mult as f64)
         .unwrap_or(1.0);
-    let base = (cfg.elitism_fraction.clamp(0.0, 0.2) as f64
-        * cfg.population_size as f64)
-        .floor();
+    let base = (cfg.elitism_fraction.clamp(0.0, 0.2) as f64 * cfg.population_size as f64).floor();
     (base * mult)
         .round()
         .max(0.0)
@@ -463,6 +618,16 @@ pub struct DiscoveryReport {
     /// final-population fitness by the cluster a directive landed
     /// on at chunk start.
     pub final_population: Vec<(Chain, [f32; 4], Vec<String>, u32)>,
+    /// Persistent local RL state for adaptive mutation-operator
+    /// selection. Callers may pass the previous chunk's stats in
+    /// `initial_report` when using `run_discovery_from_population`;
+    /// this report returns the updated sufficient statistics.
+    pub mutation_operator_stats: MutationOperatorStats,
+    /// Persistent quality-diversity archive. This stores only the
+    /// best score per coarse behaviour cell, not full chains, so it is
+    /// cheap to carry between chunks/restarts while preserving the
+    /// MAP-Elites pressure toward underexplored proof niches.
+    pub qd_archive_stats: QdArchiveStats,
 }
 
 /// Run the chain-based GA for `config.generations` generations.
@@ -513,12 +678,8 @@ pub fn seed_population(
                 store,
                 config.target.as_ref(),
             );
-            pop[0] = ChainIndividual::with_cluster_and_canonical(
-                elite_chain.clone(),
-                fit,
-                0,
-                canonical,
-            );
+            pop[0] =
+                ChainIndividual::with_cluster_and_canonical(elite_chain.clone(), fit, 0, canonical);
         }
     }
     // LLM-proposed elites: placed at index 1.., shifted past the
@@ -533,7 +694,11 @@ pub fn seed_population(
     // worker hasn't seed-synced yet, and the next chunk's re-sync
     // typically resolves the gap.
     if !config.llm_proposed_chains.is_empty() && !pop.is_empty() {
-        let start_idx = if config.permanent_elite.is_some() { 1 } else { 0 };
+        let start_idx = if config.permanent_elite.is_some() {
+            1
+        } else {
+            0
+        };
         for (offset, chain) in config.llm_proposed_chains.iter().enumerate() {
             let target_idx = start_idx + offset;
             if target_idx >= pop.len() {
@@ -549,12 +714,8 @@ pub fn seed_population(
                 store,
                 config.target.as_ref(),
             );
-            pop[target_idx] = ChainIndividual::with_cluster_and_canonical(
-                chain.clone(),
-                fit,
-                0,
-                canonical,
-            );
+            pop[target_idx] =
+                ChainIndividual::with_cluster_and_canonical(chain.clone(), fit, 0, canonical);
         }
     }
     pop
@@ -592,6 +753,10 @@ pub fn run_discovery_from_population(
     // Dedup set keyed on canonical form of (final_expr) for verified
     // discoveries so we don't lake-build the same theorem twice.
     let mut verified_canonicals: HashSet<String> = HashSet::new();
+    let mut qd_archive = qd_archive_map_from_stats(&report.qd_archive_stats);
+    let mut operator_bandit =
+        MutationOperatorBandit::from_stats(report.mutation_operator_stats.clone());
+    update_qd_archive(&mut qd_archive, &population);
 
     // ── Evolution loop
     // Number of best-fitness elites copied through unchanged each
@@ -698,6 +863,8 @@ pub fn run_discovery_from_population(
             // populated for that id.
             let p1_cluster = p1.cluster_id;
             let p2_cluster = p2.cluster_id;
+            let p1_score = composite(&p1.fitness);
+            let p2_score = composite(&p2.fitness);
             let (mut c1, mut c2) = if rng.random_bool(config.crossover_rate) {
                 splice_chains(&p1.chain, &p2.chain, rng)
             } else {
@@ -710,27 +877,34 @@ pub fn run_discovery_from_population(
             let c1_rate = local_mutation_rate_for_cluster(config, p1_cluster);
             let c2_rate = local_mutation_rate_for_cluster(config, p2_cluster);
             let atom_pool_ref = config.atom_pool.as_deref();
+            let mut c1_op = None;
+            let mut c2_op = None;
             if rng.random_bool(c1_rate) {
-                crate::chain_ga::mutate_chain_full(
+                let weights =
+                    operator_bandit.weights(config.mutation_priors.as_ref(), config.suffix_bias);
+                c1_op = Some(crate::chain_ga::mutate_chain_full_with_weights(
                     &mut c1,
                     store,
                     rng,
-                    config.mutation_priors.as_ref(),
-                    config.suffix_bias,
+                    &weights,
                     atom_pool_ref,
-                );
+                ));
             }
             if rng.random_bool(c2_rate) {
-                crate::chain_ga::mutate_chain_full(
+                let weights =
+                    operator_bandit.weights(config.mutation_priors.as_ref(), config.suffix_bias);
+                c2_op = Some(crate::chain_ga::mutate_chain_full_with_weights(
                     &mut c2,
                     store,
                     rng,
-                    config.mutation_priors.as_ref(),
-                    config.suffix_bias,
+                    &weights,
                     atom_pool_ref,
-                );
+                ));
             }
-            for (child, child_cluster) in [(c1, p1_cluster), (c2, p2_cluster)] {
+            for (child, child_cluster, parent_score, op) in [
+                (c1, p1_cluster, p1_score, c1_op),
+                (c2, p2_cluster, p2_score, c2_op),
+            ] {
                 if child.is_empty() || child.len() > config.max_chain_len {
                     continue;
                 }
@@ -739,12 +913,18 @@ pub fn run_discovery_from_population(
                     store,
                     config.target.as_ref(),
                 );
-                offspring.push(ChainIndividual::with_cluster_and_canonical(
+                let ind = ChainIndividual::with_cluster_and_canonical(
                     child,
                     fit,
                     child_cluster,
                     canonical,
-                ));
+                );
+                if let Some(op) = op {
+                    let child_score = composite(&ind.fitness);
+                    let qd_bonus = qd_archive_bonus(&qd_archive, &ind, child_score);
+                    operator_bandit.observe(op, parent_score, child_score, qd_bonus);
+                }
+                offspring.push(ind);
                 report.total_candidates += 1;
                 if offspring.len() >= config.population_size {
                     break;
@@ -773,8 +953,7 @@ pub fn run_discovery_from_population(
                 None => run_chain_for_final(&ind.chain, store).map(|e| e.to_canonical()),
             })
             .collect();
-        let mut counts: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for c in canonicals.iter().flatten() {
             *counts.entry(c.clone()).or_insert(0) += 1;
         }
@@ -789,7 +968,10 @@ pub fn run_discovery_from_population(
         let mut ranked: Vec<(usize, f64)> = offspring
             .iter()
             .enumerate()
-            .map(|(i, ind)| (i, composite(&ind.fitness) * shared_score[i]))
+            .map(|(i, ind)| {
+                let base = composite(&ind.fitness) * shared_score[i];
+                (i, base + qd_archive_bonus(&qd_archive, ind, base))
+            })
             .collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         let kept_indices: std::collections::BTreeSet<usize> = ranked
@@ -810,6 +992,7 @@ pub fn run_discovery_from_population(
                 .partial_cmp(&composite(&a.fitness))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        update_qd_archive(&mut qd_archive, &offspring);
 
         // P-Task 11: harvest top-K novel candidates for server-side
         // chain-replay verification. We emit Lean source locally
@@ -900,6 +1083,20 @@ pub fn run_discovery_from_population(
                     verified_canonicals.remove(&canonical_cached);
                     continue;
                 }
+                // Plumbing reject — this unverified-submission path bypasses
+                // `pick_top_for_verify` (and therefore its PreLakeFilters),
+                // so without this guard it floods the corpus with trivially-
+                // true restatements of opaque PhysLean tensor-category
+                // internals (dotted names like `complexLorentzTensor.*`,
+                // `DFunLike.coe`, `Space.oneEquiv`). Mirrors PreLakeFilters
+                // filter 5; gated by the same env knob.
+                if PreLakeFilters::from_env_once().reject_plumbing_symbols
+                    && contains_plumbing_symbol(&final_expr)
+                {
+                    report.pre_lake_rejected += 1;
+                    verified_canonicals.remove(&canonical_cached);
+                    continue;
+                }
                 let canonical = canonical_cached;
                 let theorem_name = format!("submit_gen{gen_idx}_{harvested}");
                 let module_path =
@@ -958,8 +1155,8 @@ pub fn run_discovery_from_population(
                         } => {
                             report.lake_passed += 1;
                             // Compute the final Expr again for the report.
-                            let final_expr = run_chain_for_final(&top.chain, store)
-                                .unwrap_or(Expr::Lit(0, 1));
+                            let final_expr =
+                                run_chain_for_final(&top.chain, store).unwrap_or(Expr::Lit(0, 1));
                             let canonical = final_expr.to_canonical();
                             verified_canonicals.insert(canonical.clone());
                             report.verified.push(VerifiedDiscovery {
@@ -971,19 +1168,20 @@ pub fn run_discovery_from_population(
                                 generation: gen_idx,
                             });
                         }
-                        ChainVerifyOutcome::LeanRejected { lean_source, stderr } => {
+                        ChainVerifyOutcome::LeanRejected {
+                            lean_source,
+                            stderr,
+                        } => {
                             // M1 diagnostic: log the actual elaborator
                             // stderr + the first 2KB of source so we can
                             // see WHY Lake rejected and reproduce
                             // outside the worker.
-                            let stderr_snip: String =
-                                stderr.chars().take(1000).collect();
+                            let stderr_snip: String = stderr.chars().take(1000).collect();
                             // Slice on a char boundary, not byte
                             // boundary — the emitter occasionally puts
                             // unicode (²·) in comment blocks and a
                             // mid-codepoint slice would panic.
-                            let src_snip: String =
-                                lean_source.chars().take(2048).collect();
+                            let src_snip: String = lean_source.chars().take(2048).collect();
                             tracing::warn!(
                                 gen = gen_idx,
                                 theorem = %theorem_name,
@@ -1016,9 +1214,7 @@ pub fn run_discovery_from_population(
                                 gen = gen_idx,
                                 "lean toolchain error: {message}"
                             );
-                            eprintln!(
-                                "  ✗ Lean toolchain error gen={gen_idx}: {message}"
-                            );
+                            eprintln!("  ✗ Lean toolchain error gen={gen_idx}: {message}");
                         }
                     }
                 }
@@ -1079,8 +1275,7 @@ pub fn run_discovery_from_population(
             // elegance, length penalty, target proximity). All clamped
             // to [0,1] so the cluster-feature L2 distance is bounded.
             let f = &ind.fitness;
-            let length_signal = (1.0 - (ind.chain.0.len() as f64 / 16.0).min(1.0))
-                .clamp(0.0, 1.0);
+            let length_signal = (1.0 - (ind.chain.0.len() as f64 / 16.0).min(1.0)).clamp(0.0, 1.0);
             let comps = [
                 f.novelty.clamp(0.0, 1.0) as f32,
                 f.dimensional.clamp(0.0, 1.0) as f32,
@@ -1092,6 +1287,9 @@ pub fn run_discovery_from_population(
                 .push((ind.chain.clone(), comps, names, ind.cluster_id));
         }
     }
+
+    report.mutation_operator_stats = operator_bandit.stats();
+    report.qd_archive_stats = qd_archive_stats_from_map(&qd_archive);
 
     report
 }
@@ -1195,6 +1393,124 @@ fn composite(f: &nasrudin_core::FitnessScore) -> f64 {
         + 4.0 * f.ladder_progress
 }
 
+fn qd_cell(ind: &ChainIndividual) -> QdCell {
+    let chain_len = ind.chain.0.len();
+    let chain_len_bin = match chain_len {
+        0..=2 => 0,
+        3..=5 => 1,
+        6..=8 => 2,
+        9..=12 => 3,
+        _ => 4,
+    };
+    let distinct_axioms = distinct_axiom_count(&ind.chain);
+    let axiom_count_bin = match distinct_axioms {
+        0..=1 => 0,
+        2..=3 => 1,
+        4..=6 => 2,
+        7..=10 => 3,
+        _ => 4,
+    };
+    let progress = ind
+        .fitness
+        .target_shape
+        .max(ind.fitness.ladder_progress)
+        .clamp(0.0, 1.0);
+    let target_progress_bin = (progress * 5.0).floor().min(4.0) as u8;
+    QdCell {
+        chain_len_bin,
+        axiom_count_bin,
+        target_progress_bin,
+    }
+}
+
+fn distinct_axiom_count(chain: &Chain) -> usize {
+    let mut names = std::collections::HashSet::new();
+    for step in &chain.0 {
+        match step {
+            RuleStep::IntroduceAxiom { axiom_name } => {
+                names.insert(axiom_or_theorem_key("a", axiom_name));
+            }
+            RuleStep::IntroduceTheorem { theorem_name } => {
+                names.insert(axiom_or_theorem_key("t", theorem_name));
+            }
+            _ => {}
+        }
+    }
+    names.len()
+}
+
+fn axiom_or_theorem_key(prefix: &str, name: &str) -> String {
+    let mut out = String::with_capacity(prefix.len() + 1 + name.len());
+    out.push_str(prefix);
+    out.push(':');
+    out.push_str(name);
+    out
+}
+
+fn qd_archive_bonus(
+    archive: &std::collections::HashMap<QdCell, f64>,
+    ind: &ChainIndividual,
+    score: f64,
+) -> f64 {
+    match archive.get(&qd_cell(ind)) {
+        None => 0.25,
+        Some(best) if score > *best => 0.15 + (score - best).clamp(0.0, 0.20),
+        Some(_) => 0.0,
+    }
+}
+
+fn update_qd_archive(
+    archive: &mut std::collections::HashMap<QdCell, f64>,
+    population: &[ChainIndividual],
+) {
+    for ind in population {
+        let cell = qd_cell(ind);
+        let score = composite(&ind.fitness);
+        archive
+            .entry(cell)
+            .and_modify(|best| {
+                if score > *best {
+                    *best = score;
+                }
+            })
+            .or_insert(score);
+    }
+}
+
+fn qd_archive_map_from_stats(stats: &QdArchiveStats) -> std::collections::HashMap<QdCell, f64> {
+    let mut archive = std::collections::HashMap::new();
+    for cell in &stats.cells {
+        if !cell.best_score.is_finite() {
+            continue;
+        }
+        archive.insert(
+            QdCell {
+                chain_len_bin: cell.chain_len_bin.min(4),
+                axiom_count_bin: cell.axiom_count_bin.min(4),
+                target_progress_bin: cell.target_progress_bin.min(4),
+            },
+            cell.best_score,
+        );
+    }
+    archive
+}
+
+fn qd_archive_stats_from_map(archive: &std::collections::HashMap<QdCell, f64>) -> QdArchiveStats {
+    let mut cells: Vec<QdArchiveCellStat> = archive
+        .iter()
+        .filter_map(|(cell, best_score)| {
+            best_score.is_finite().then_some(QdArchiveCellStat {
+                chain_len_bin: cell.chain_len_bin,
+                axiom_count_bin: cell.axiom_count_bin,
+                target_progress_bin: cell.target_progress_bin,
+                best_score: *best_score,
+            })
+        })
+        .collect();
+    cells.sort_by_key(|c| (c.chain_len_bin, c.axiom_count_bin, c.target_progress_bin));
+    QdArchiveStats { cells }
+}
+
 fn run_chain_for_final(chain: &Chain, store: &AxiomStore) -> Option<Expr> {
     let mut ctx = nasrudin_derive::DerivationContext::new();
     use nasrudin_derive::DerivationStrategy;
@@ -1214,8 +1530,21 @@ fn pick_top_for_verify<'a>(
     pre_lake_rejected: &mut usize,
 ) -> Option<&'a ChainIndividual> {
     let pre_lake = PreLakeFilters::from_env_once();
+    // Verify gate. Was a hard `>= 1.0` on BOTH novelty and relevance —
+    // which only ever fires for a perfectly-novel candidate, so
+    // re-derivations of known physics (lower novelty) were never sent to
+    // the kernel and the sound path produced 0 theorems. Now that the
+    // unverified-submission shortcut is gone, this IS the verification
+    // path, so it must consider the good-but-not-perfect candidates too.
+    // Default 0.5 (matches the old harvest gate); the persistent
+    // elaborator makes each check cheap, so a looser gate just means more
+    // genuine kernel-checked discoveries, not wasted lake builds.
+    let verify_min = std::env::var("NASRUDIN_VERIFY_NOVELTY_MIN")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
     for ind in offspring {
-        if ind.fitness.novelty < 1.0 || ind.fitness.nasrudin_relevance < 1.0 {
+        if ind.fitness.novelty < verify_min || ind.fitness.nasrudin_relevance < verify_min {
             continue;
         }
         if let Some(expr) = run_chain_for_final(&ind.chain, store) {
@@ -1242,10 +1571,7 @@ fn pick_top_for_verify<'a>(
             // `evaluate_chain_with_canonical` on the offspring hot
             // path). The legacy fallback only fires for individuals
             // that pre-date the cache wiring.
-            let canon = ind
-                .canonical
-                .clone()
-                .unwrap_or_else(|| expr.to_canonical());
+            let canon = ind.canonical.clone().unwrap_or_else(|| expr.to_canonical());
             // Skip canonicals we've verified this run, AND canonicals
             // any peer worker has already rejected via lake build.
             // Bloom pre-check: when present, a bloom miss means
@@ -1382,9 +1708,7 @@ mod tests {
             mutation_priors: None,
             submit_unverified_top_k: 0,
             dimension_hard_reject: false,
-            dimension_var_dims: std::sync::Arc::new(
-                std::collections::HashMap::new(),
-            ),
+            dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
             elaborator: None,
             suffix_bias: 0.0,
             elitism_fraction: 0.0,
@@ -1616,9 +1940,7 @@ mod tests {
             mutation_priors: None,
             submit_unverified_top_k: 0,
             dimension_hard_reject: false,
-            dimension_var_dims: std::sync::Arc::new(
-                std::collections::HashMap::new(),
-            ),
+            dimension_var_dims: std::sync::Arc::new(std::collections::HashMap::new()),
             elaborator: None,
             suffix_bias: 0.0,
             elitism_fraction: 0.0,
@@ -1643,13 +1965,8 @@ mod tests {
             generation: 0,
         });
         let population = seed_population(&store, &config, &mut rng, &mut initial_report);
-        let report = run_discovery_from_population(
-            &store,
-            &config,
-            population,
-            &mut rng,
-            initial_report,
-        );
+        let report =
+            run_discovery_from_population(&store, &config, population, &mut rng, initial_report);
 
         // Early-exit must have fired on gen 1, not run all 50 gens.
         assert_eq!(
@@ -1674,13 +1991,8 @@ mod tests {
             generation: 0,
         });
         let population2 = seed_population(&store, &config, &mut rng, &mut initial_report2);
-        let report2 = run_discovery_from_population(
-            &store,
-            &config,
-            population2,
-            &mut rng,
-            initial_report2,
-        );
+        let report2 =
+            run_discovery_from_population(&store, &config, population2, &mut rng, initial_report2);
         assert_eq!(
             report2.generations_run, 50,
             "expected all 50 gens when gate is OFF but got generations_run={}",
@@ -1734,9 +2046,7 @@ mod tests {
         let t0 = Instant::now();
         let mut sink_a: u64 = 0;
         for _ in 0..n {
-            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(
-                &elite, &store, None,
-            );
+            let fit = crate::chain_ga::evaluate_chain_fitness_with_target(&elite, &store, None);
             sink_a = sink_a.wrapping_add((fit.depth * 1_000.0) as u64);
             // Recompute canonical the way the pre-cache code did.
             if let Some(expr) = run_chain_for_final(&elite, &store) {
@@ -1750,9 +2060,8 @@ mod tests {
         let t1 = Instant::now();
         let mut sink_b: u64 = 0;
         for _ in 0..n {
-            let (fit, canonical) = crate::chain_ga::evaluate_chain_with_canonical(
-                &elite, &store, None,
-            );
+            let (fit, canonical) =
+                crate::chain_ga::evaluate_chain_with_canonical(&elite, &store, None);
             sink_b = sink_b.wrapping_add((fit.depth * 1_000.0) as u64);
             if let Some(c) = canonical {
                 sink_b = sink_b.wrapping_add(c.len() as u64);
@@ -1785,3 +2094,152 @@ mod tests {
 // Suppress unused-import lint if Path import becomes redundant.
 #[allow(dead_code)]
 fn _path_used(_: &Path) {}
+
+#[cfg(test)]
+mod qd_archive_tests {
+    use super::*;
+    use nasrudin_core::FitnessScore;
+
+    fn qd_individual(
+        chain_len: usize,
+        axiom_count: usize,
+        progress: f64,
+        novelty: f64,
+    ) -> ChainIndividual {
+        let mut steps = Vec::new();
+        for idx in 0..axiom_count {
+            steps.push(RuleStep::IntroduceAxiom {
+                axiom_name: format!("a{idx}"),
+            });
+        }
+        while steps.len() < chain_len {
+            steps.push(RuleStep::AlgebraicSimplify);
+        }
+        let mut fitness = FitnessScore::default();
+        fitness.novelty = novelty;
+        fitness.target_shape = progress;
+        ChainIndividual::new(Chain(steps), fitness)
+    }
+
+    #[test]
+    fn qd_archive_rewards_new_behavior_cells() {
+        let ind = qd_individual(4, 2, 0.4, 0.5);
+        let archive = std::collections::HashMap::new();
+
+        assert_eq!(
+            qd_archive_bonus(&archive, &ind, composite(&ind.fitness)),
+            0.25
+        );
+    }
+
+    #[test]
+    fn qd_archive_rewards_cell_improvement_but_not_regression() {
+        let baseline = qd_individual(4, 2, 0.4, 0.2);
+        let improved = qd_individual(4, 2, 0.4, 0.8);
+        let regressed = qd_individual(4, 2, 0.4, 0.1);
+        let mut archive = std::collections::HashMap::new();
+        update_qd_archive(&mut archive, &[baseline]);
+
+        assert!(qd_archive_bonus(&archive, &improved, composite(&improved.fitness)) > 0.15);
+        assert_eq!(
+            qd_archive_bonus(&archive, &regressed, composite(&regressed.fitness)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn qd_cell_uses_chain_shape_and_target_progress() {
+        let a = qd_individual(2, 1, 0.0, 0.5);
+        let b = qd_individual(8, 5, 0.9, 0.5);
+
+        assert_ne!(qd_cell(&a), qd_cell(&b));
+    }
+
+    #[test]
+    fn qd_archive_stats_round_trip_runtime_map() {
+        let ind = qd_individual(8, 5, 0.9, 0.5);
+        let mut archive = std::collections::HashMap::new();
+        update_qd_archive(&mut archive, &[ind]);
+
+        let stats = qd_archive_stats_from_map(&archive);
+        let restored = qd_archive_map_from_stats(&stats);
+
+        assert_eq!(restored.len(), archive.len());
+        assert_eq!(restored.values().next(), archive.values().next());
+    }
+
+    #[test]
+    fn qd_archive_stats_ignores_non_finite_scores() {
+        let stats = QdArchiveStats {
+            cells: vec![QdArchiveCellStat {
+                chain_len_bin: 99,
+                axiom_count_bin: 99,
+                target_progress_bin: 99,
+                best_score: f64::NAN,
+            }],
+        };
+
+        assert!(qd_archive_map_from_stats(&stats).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod operator_bandit_tests {
+    use super::*;
+
+    #[test]
+    fn operator_bandit_boosts_untried_operators_after_first_observation() {
+        let mut bandit = MutationOperatorBandit::default();
+        bandit.observe(0, 1.0, 0.0, 0.0);
+
+        let weights = bandit.weights(None, 0.0);
+
+        assert!(
+            weights[1] > weights[0],
+            "untried operators should keep exploration pressure"
+        );
+    }
+
+    #[test]
+    fn operator_bandit_rewards_fitness_improvement() {
+        let mut bandit = MutationOperatorBandit::default();
+        bandit.observe(2, 0.0, 2.0, 0.0);
+        bandit.observe(3, 2.0, 0.0, 0.0);
+        for _ in 0..6 {
+            bandit.observe(2, 0.0, 2.0, 0.0);
+            bandit.observe(3, 2.0, 0.0, 0.0);
+        }
+
+        let weights = bandit.weights(None, 0.0);
+
+        assert!(
+            weights[2] > weights[3],
+            "higher-reward operator should receive more weight"
+        );
+    }
+
+    #[test]
+    fn operator_bandit_preserves_zero_llm_prior_mask() {
+        let mut priors = std::collections::HashMap::new();
+        priors.insert("insert_random".to_string(), 0.0);
+        priors.insert("delete_random".to_string(), 1.0);
+        let mut bandit = MutationOperatorBandit::default();
+        bandit.observe(0, 0.0, 5.0, 0.25);
+
+        let weights = bandit.weights(Some(&priors), 0.0);
+
+        assert_eq!(weights[0], 0.0);
+        assert!(weights[1] > 0.0);
+    }
+
+    #[test]
+    fn operator_bandit_round_trips_public_stats() {
+        let mut bandit = MutationOperatorBandit::default();
+        bandit.observe(4, 0.2, 1.2, 0.1);
+
+        let restored = MutationOperatorBandit::from_stats(bandit.stats());
+
+        assert_eq!(restored.pulls[4], 1);
+        assert!(restored.total_reward[4] > 0.5);
+    }
+}

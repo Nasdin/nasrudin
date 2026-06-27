@@ -24,13 +24,12 @@ use bytes::Bytes;
 use futures::Stream;
 use http_body_util::BodyExt;
 
-use crate::worker_url::{parse_api_base, ApiBase};
+use crate::worker_url::{ApiBase, parse_api_base};
 
 /// Streaming-body type returned by [`WorkerHttp::get_stream`]. `Send`
 /// so the caller can move the stream into a `tokio::spawn`'d task
 /// (the corpus-hydration loop runs on its own thread).
-pub type BoxByteStream =
-    Pin<Box<dyn Stream<Item = std::io::Result<Bytes>> + Send + 'static>>;
+pub type BoxByteStream = Pin<Box<dyn Stream<Item = std::io::Result<Bytes>> + Send + 'static>>;
 
 #[derive(Clone)]
 pub struct WorkerHttp {
@@ -91,11 +90,7 @@ impl WorkerHttp {
     }
 
     /// `GET path` returning (status, body bytes). `path` must start with `/`.
-    pub async fn get_bytes(
-        &self,
-        path: &str,
-        headers: &[(&str, &str)],
-    ) -> Result<(u16, Bytes)> {
+    pub async fn get_bytes(&self, path: &str, headers: &[(&str, &str)]) -> Result<(u16, Bytes)> {
         match &*self.inner {
             Inner::Tcp { client, base } => {
                 let url = base.join(path).context("join path")?;
@@ -119,7 +114,12 @@ impl WorkerHttp {
                     .context("hyper req build")?;
                 let resp = client.request(req).await.context("hyper GET")?;
                 let status = resp.status().as_u16();
-                let body = resp.into_body().collect().await.context("hyper body")?.to_bytes();
+                let body = resp
+                    .into_body()
+                    .collect()
+                    .await
+                    .context("hyper body")?
+                    .to_bytes();
                 Ok((status, body))
             }
         }
@@ -169,9 +169,9 @@ impl WorkerHttp {
                 let status = resp.status().as_u16();
                 let resp_headers = resp.headers().clone();
                 use futures::StreamExt;
-                let stream = resp.bytes_stream().map(|r| {
-                    r.map_err(|e| std::io::Error::other(format!("body chunk: {e}")))
-                });
+                let stream = resp
+                    .bytes_stream()
+                    .map(|r| r.map_err(|e| std::io::Error::other(format!("body chunk: {e}"))));
                 Ok((status, resp_headers, Box::pin(stream)))
             }
             Inner::Unix { client, sock } => {
@@ -186,10 +186,13 @@ impl WorkerHttp {
                 let resp = client.request(req).await.context("hyper GET")?;
                 let status = resp.status().as_u16();
                 let resp_headers = resp.headers().clone();
-                let body = resp.into_body().collect().await.context("hyper body")?.to_bytes();
-                let one_shot = futures::stream::once(async move {
-                    Ok::<_, std::io::Error>(body)
-                });
+                let body = resp
+                    .into_body()
+                    .collect()
+                    .await
+                    .context("hyper body")?
+                    .to_bytes();
+                let one_shot = futures::stream::once(async move { Ok::<_, std::io::Error>(body) });
                 Ok((status, resp_headers, Box::pin(one_shot)))
             }
         }
@@ -203,10 +206,11 @@ impl WorkerHttp {
         headers: &[(&str, &str)],
     ) -> Result<(u16, T)> {
         let body_bytes = serde_json::to_vec(body).context("serialize body")?;
-        let mut all_headers: Vec<(&str, &str)> =
-            headers.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut all_headers: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (*k, *v)).collect();
         all_headers.push(("content-type", "application/json"));
-        let (status, resp_bytes) = self.post_bytes(path, body_bytes.into(), &all_headers).await?;
+        let (status, resp_bytes) = self
+            .post_bytes(path, body_bytes.into(), &all_headers)
+            .await?;
         let parsed: T = if resp_bytes.is_empty() {
             T::default()
         } else {
@@ -246,7 +250,12 @@ impl WorkerHttp {
                     .context("hyper req build")?;
                 let resp = client.request(req).await.context("hyper POST")?;
                 let status = resp.status().as_u16();
-                let body = resp.into_body().collect().await.context("hyper body")?.to_bytes();
+                let body = resp
+                    .into_body()
+                    .collect()
+                    .await
+                    .context("hyper body")?
+                    .to_bytes();
                 Ok((status, body))
             }
         }

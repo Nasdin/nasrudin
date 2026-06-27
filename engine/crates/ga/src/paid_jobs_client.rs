@@ -18,7 +18,7 @@
 //!
 //! All calls use the worker's `nsk_worker_…` bearer.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -150,7 +150,11 @@ impl PaidJobsClient {
         let headers = [("authorization", auth.as_str())];
         let (status, _) = self
             .http
-            .post_bytes(&format!("/api/jobs/{id}/release"), bytes::Bytes::new(), &headers)
+            .post_bytes(
+                &format!("/api/jobs/{id}/release"),
+                bytes::Bytes::new(),
+                &headers,
+            )
             .await?;
         if !(200..300).contains(&status) {
             return Err(anyhow!("release failed: {status}"));

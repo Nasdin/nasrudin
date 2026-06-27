@@ -9,4 +9,4 @@ pub mod stripe_client;
 pub mod tier;
 pub mod webhook;
 
-pub use tier::{period_start, PlanTier, Quotas};
+pub use tier::{PlanTier, Quotas, period_start};

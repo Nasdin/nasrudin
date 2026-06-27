@@ -89,22 +89,8 @@ async fn novel_excludes_imports_and_catalog_hits() {
     )
     .await;
     seed_ga(&app, "seed_axiom", "Special relativity", 0, None).await;
-    let rediscovery_id = seed_ga(
-        &app,
-        "rediscovered_emc2",
-        "Special relativity",
-        5,
-        None,
-    )
-    .await;
-    let novel_id = seed_ga(
-        &app,
-        "brand_new_lemma",
-        "Special relativity",
-        5,
-        None,
-    )
-    .await;
+    let rediscovery_id = seed_ga(&app, "rediscovered_emc2", "Special relativity", 5, None).await;
+    let novel_id = seed_ga(&app, "brand_new_lemma", "Special relativity", 5, None).await;
 
     // Catalog set defaults to empty in the harness. Mount a fresh
     // router on a state that differs only in `catalog_hashes` so
@@ -119,7 +105,12 @@ async fn novel_excludes_imports_and_catalog_hits() {
     app.router = route;
 
     let resp = test_app::get(&app, "/api/discoveries/novel?limit=50").await;
-    assert_eq!(resp.status, StatusCode::OK, "body: {:?}", String::from_utf8_lossy(&resp.body));
+    assert_eq!(
+        resp.status,
+        StatusCode::OK,
+        "body: {:?}",
+        String::from_utf8_lossy(&resp.body)
+    );
 
     let body: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
     let discoveries = body["discoveries"].as_array().expect("discoveries array");

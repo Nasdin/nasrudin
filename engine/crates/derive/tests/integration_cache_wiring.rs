@@ -5,7 +5,7 @@
 
 use chrono::{Duration, Utc};
 use nasrudin_derive::lean_verify::{
-    verify_with_cache, LeanVerifier, LeanVerifyResult, VerifyWithCacheCtx,
+    LeanVerifier, LeanVerifyResult, VerifyWithCacheCtx, verify_with_cache,
 };
 use nasrudin_rocks::{AttemptOutcome, AttemptRecord, AttemptsCache};
 use tempfile::tempdir;

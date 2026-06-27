@@ -35,9 +35,7 @@ pub struct PublicSponsorshipSummary {
     pub latest_supported_at: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
-impl From<nasrudin_pg::query::user_sponsorships::SponsorshipSummary>
-    for PublicSponsorshipSummary
-{
+impl From<nasrudin_pg::query::user_sponsorships::SponsorshipSummary> for PublicSponsorshipSummary {
     fn from(s: nasrudin_pg::query::user_sponsorships::SponsorshipSummary) -> Self {
         let (active_tier, active_amount_cents) = match s.active_subscription {
             Some(t) => (t.tier, t.amount_cents),
@@ -59,10 +57,7 @@ fn err(status: StatusCode, code: &str) -> Response {
 }
 
 /// `GET /api/users/{id}` — public-facing user profile.
-pub async fn public_profile(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
-) -> Response {
+pub async fn public_profile(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> Response {
     let pg = match &state.pg {
         Some(p) => p,
         None => return err(StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable"),

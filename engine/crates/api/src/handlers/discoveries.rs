@@ -120,13 +120,8 @@ pub async fn novel(
         // purposes — only the explicit 'imported' stamp is excluded.
         .filter(
             Condition::any()
-                .add(
-                    nasrudin_pg::entity::theorems::Column::VerificationTactic.is_null(),
-                )
-                .add(
-                    nasrudin_pg::entity::theorems::Column::VerificationTactic
-                        .ne("imported"),
-                ),
+                .add(nasrudin_pg::entity::theorems::Column::VerificationTactic.is_null())
+                .add(nasrudin_pg::entity::theorems::Column::VerificationTactic.ne("imported")),
         )
         // generation > 0: seed axioms (gen 0) aren't discoveries even
         // when they happen to carry a non-imported tactic.

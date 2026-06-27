@@ -1,6 +1,6 @@
 //! Per-cluster summary uploaded to the API after every chunk.
 
-use crate::clustering::features::{signature_distance, ClusterFeatures};
+use crate::clustering::features::{ClusterFeatures, signature_distance};
 use crate::clustering::kmeans::ClusterAssignment;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -184,9 +184,11 @@ mod tests {
         let summaries = compute_summaries(&pop, &asg, &names, "special_relativity");
         assert_eq!(summaries.len(), 2);
         assert!(summaries.iter().all(|s| s.size == 3));
-        assert!(summaries
-            .iter()
-            .all(|s| s.island_domain == "special_relativity"));
+        assert!(
+            summaries
+                .iter()
+                .all(|s| s.island_domain == "special_relativity")
+        );
     }
 
     #[test]

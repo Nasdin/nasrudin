@@ -20,7 +20,11 @@ async fn user_has_admin_trust_columns_with_defaults() {
     let u = query::users::create_firebase_user(&db, &firebase_uid, &email, None)
         .await
         .unwrap();
-    let m = users::Entity::find_by_id(u.id).one(&db).await.unwrap().unwrap();
+    let m = users::Entity::find_by_id(u.id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!m.is_admin);
     assert!(!m.is_trusted);
     assert_eq!(m.spot_check_rate, None);

@@ -187,8 +187,7 @@ pub async fn verify_id_token(
     use jsonwebtoken::{Algorithm, Validation, decode, decode_header};
 
     // 1. Parse header → grab kid.
-    let header =
-        decode_header(token).map_err(|e| VerifyError::MalformedToken(format!("{e}")))?;
+    let header = decode_header(token).map_err(|e| VerifyError::MalformedToken(format!("{e}")))?;
     if header.alg != Algorithm::RS256 {
         // Algorithm-confusion defense: refuse anything that's not RS256.
         return Err(VerifyError::BadSignature);
@@ -198,10 +197,7 @@ pub async fn verify_id_token(
         .ok_or_else(|| VerifyError::MalformedToken("missing kid".into()))?;
 
     // 2. Look up the public key (refreshes JWKs if needed).
-    let key = jwks
-        .get(&kid)
-        .await
-        .ok_or(VerifyError::BadSignature)?;
+    let key = jwks.get(&kid).await.ok_or(VerifyError::BadSignature)?;
 
     // 3. Validate signature + standard claims.
     let mut validation = Validation::new(Algorithm::RS256);

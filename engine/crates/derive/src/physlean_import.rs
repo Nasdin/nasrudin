@@ -31,8 +31,8 @@
 use crate::axiom_store::AxiomStore;
 use anyhow::{Context, Result};
 use nasrudin_core::{
-    axiom_id_from_name, Axiom, Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremId,
-    TheoremOrigin, VerificationStatus,
+    Axiom, Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremId, TheoremOrigin,
+    VerificationStatus, axiom_id_from_name,
 };
 use nasrudin_rocks::TheoremDb;
 use std::collections::{HashMap, HashSet};
@@ -48,7 +48,9 @@ use std::path::Path;
 /// in [`import_entries_with_allowed`] would never match a dep against
 /// the catalog allowlist.
 pub fn normalize_dep_name(full: &str) -> String {
-    full.replace("PhysLean.", "").replace('.', "_").to_lowercase()
+    full.replace("PhysLean.", "")
+        .replace('.', "_")
+        .to_lowercase()
 }
 
 /// One catalog entry, parsed into the shape `import` needs. Pub for
@@ -70,10 +72,7 @@ pub struct CatalogEntry {
 /// Entries whose dependency list is empty *and* whose statement is a
 /// bare `Var` placeholder (the translator timed out) are skipped — we
 /// can't form a meaningful theorem from those. Everything else lands.
-pub fn import_catalog_to_theorem_db(
-    catalog_path: &Path,
-    db: &TheoremDb,
-) -> Result<usize> {
+pub fn import_catalog_to_theorem_db(catalog_path: &Path, db: &TheoremDb) -> Result<usize> {
     let entries = parse_catalog(catalog_path)?;
     import_entries(entries, db)
 }
@@ -172,8 +171,7 @@ where
 /// entries (used by tests that don't want to round-trip through the
 /// JSON format).
 pub fn import_entries(entries: Vec<CatalogEntry>, db: &TheoremDb) -> Result<usize> {
-    let catalog_names: HashSet<String> =
-        entries.iter().map(|e| e.name.clone()).collect();
+    let catalog_names: HashSet<String> = entries.iter().map(|e| e.name.clone()).collect();
     import_entries_with_allowed(entries, db, &catalog_names)
 }
 
@@ -304,8 +302,8 @@ fn parse_catalog(path: &Path) -> Result<Vec<CatalogEntry>> {
         .with_context(|| format!("read catalog: {}", path.display()))?;
     let mut deser = serde_json::Deserializer::from_str(&content);
     deser.disable_recursion_limit();
-    let value: serde_json::Value = serde::Deserialize::deserialize(&mut deser)
-        .with_context(|| "parse catalog json")?;
+    let value: serde_json::Value =
+        serde::Deserialize::deserialize(&mut deser).with_context(|| "parse catalog json")?;
 
     let mut entries = Vec::new();
     if let Some(theorems) = value.get("theorems").and_then(|t| t.as_array()) {

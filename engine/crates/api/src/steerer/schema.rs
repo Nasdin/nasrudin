@@ -349,7 +349,10 @@ pub enum SteeringValidationError {
     LessonsTooLong,
     #[error("atom_pool weights must be finite and in [0.0, 4.0]")]
     BadAtomWeight,
-    #[error("proposed_chains may contain at most {} entries", MAX_PROPOSED_CHAINS_PER_CYCLE)]
+    #[error(
+        "proposed_chains may contain at most {} entries",
+        MAX_PROPOSED_CHAINS_PER_CYCLE
+    )]
     TooManyProposedChains,
     #[error(
         "proposed_chains[{target}] has {steps} steps; max is {max}",
@@ -523,8 +526,7 @@ mod tests {
     #[test]
     fn domain_weights_must_sum_to_one() {
         let mut c = default_config();
-        c.domain_weights
-            .insert("special_relativity".into(), 0.3);
+        c.domain_weights.insert("special_relativity".into(), 0.3);
         // Now sums to 0.3 + 0.25 + 0.25 + 0.25 = 1.05, outside ±0.01
         assert!(c.validate().is_err());
     }
@@ -698,10 +700,7 @@ mod tests {
         // lessons_learned should still parse + validate.
         let cfg = default_config();
         let mut value = serde_json::to_value(&cfg).unwrap();
-        value
-            .as_object_mut()
-            .unwrap()
-            .remove("lessons_learned");
+        value.as_object_mut().unwrap().remove("lessons_learned");
         let parsed: SteeringConfig = serde_json::from_value(value).unwrap();
         assert!(parsed.lessons_learned.is_empty());
         parsed.validate().unwrap();
@@ -713,13 +712,22 @@ mod tests {
         c.atom_pool.insert(
             "special_relativity".into(),
             vec![
-                AtomWeight { name: "m_c_sq".into(), weight: 1.5 },
-                AtomWeight { name: "e_sq".into(), weight: 1.0 },
+                AtomWeight {
+                    name: "m_c_sq".into(),
+                    weight: 1.5,
+                },
+                AtomWeight {
+                    name: "e_sq".into(),
+                    weight: 1.0,
+                },
             ],
         );
         c.atom_pool.insert(
             "quantum_mechanics".into(),
-            vec![AtomWeight { name: "hbar_omega".into(), weight: 2.0 }],
+            vec![AtomWeight {
+                name: "hbar_omega".into(),
+                weight: 2.0,
+            }],
         );
         let json = serde_json::to_string(&c).unwrap();
         let parsed: SteeringConfig = serde_json::from_str(&json).unwrap();
@@ -733,7 +741,10 @@ mod tests {
         let mut c = default_config();
         c.atom_pool.insert(
             "sr".into(),
-            vec![AtomWeight { name: "x".into(), weight: 5.0 }],
+            vec![AtomWeight {
+                name: "x".into(),
+                weight: 5.0,
+            }],
         );
         assert!(matches!(
             c.validate(),
@@ -746,7 +757,10 @@ mod tests {
         let mut c = default_config();
         c.atom_pool.insert(
             "sr".into(),
-            vec![AtomWeight { name: "x".into(), weight: f32::NAN }],
+            vec![AtomWeight {
+                name: "x".into(),
+                weight: f32::NAN,
+            }],
         );
         assert!(matches!(
             c.validate(),
@@ -823,10 +837,8 @@ mod tests {
     fn proposed_chains_too_many_rejected() {
         let mut c = default_config();
         for i in 0..MAX_PROPOSED_CHAINS_PER_CYCLE + 1 {
-            c.proposed_chains.insert(
-                format!("t{i}"),
-                vec![RuleStep::AlgebraicSimplify],
-            );
+            c.proposed_chains
+                .insert(format!("t{i}"), vec![RuleStep::AlgebraicSimplify]);
         }
         assert!(matches!(
             c.validate(),

@@ -63,7 +63,9 @@ pub async fn owner_map(db: &impl ConnectionTrait) -> Result<HashMap<String, Owne
     let mut out = HashMap::new();
     for k in keys {
         let Some(uid) = k.user_id else { continue };
-        let Some(u) = user_map.get(&uid) else { continue };
+        let Some(u) = user_map.get(&uid) else {
+            continue;
+        };
         // Last write wins if a worker name appears under multiple keys.
         out.insert(
             k.name,

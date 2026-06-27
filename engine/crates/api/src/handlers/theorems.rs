@@ -58,9 +58,8 @@ impl TheoremsRecentCache {
 
     async fn get_fresh(&self, key: &RecentKey) -> Option<Arc<String>> {
         let g = self.inner.read().await;
-        g.get(key).and_then(|(ts, body)| {
-            (ts.elapsed() < RECENT_TTL).then(|| body.clone())
-        })
+        g.get(key)
+            .and_then(|(ts, body)| (ts.elapsed() < RECENT_TTL).then(|| body.clone()))
     }
 
     async fn store(&self, key: RecentKey, body: Arc<String>) {
@@ -125,8 +124,11 @@ pub async fn list(
     };
     match theorems::list_verified(pg, q.cursor, limit, q.domain, opts).await {
         Ok(page) => {
-            let items: Vec<serde_json::Value> =
-                page.items.iter().map(annotate_theorem_with_headline).collect();
+            let items: Vec<serde_json::Value> = page
+                .items
+                .iter()
+                .map(annotate_theorem_with_headline)
+                .collect();
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
@@ -151,9 +153,7 @@ pub async fn list(
 /// canonical statement doesn't match a curated headline these are
 /// `null`. Used by /api/theorems list + recent + by_id so the corpus
 /// row, theorem detail page, and OG card all see the same identity.
-fn annotate_theorem_with_headline(
-    t: &nasrudin_pg::entity::theorems::Model,
-) -> serde_json::Value {
+fn annotate_theorem_with_headline(t: &nasrudin_pg::entity::theorems::Model) -> serde_json::Value {
     let headline = crate::headline_registry::match_canonical(&t.canonical_statement);
     let mut body = match serde_json::to_value(t) {
         Ok(serde_json::Value::Object(m)) => m,
@@ -210,8 +210,11 @@ pub async fn recent(
     };
     match theorems::list_verified(pg, None, limit, q.domain, opts).await {
         Ok(page) => {
-            let items: Vec<serde_json::Value> =
-                page.items.iter().map(annotate_theorem_with_headline).collect();
+            let items: Vec<serde_json::Value> = page
+                .items
+                .iter()
+                .map(annotate_theorem_with_headline)
+                .collect();
             let payload = serde_json::json!({
                 "theorems": items,
                 "next_cursor": page.next_cursor,
@@ -275,8 +278,8 @@ pub async fn by_id(
             // deep link doesn't surface a "verified" pill for a row with
             // zero kernel backing. Rejected rows DO surface — direct deep
             // links from audit logs / cascade traces should still resolve.
-            let is_chain_replay = t.status == "Verified"
-                && t.verification_tactic.as_deref() == Some("chain_replay");
+            let is_chain_replay =
+                t.status == "Verified" && t.verification_tactic.as_deref() == Some("chain_replay");
             if is_chain_replay && admin.is_none() {
                 return (
                     StatusCode::NOT_FOUND,
@@ -524,11 +527,7 @@ pub async fn lean_download(
                     // Continue to PG fetch + serve below.
                 }
                 Ok(Some(nasrudin_core::VerificationStatus::Rejected { reason })) => {
-                    return (
-                        StatusCode::GONE,
-                        format!("rejected: {reason}"),
-                    )
-                        .into_response();
+                    return (StatusCode::GONE, format!("rejected: {reason}")).into_response();
                 }
                 _ => {
                     return (
@@ -549,7 +548,10 @@ pub async fn lean_download(
             (
                 StatusCode::OK,
                 [
-                    (header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()),
+                    (
+                        header::CONTENT_TYPE,
+                        "text/plain; charset=utf-8".to_string(),
+                    ),
                     (header::CONTENT_DISPOSITION, cd),
                 ],
                 t.lean_source,
@@ -561,7 +563,6 @@ pub async fn lean_download(
     }
 }
 
-
 /// `GET /api/rejected_hashes` — list of canonical_hash bytes for every
 /// theorem in the `Rejected` state. Workers pull this at startup (and
 /// periodically) so they can skip any chain whose final canonical
@@ -571,9 +572,7 @@ pub async fn lean_download(
 /// Response: `{ hashes: [[<8 bytes>], …], count: N }`. Hashes are
 /// serialized as JSON arrays of byte numbers (matches SeaORM's default
 /// Vec<u8> serde, same convention as Theorem.id and canonical_hash).
-pub async fn rejected_hashes(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn rejected_hashes(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // RocksDB-primary (Task 4): scan CF_THEOREMS for `Rejected` /
     // `Timeout` rows. Cap at 100k. Each hash is 8 bytes, so the wire
     // response stays under 1 MB even at the cap. PG is no longer

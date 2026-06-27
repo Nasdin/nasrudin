@@ -1,6 +1,8 @@
 //! LLM-driven cluster steerer.
 //!
-//! Every `STEERER_CADENCE_SECONDS` (default 600s) the daemon calls
+//! Every `STEERER_CADENCE_SECONDS` (default 600s) the daemon refreshes
+//! RL/bandit state. The LLM strategy is refreshed on
+//! `LLM_STEER_INTERVAL_SECONDS` (default 7200s).
 //! Kimi K2.6 via DigitalOcean Gradient with a curated context: the last
 //! N cycles' (config, outcome) pairs + an aggregate snapshot of user
 //! demand + the set of paid Researcher jobs currently running. The

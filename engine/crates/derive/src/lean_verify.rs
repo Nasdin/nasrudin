@@ -14,13 +14,9 @@ pub enum LeanVerifyResult {
     /// Lean4 accepted the proof.
     Success,
     /// Lean4 rejected the proof.
-    Failed {
-        stderr: String,
-    },
+    Failed { stderr: String },
     /// `lake build` could not be executed.
-    ProcessError {
-        message: String,
-    },
+    ProcessError { message: String },
 }
 
 /// Lean4 verifier that runs proofs through `lake build`.
@@ -61,11 +57,11 @@ impl LeanVerifier {
         }
 
         // Run `lake build <module>`
-        self.run_lake_build(module_path)
+        self.run_lake_build(module_path, lean_content)
     }
 
     /// Run `lake build` for a specific module.
-    fn run_lake_build(&self, module_path: &str) -> LeanVerifyResult {
+    fn run_lake_build(&self, module_path: &str, lean_content: &str) -> LeanVerifyResult {
         // Resolve lake binary: prefer ~/.elan/bin/lake, fall back to PATH
         let lake_bin = std::env::var("HOME")
             .ok()
@@ -106,7 +102,12 @@ impl LeanVerifier {
                 if output.status.success() {
                     LeanVerifyResult::Success
                 } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    let stderr = combined_output(&output);
+                    if stderr.contains("ProofWidgets not up-to-date")
+                        || stderr.contains("no such file or directory")
+                    {
+                        return self.run_direct_lean(module_path, Some(lean_content));
+                    }
                     LeanVerifyResult::Failed { stderr }
                 }
             }
@@ -114,6 +115,113 @@ impl LeanVerifier {
                 message: format!("failed to run `lake build`: {e}"),
             },
         }
+    }
+
+    /// Elaborate the generated module directly with Lean. This avoids
+    /// Lake package targets that are unrelated to kernel-checking the
+    /// generated proof, notably ProofWidgets' JS bundle.
+    fn run_direct_lean(&self, module_path: &str, lean_content: Option<&str>) -> LeanVerifyResult {
+        let lake_bin = std::env::var("HOME")
+            .ok()
+            .map(|home| {
+                let elan_lake = PathBuf::from(&home).join(".elan/bin/lake");
+                if elan_lake.exists() {
+                    elan_lake
+                } else {
+                    PathBuf::from("lake")
+                }
+            })
+            .unwrap_or_else(|| PathBuf::from("lake"));
+
+        let relative_path = module_path.replace('.', "/") + ".lean";
+        if let Some(content) = lean_content {
+            let file_path = self.prover_root.join(&relative_path);
+            if let Some(parent) = file_path.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                return LeanVerifyResult::ProcessError {
+                    message: format!("failed to create direct-lean source dir: {e}"),
+                };
+            }
+            if let Err(e) = std::fs::write(&file_path, content) {
+                return LeanVerifyResult::ProcessError {
+                    message: format!("failed to rewrite direct-lean source: {e}"),
+                };
+            }
+        }
+        let foundation_modules = [
+            (
+                "PhysicsGenerator/LeafImports.lean",
+                "PhysicsGenerator/LeafImports.olean",
+            ),
+            (
+                "PhysicsGenerator/Basic.lean",
+                "PhysicsGenerator/Basic.olean",
+            ),
+        ];
+        for (src, out) in foundation_modules {
+            let out_path = self.prover_root.join(".lake/build/lib/lean").join(out);
+            if let Some(parent) = out_path.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                return LeanVerifyResult::ProcessError {
+                    message: format!("failed to create direct-lean output dir: {e}"),
+                };
+            }
+            let output = Command::new(&lake_bin)
+                .arg("env")
+                .arg("lean")
+                .arg("-R")
+                .arg(".")
+                .arg("-o")
+                .arg(&out_path)
+                .arg(src)
+                .current_dir(&self.prover_root)
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {}
+                Ok(o) => {
+                    return LeanVerifyResult::Failed {
+                        stderr: combined_output(&o),
+                    };
+                }
+                Err(e) => {
+                    return LeanVerifyResult::ProcessError {
+                        message: format!("failed to run direct lean for {src}: {e}"),
+                    };
+                }
+            }
+        }
+
+        let output = Command::new(&lake_bin)
+            .arg("env")
+            .arg("lean")
+            .arg("-R")
+            .arg(".")
+            .arg(relative_path)
+            .current_dir(&self.prover_root)
+            .output();
+        match output {
+            Ok(o) if o.status.success() => LeanVerifyResult::Success,
+            Ok(o) => LeanVerifyResult::Failed {
+                stderr: combined_output(&o),
+            },
+            Err(e) => LeanVerifyResult::ProcessError {
+                message: format!("failed to run direct lean: {e}"),
+            },
+        }
+    }
+}
+
+fn combined_output(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stdout.is_empty() {
+        stderr.to_string()
+    } else if stderr.is_empty() {
+        stdout.to_string()
+    } else {
+        format!("{stdout}\n{stderr}")
     }
 }
 
@@ -162,7 +270,11 @@ pub fn verify_with_cache(
             return match record.outcome {
                 AttemptOutcome::Verified { .. } => LeanVerifyResult::Success,
                 AttemptOutcome::RejectedTypeError { msg } => {
-                    LeanVerifyResult::Failed { stderr: msg }
+                    if is_transient_verifier_failure(&msg) {
+                        ctx.verifier.verify_file(lean_content, module_path)
+                    } else {
+                        LeanVerifyResult::Failed { stderr: msg }
+                    }
                 }
                 AttemptOutcome::RejectedTimeout => LeanVerifyResult::Failed {
                     stderr: "timeout".into(),
@@ -194,6 +306,9 @@ pub fn verify_with_cache(
             theorem_id: [0u8; 8],
             tactic: String::new(),
         },
+        LeanVerifyResult::Failed { stderr } if is_transient_verifier_failure(stderr) => {
+            return raw;
+        }
         LeanVerifyResult::Failed { stderr } => AttemptOutcome::RejectedTypeError {
             msg: truncate(stderr, 256),
         },
@@ -230,6 +345,10 @@ fn truncate(s: &str, n: usize) -> String {
         }
         format!("{}…", &s[..idx])
     }
+}
+
+fn is_transient_verifier_failure(stderr: &str) -> bool {
+    stderr.contains("ProofWidgets not up-to-date") || stderr.contains("no such file or directory")
 }
 
 #[cfg(test)]

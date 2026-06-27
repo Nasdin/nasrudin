@@ -39,12 +39,7 @@
 //! either advisory-lock per hash or use `INSERT … ON CONFLICT DO NOTHING
 //! RETURNING …`.
 
-use axum::{
-    Extension, Json,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{Extension, Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -333,11 +328,10 @@ pub async fn ingest_one_theorem(
         }
     }
 
-    let parents_bytes: Option<Vec<Vec<u8>>> = t.parents.as_ref().map(|ps| {
-        ps.iter()
-            .filter_map(|p| hex::decode(p).ok())
-            .collect()
-    });
+    let parents_bytes: Option<Vec<Vec<u8>>> = t
+        .parents
+        .as_ref()
+        .map(|ps| ps.iter().filter_map(|p| hex::decode(p).ok()).collect());
     let origin_kind = t
         .origin
         .as_ref()

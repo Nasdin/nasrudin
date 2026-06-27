@@ -12,7 +12,7 @@
 
 mod test_app;
 
-use axum::body::{to_bytes, Body};
+use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;

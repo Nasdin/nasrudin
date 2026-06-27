@@ -1,12 +1,12 @@
 //! BYO LLM key vault: `GET`/`POST`/`DELETE` `/api/me/llm-keys`.
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
-use nasrudin_llm::{encryption, Registry};
+use nasrudin_llm::{Registry, encryption};
 use nasrudin_pg::query::user_llm_keys as keys_q;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

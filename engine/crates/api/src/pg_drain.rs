@@ -32,9 +32,7 @@ pub async fn drain_loop(rocks: Arc<TheoremDb>, pg: DatabaseConnection) {
     // was carried over from a previous shutdown.
     if let Ok(depth) = rocks.pg_insert_queue_depth() {
         if depth > 0 {
-            tracing::info!(
-                "pg_drain: recovered {depth} queued theorems from previous shutdown"
-            );
+            tracing::info!("pg_drain: recovered {depth} queued theorems from previous shutdown");
         }
     }
 

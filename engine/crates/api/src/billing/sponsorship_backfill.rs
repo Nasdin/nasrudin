@@ -121,16 +121,15 @@ pub async fn backfill(
         let last_id = page.data.last().map(|c| c.id.clone());
 
         for cust in &page.data {
-            let user = match nasrudin_pg::query::users::find_by_stripe_customer_id(pg, &cust.id)
-                .await
-            {
-                Ok(Some(u)) => u,
-                Ok(None) => continue,
-                Err(e) => {
-                    tracing::warn!(customer = %cust.id, error = %e, "lookup failed");
-                    continue;
-                }
-            };
+            let user =
+                match nasrudin_pg::query::users::find_by_stripe_customer_id(pg, &cust.id).await {
+                    Ok(Some(u)) => u,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        tracing::warn!(customer = %cust.id, error = %e, "lookup failed");
+                        continue;
+                    }
+                };
 
             // Subscriptions — every status, expanded for price.
             match list_subscriptions(&http, secret, base_url, &cust.id).await {
@@ -156,18 +155,17 @@ pub async fn backfill(
                             "active" | "trialing" | "past_due" => "active",
                             _ => "canceled",
                         };
-                        if let Err(e) =
-                            nasrudin_pg::query::user_sponsorships::upsert_subscription(
-                                pg,
-                                user.id,
-                                &sub.id,
-                                tier,
-                                amount_cents,
-                                status_label,
-                                started_at,
-                                None,
-                            )
-                            .await
+                        if let Err(e) = nasrudin_pg::query::user_sponsorships::upsert_subscription(
+                            pg,
+                            user.id,
+                            &sub.id,
+                            tier,
+                            amount_cents,
+                            status_label,
+                            started_at,
+                            None,
+                        )
+                        .await
                         {
                             tracing::warn!(error = %e, sub = %sub.id, "backfill: subscription upsert");
                         } else {
@@ -192,19 +190,12 @@ pub async fn backfill(
                         if ch.status.as_deref() != Some("succeeded") {
                             continue;
                         }
-                        let started_at = DateTime::<Utc>::from_timestamp(ch.created, 0)
-                            .unwrap_or_else(Utc::now);
-                        if let Err(e) =
-                            nasrudin_pg::query::user_sponsorships::upsert_one_time(
-                                pg,
-                                user.id,
-                                &ch.id,
-                                None,
-                                ch.amount,
-                                started_at,
-                                None,
-                            )
-                            .await
+                        let started_at =
+                            DateTime::<Utc>::from_timestamp(ch.created, 0).unwrap_or_else(Utc::now);
+                        if let Err(e) = nasrudin_pg::query::user_sponsorships::upsert_one_time(
+                            pg, user.id, &ch.id, None, ch.amount, started_at, None,
+                        )
+                        .await
                         {
                             tracing::warn!(error = %e, charge = %ch.id, "backfill: charge upsert");
                         } else {

@@ -12,10 +12,8 @@
 //! 4. The expanded AxiomStore size meets the boot threshold.
 
 use nasrudin_derive::{
-    AxiomStore, no_cheat_audit,
-    postulates_classical::classical_mechanics_postulates,
-    postulates_gr::general_relativity_postulates,
-    postulates_quantum::quantum_mechanics_postulates,
+    AxiomStore, no_cheat_audit, postulates_classical::classical_mechanics_postulates,
+    postulates_gr::general_relativity_postulates, postulates_quantum::quantum_mechanics_postulates,
     postulates_statmech::statistical_mechanics_postulates,
     postulates_thermo::thermodynamics_postulates,
 };

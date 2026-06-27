@@ -37,9 +37,7 @@ fn match_recursive(pattern: &Expr, expr: &Expr, bindings: &mut Substitution) -> 
         Expr::Lit(pn, pd) => matches!(expr, Expr::Lit(en, ed) if pn == en && pd == ed),
         Expr::BinOp(pop, pl, pr) => {
             if let Expr::BinOp(eop, el, er) = expr {
-                pop == eop
-                    && match_recursive(pl, el, bindings)
-                    && match_recursive(pr, er, bindings)
+                pop == eop && match_recursive(pl, el, bindings) && match_recursive(pr, er, bindings)
             } else {
                 false
             }
@@ -79,9 +77,7 @@ pub fn apply_substitution(expr: &Expr, subst: &Substitution) -> Expr {
             Box::new(apply_substitution(l, subst)),
             Box::new(apply_substitution(r, subst)),
         ),
-        Expr::UnOp(op, e) => {
-            Expr::UnOp(op.clone(), Box::new(apply_substitution(e, subst)))
-        }
+        Expr::UnOp(op, e) => Expr::UnOp(op.clone(), Box::new(apply_substitution(e, subst))),
         Expr::App(f, x) => Expr::App(
             Box::new(apply_substitution(f, subst)),
             Box::new(apply_substitution(x, subst)),
@@ -96,9 +92,7 @@ pub fn apply_substitution(expr: &Expr, subst: &Substitution) -> Expr {
             Box::new(apply_substitution(a, subst)),
             Box::new(apply_substitution(b, subst)),
         ),
-        Expr::Deriv(e, var) => {
-            Expr::Deriv(Box::new(apply_substitution(e, subst)), var.clone())
-        }
+        Expr::Deriv(e, var) => Expr::Deriv(Box::new(apply_substitution(e, subst)), var.clone()),
         Expr::PartialDeriv(e, var) => {
             Expr::PartialDeriv(Box::new(apply_substitution(e, subst)), var.clone())
         }
@@ -110,8 +104,12 @@ pub fn apply_substitution(expr: &Expr, subst: &Substitution) -> Expr {
         } => Expr::Integral {
             body: Box::new(apply_substitution(body, subst)),
             var: var.clone(),
-            lower: lower.as_ref().map(|e| Box::new(apply_substitution(e, subst))),
-            upper: upper.as_ref().map(|e| Box::new(apply_substitution(e, subst))),
+            lower: lower
+                .as_ref()
+                .map(|e| Box::new(apply_substitution(e, subst))),
+            upper: upper
+                .as_ref()
+                .map(|e| Box::new(apply_substitution(e, subst))),
         },
         Expr::Sum {
             body,

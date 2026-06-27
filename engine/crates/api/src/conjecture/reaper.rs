@@ -32,8 +32,7 @@ impl ConjectureLeaseReaper {
         let Some(pg) = self.state.pg.as_ref() else {
             return Ok(());
         };
-        let requeued =
-            nasrudin_pg::query::conjecture_jobs::requeue_expired_leases(pg).await?;
+        let requeued = nasrudin_pg::query::conjecture_jobs::requeue_expired_leases(pg).await?;
         if requeued.is_empty() {
             return Ok(());
         }

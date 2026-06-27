@@ -129,8 +129,10 @@ impl OptionalFromRequestParts<Arc<AppState>> for RequireAdmin {
         parts: &mut Parts,
         state: &Arc<AppState>,
     ) -> Result<Option<Self>, Self::Rejection> {
-        Ok(<Self as FromRequestParts<Arc<AppState>>>::from_request_parts(parts, state)
-            .await
-            .ok())
+        Ok(
+            <Self as FromRequestParts<Arc<AppState>>>::from_request_parts(parts, state)
+                .await
+                .ok(),
+        )
     }
 }

@@ -143,9 +143,7 @@ impl GaEngine {
             }
 
             // Send candidates for verification (batch)
-            if !all_candidates.is_empty()
-                && generation % self.config.verification_interval == 0
-            {
+            if !all_candidates.is_empty() && generation % self.config.verification_interval == 0 {
                 let batch: Vec<Theorem> = all_candidates
                     .into_iter()
                     .take(self.config.verification_batch_size)
@@ -250,7 +248,10 @@ impl GaEngine {
             let migrants = all_migrants[i].clone();
             if !migrants.is_empty() {
                 self.islands[target].accept_migrants(migrants);
-                tracing::debug!("Migrated {} individuals from island {i} to {target}", migration_size);
+                tracing::debug!(
+                    "Migrated {} individuals from island {i} to {target}",
+                    migration_size
+                );
             }
         }
 
@@ -269,7 +270,10 @@ impl GaEngine {
         shutdown: Arc<AtomicBool>,
         ga_status: Arc<std::sync::Mutex<crate::GaStatusSnapshot>>,
     ) {
-        tracing::info!("GA engine starting with {} islands (status-tracked)", self.islands.len());
+        tracing::info!(
+            "GA engine starting with {} islands (status-tracked)",
+            self.islands.len()
+        );
 
         let mut rng = rand::rng();
 
@@ -297,9 +301,7 @@ impl GaEngine {
             }
 
             // Send candidates for verification (batch)
-            if !all_candidates.is_empty()
-                && generation % self.config.verification_interval == 0
-            {
+            if !all_candidates.is_empty() && generation % self.config.verification_interval == 0 {
                 let batch: Vec<Theorem> = all_candidates
                     .into_iter()
                     .take(self.config.verification_batch_size)
@@ -353,7 +355,8 @@ impl GaEngine {
             if generation % 10 == 0 {
                 if let Ok(mut snapshot) = ga_status.lock() {
                     snapshot.total_generations = generation;
-                    snapshot.total_population = self.islands.iter().map(|i| i.population.len()).sum();
+                    snapshot.total_population =
+                        self.islands.iter().map(|i| i.population.len()).sum();
                     snapshot.num_islands = self.islands.len();
                     snapshot.candidates_sent = self.candidates_sent;
                     snapshot.verified_discoveries = self.verified_discoveries;

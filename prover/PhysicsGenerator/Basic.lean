@@ -1,4 +1,4 @@
-import Mathlib
+import PhysicsGenerator.LeafImports
 
 /-!
 # Basic Types for Physics Generator

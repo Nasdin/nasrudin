@@ -41,13 +41,18 @@ async fn refund_record_pending_then_succeeded() {
     .await
     .unwrap();
 
-    let pending = query::refund_records::list_pending_older_than(&db, 0).await.unwrap();
+    let pending = query::refund_records::list_pending_older_than(&db, 0)
+        .await
+        .unwrap();
     assert!(pending.iter().any(|r| r.id == id));
 
     query::refund_records::mark_succeeded(&db, id, &format!("re_{}", unique.simple()))
         .await
         .unwrap();
-    let row = query::refund_records::find_by_id(&db, id).await.unwrap().unwrap();
+    let row = query::refund_records::find_by_id(&db, id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(row.status, "succeeded");
     assert!(row.stripe_refund_id.is_some());
 }

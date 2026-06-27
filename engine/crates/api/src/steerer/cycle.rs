@@ -5,17 +5,20 @@
 //!     `claimed`/`running` with a live lease, else "C".
 //!  2. Close the previous cycle by computing its outcome JSON and
 //!     stamping `ended_at`.
-//!  3. Build the prompt: schema hint + recent history + demand
-//!     snapshot + active-job summaries.
-//!  4. Call the LLM through the trait-object `LlmCaller` (so tests
-//!     can swap a fake).
+//!  3. Run RL-only worker-facing updates: K-bandit, arm snapshots,
+//!     and reward attribution.
+//!  4. When a strategy refresh is due, call the LLM through the
+//!     trait-object `LlmCaller` (so tests can swap a fake).
 //!  5. Parse + validate the response. On any failure, fall back to
 //!     the most recent successfully-validated config and persist the
 //!     row with `validation_failed=true`.
-//!  6. Return the persisted row's id.
+//!  6. If no strategy refresh is needed, reuse the cached steering
+//!     config and persist an RL-only cycle.
+//!  7. Return the persisted row's id.
 //!
 //! The caller (a tokio task spawned in `main.rs`) ticks this every
-//! `STEERER_CADENCE_SECONDS`.
+//! `STEERER_CADENCE_SECONDS`. LLM strategy updates can be throttled
+//! further with `LLM_STEER_INTERVAL_SECONDS`.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -28,12 +31,14 @@ use crate::state::{AppState, ClusterConfigSnapshot};
 use crate::steerer::bandit;
 use crate::steerer::demand::aggregate_demand;
 use crate::steerer::outcome::compute_outcome;
-use crate::steerer::prompt::{build_prompt, ActiveJobSummary, HistoryEntry, SYSTEM_PROMPT};
-use crate::steerer::schema::{default_config, SteeringConfig, SteeringValidationError};
+use crate::steerer::prompt::{ActiveJobSummary, HistoryEntry, SYSTEM_PROMPT, build_prompt};
+use crate::steerer::schema::{SteeringConfig, SteeringValidationError, default_config};
 
 const HISTORY_N: u64 = 10;
 const DEMAND_WINDOW: std::time::Duration = std::time::Duration::from_secs(3600);
 const BANDIT_REWARD_WINDOW_SECS: i64 = 600;
+const CLUSTER_SUMMARIES_PER_ISLAND_FOR_LLM: u64 = 4;
+const MIN_STEERER_COMPLETION_TOKENS: u32 = 512;
 
 #[derive(Debug, Error)]
 pub enum CycleError {
@@ -63,6 +68,37 @@ pub async fn run_one_cycle(
     db: &DatabaseConnection,
     caller: &dyn LlmCaller,
     model_id: &str,
+    refresh_strategy: bool,
+) -> Result<Uuid, CycleError> {
+    run_one_cycle_inner(state, db, caller, model_id, refresh_strategy, None).await
+}
+
+pub async fn run_one_cycle_with_refresh_interval(
+    state: &Arc<AppState>,
+    db: &DatabaseConnection,
+    caller: &dyn LlmCaller,
+    model_id: &str,
+    refresh_strategy: bool,
+    min_strategy_refresh_interval_secs: i64,
+) -> Result<Uuid, CycleError> {
+    run_one_cycle_inner(
+        state,
+        db,
+        caller,
+        model_id,
+        refresh_strategy,
+        Some(min_strategy_refresh_interval_secs),
+    )
+    .await
+}
+
+async fn run_one_cycle_inner(
+    state: &Arc<AppState>,
+    db: &DatabaseConnection,
+    caller: &dyn LlmCaller,
+    model_id: &str,
+    refresh_strategy: bool,
+    min_strategy_refresh_interval_secs: Option<i64>,
 ) -> Result<Uuid, CycleError> {
     // 1. Mode.
     let active_paid_count = active_paid_jobs(db).await?;
@@ -90,21 +126,15 @@ pub async fn run_one_cycle(
     //    structural decision.
     let prev_cc = state.cluster_config.load();
     let now = Utc::now();
-    let reward_window_start =
-        now - chrono::Duration::seconds(BANDIT_REWARD_WINDOW_SECS);
+    let reward_window_start = now - chrono::Duration::seconds(BANDIT_REWARD_WINDOW_SECS);
     let mut next_k_per_island: std::collections::HashMap<String, u32> =
         std::collections::HashMap::new();
     let mut bandit_state = serde_json::Map::new();
     for &domain in bandit::ISLAND_DOMAINS {
         // Reward the previous K (if any).
         if let Some(&prev_k) = prev_cc.k_per_island.get(domain) {
-            match bandit::extract_reward_inputs(
-                db,
-                domain,
-                prev_k as i16,
-                reward_window_start,
-            )
-            .await
+            match bandit::extract_reward_inputs(db, domain, prev_k as i16, reward_window_start)
+                .await
             {
                 Ok(inputs) => {
                     let r = bandit::compute_reward(inputs);
@@ -168,18 +198,18 @@ pub async fn run_one_cycle(
     let linucb_rows = nasrudin_pg::query::cluster_directive_linucb::snapshot_all(db)
         .await
         .unwrap_or_default();
-    let mut linucb_map: std::collections::HashMap<
-        (String, String),
-        (Vec<f64>, Vec<f64>, i64),
-    > = std::collections::HashMap::new();
+    let mut linucb_map: std::collections::HashMap<(String, String), (Vec<f64>, Vec<f64>, i64)> =
+        std::collections::HashMap::new();
     for r in linucb_rows {
         linucb_map.insert(
             (r.island_domain, r.action),
             (r.a_matrix, r.b_vector, r.pulls),
         );
     }
-    let max_choice: u8 =
-        std::cmp::min(crate::steerer::directive_bandit::MAX_MULTIPLIER_CHOICES - 1, 8);
+    let max_choice: u8 = std::cmp::min(
+        crate::steerer::directive_bandit::MAX_MULTIPLIER_CHOICES - 1,
+        8,
+    );
     let directive_rows: Vec<crate::state::DirectiveArmRow> = arm_rows
         .into_iter()
         .map(|m| {
@@ -187,9 +217,7 @@ pub async fn run_one_cycle(
             let strength_mid = (m.strength_bucket as f64 + 0.5) / 5.0;
             let linucb_score = linucb_map
                 .get(&(m.island_domain.clone(), m.action.clone()))
-                .filter(|(_, _, pulls)| {
-                    *pulls >= crate::steerer::linucb::LINUCB_WARMUP_PULLS
-                })
+                .filter(|(_, _, pulls)| *pulls >= crate::steerer::linucb::LINUCB_WARMUP_PULLS)
                 .and_then(|(a, b, _)| {
                     crate::steerer::linucb::score(
                         a,
@@ -241,10 +269,9 @@ pub async fn run_one_cycle(
     if expanded > 0 {
         tracing::info!(expanded, "directive bandit: arms materialised by expansion");
     }
-    let expanded_compute =
-        crate::steerer::directive_bandit::expand_dominant_compute_arms(db)
-            .await
-            .unwrap_or(0);
+    let expanded_compute = crate::steerer::directive_bandit::expand_dominant_compute_arms(db)
+        .await
+        .unwrap_or(0);
     if expanded_compute > 0 {
         tracing::info!(
             expanded_compute,
@@ -257,10 +284,9 @@ pub async fn run_one_cycle(
     let compute_rows_raw = nasrudin_pg::query::cluster_compute_arms::snapshot_all(db)
         .await
         .unwrap_or_default();
-    let compute_linucb_rows =
-        nasrudin_pg::query::cluster_compute_linucb::snapshot_all(db)
-            .await
-            .unwrap_or_default();
+    let compute_linucb_rows = nasrudin_pg::query::cluster_compute_linucb::snapshot_all(db)
+        .await
+        .unwrap_or_default();
     let mut compute_linucb_map: std::collections::HashMap<String, (Vec<f64>, Vec<f64>, i64)> =
         std::collections::HashMap::new();
     for r in compute_linucb_rows {
@@ -272,9 +298,7 @@ pub async fn run_one_cycle(
             let strength_mid = (m.strength_bucket as f64 + 0.5) / 5.0;
             let linucb_score = compute_linucb_map
                 .get(&m.island_domain)
-                .filter(|(_, _, pulls)| {
-                    *pulls >= crate::steerer::linucb::LINUCB_WARMUP_PULLS
-                })
+                .filter(|(_, _, pulls)| *pulls >= crate::steerer::linucb::LINUCB_WARMUP_PULLS)
                 .and_then(|(a, b, _)| {
                     crate::steerer::linucb::score(
                         a,
@@ -312,144 +336,206 @@ pub async fn run_one_cycle(
             etag: compute_etag,
         }));
 
-    // 4. Build prompt.
-    let history = load_history(db, HISTORY_N).await?;
-    let demand = aggregate_demand(db, DEMAND_WINDOW).await.unwrap_or_default();
-    let active_jobs = active_job_summaries(db).await?;
+    let claimed_strategy_cycle = if refresh_strategy {
+        if let Some(interval_secs) = min_strategy_refresh_interval_secs {
+            let claim_config = steering_from_state_cache(state, scope)?;
+            let claim_json = serde_json::to_value(&claim_config).unwrap_or(serde_json::Value::Null);
+            let claimed = nasrudin_pg::query::cluster_steering::try_claim_strategy_refresh(
+                db,
+                scope,
+                claim_json,
+                model_id,
+                interval_secs,
+            )
+            .await?;
+            if claimed.is_none() {
+                tracing::info!(
+                    interval_secs,
+                    "LLM strategy refresh already claimed inside interval; running RL-only cycle"
+                );
+            }
+            claimed
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let refresh_strategy = refresh_strategy
+        && (min_strategy_refresh_interval_secs.is_none() || claimed_strategy_cycle.is_some());
 
-    // Most-recent ClusterSummaries per island for the LLM prompt.
-    let mut cluster_summaries: Vec<serde_json::Value> = Vec::new();
-    for &domain in bandit::ISLAND_DOMAINS {
-        if let Ok(rows) =
-            nasrudin_pg::query::cluster_reports::recent_for_island(db, domain, 12).await
-        {
-            for r in rows {
-                cluster_summaries.push(r.summary);
+    let (config, ptok, ctok, validation_failed) = if refresh_strategy {
+        // 4. Build prompt.
+        let history = load_history(db, HISTORY_N).await?;
+        let demand = aggregate_demand(db, DEMAND_WINDOW)
+            .await
+            .unwrap_or_default();
+        let active_jobs = active_job_summaries(db).await?;
+
+        // Most-recent ClusterSummaries per island for the LLM prompt.
+        let mut cluster_summaries: Vec<serde_json::Value> = Vec::new();
+        for &domain in bandit::ISLAND_DOMAINS {
+            if let Ok(rows) = nasrudin_pg::query::cluster_reports::recent_for_island(
+                db,
+                domain,
+                CLUSTER_SUMMARIES_PER_ISLAND_FOR_LLM,
+            )
+            .await
+            {
+                for r in rows {
+                    cluster_summaries.push(r.summary);
+                }
             }
         }
-    }
 
-    // Self-curriculum: show the LLM its in-flight proposed targets so
-    // it can mark them proved/abandoned in this cycle's emission.
-    let in_flight_targets: Vec<serde_json::Value> = nasrudin_pg::query::llm_proposed_targets::in_flight(
-        db, 30,
-    )
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|t| {
-        serde_json::json!({
-            "target_id": t.target_id,
-            "latex": t.latex,
-            "domain": t.domain,
-            "status": t.status,
-            "proposed_at": t.proposed_at.to_rfc3339(),
-        })
-    })
-    .collect();
+        // Self-curriculum: show the LLM its in-flight proposed targets so
+        // it can mark them proved/abandoned in this cycle's emission.
+        let in_flight_targets: Vec<serde_json::Value> =
+            nasrudin_pg::query::llm_proposed_targets::in_flight(db, 30)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "target_id": t.target_id,
+                        "latex": t.latex,
+                        "domain": t.domain,
+                        "status": t.status,
+                        "proposed_at": t.proposed_at.to_rfc3339(),
+                    })
+                })
+                .collect();
 
-    // Load the most-recent successfully-validated cycle's
-    // lessons_learned. This is the rolling indefinite-horizon LLM
-    // memory: the LLM rewrites it each cycle, replacing the prior
-    // version. Survives past the 10-cycle history window so insights
-    // from cycle N are still visible at cycle N+50. Empty string on
-    // cold boot.
-    let previous_lessons = last_known_good(db)
-        .await
-        .ok()
-        .flatten()
-        .map(|c| c.lessons_learned)
-        .unwrap_or_default();
+        // Rolling indefinite-horizon LLM memory: the LLM rewrites
+        // `lessons_learned` each strategy cycle by replacing the prior
+        // version.
+        let previous_lessons = last_known_good(db)
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.lessons_learned)
+            .unwrap_or_default();
 
-    let platform_target_states = load_platform_target_states(db).await.unwrap_or_default();
+        let platform_target_states = load_platform_target_states(db).await.unwrap_or_default();
 
-    let user_prompt = build_prompt(
-        scope,
-        &history,
-        &demand,
-        &active_jobs,
-        &cluster_summaries,
-        &serde_json::Value::Object(bandit_state),
-        &next_k_per_island,
-        &in_flight_targets,
-        &previous_lessons,
-        &platform_target_states,
-    );
+        let user_prompt = build_prompt(
+            scope,
+            &history,
+            &demand,
+            &active_jobs,
+            &cluster_summaries,
+            &serde_json::Value::Object(bandit_state),
+            &next_k_per_island,
+            &in_flight_targets,
+            &previous_lessons,
+            &platform_target_states,
+        );
 
-    // 5. Call LLM.
-    let (text, ptok, ctok) = caller.call(SYSTEM_PROMPT, &user_prompt).await?;
-
-    // 6. Parse + validate. On any failure fall back to LKG.
-    let (config, validation_failed) = match parse_and_validate(&text, scope) {
-        Ok(c) => (c, false),
-        Err(e) => {
-            tracing::warn!(error=%e, scope=%scope,
-                "steerer reply failed validation; falling back to last-known-good");
-            let lkg = last_known_good(db).await?.unwrap_or_else(|| {
-                let mut c = default_config();
-                c.scope = scope.into();
-                c
-            });
-            (lkg, true)
-        }
+        // 5. Call LLM. Provider outages and local token-budget
+        // refusals must not stop the RL/GA workhorse loop; fall back to
+        // the last validated strategic config and persist the cycle as
+        // validation_failed so operators can see the skipped refresh.
+        let (config, ptok, ctok, validation_failed) =
+            match caller.call(SYSTEM_PROMPT, &user_prompt).await {
+                Ok((text, ptok, ctok)) => {
+                    // 6. Parse + validate. On any failure fall back to LKG.
+                    match parse_and_validate(&text, scope) {
+                        Ok(c) => (c, ptok, ctok, false),
+                        Err(e) => {
+                            tracing::warn!(error=%e, scope=%scope,
+                                "steerer reply failed validation; falling back to last-known-good");
+                            (fallback_config(db, scope).await?, ptok, ctok, true)
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error=%e, scope=%scope,
+                        "steerer LLM call failed; falling back to last-known-good");
+                    (fallback_config(db, scope).await?, None, None, true)
+                }
+            };
+        (config, ptok, ctok, validation_failed)
+    } else {
+        (steering_from_state_cache(state, scope)?, None, None, false)
     };
 
     // 7. Persist + push to ArcSwap.
-    let row = nasrudin_pg::query::cluster_steering::insert_new_cycle(
-        db,
-        scope,
-        serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
-        model_id,
-        validation_failed,
-        ptok,
-        ctok,
-    )
-    .await?;
+    let config_json = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
+    let row = if let Some(claimed) = claimed_strategy_cycle {
+        nasrudin_pg::query::cluster_steering::update_strategy_refresh_result(
+            db,
+            claimed.id,
+            config_json,
+            validation_failed,
+            ptok,
+            ctok,
+        )
+        .await?
+    } else {
+        nasrudin_pg::query::cluster_steering::insert_new_cycle(
+            db,
+            scope,
+            config_json,
+            model_id,
+            validation_failed,
+            ptok,
+            ctok,
+        )
+        .await?
+    };
 
-    // Self-curriculum bookkeeping: persist any soft_target with a
-    // stable target_id, and apply target_status_updates the LLM
-    // emitted. Idempotent on re-emission — upsert_open is a no-op
-    // for existing rows, so the LLM can keep emitting the same
-    // target across cycles without resetting its lifecycle.
-    for st in &config.soft_targets {
-        if let Some(tid) = &st.target_id {
-            let _ = nasrudin_pg::query::llm_proposed_targets::upsert_open(
-                db, tid, &st.latex, &st.domain, st.weight as f64,
+    if refresh_strategy {
+        // Self-curriculum bookkeeping only updates on strategy cycles.
+        // Idempotent on re-emission:
+        // upsert_open is a no-op for existing rows, so the LLM can keep
+        // emitting the same target across cycles without resetting its
+        // lifecycle.
+        for st in &config.soft_targets {
+            if let Some(tid) = &st.target_id {
+                let _ = nasrudin_pg::query::llm_proposed_targets::upsert_open(
+                    db,
+                    tid,
+                    &st.latex,
+                    &st.domain,
+                    st.weight as f64,
+                )
+                .await;
+            }
+        }
+        for upd in &config.target_status_updates {
+            let allowed = matches!(
+                upd.new_status.as_str(),
+                "open" | "proving" | "proved" | "abandoned"
+            );
+            if !allowed {
+                tracing::warn!(
+                    target_id = %upd.target_id,
+                    bad_status = %upd.new_status,
+                    "rejecting target_status_update with invalid status"
+                );
+                continue;
+            }
+            let _ = nasrudin_pg::query::llm_proposed_targets::set_status(
+                db,
+                &upd.target_id,
+                &upd.new_status,
             )
             .await;
         }
-    }
-    for upd in &config.target_status_updates {
-        let allowed =
-            matches!(upd.new_status.as_str(), "open" | "proving" | "proved" | "abandoned");
-        if !allowed {
-            tracing::warn!(
-                target_id = %upd.target_id,
-                bad_status = %upd.new_status,
-                "rejecting target_status_update with invalid status"
-            );
-            continue;
-        }
-        let _ = nasrudin_pg::query::llm_proposed_targets::set_status(
-            db,
-            &upd.target_id,
-            &upd.new_status,
-        )
-        .await;
-    }
 
-    if !config.proposed_targets.is_empty() {
-        let (accepted, dropped) = crate::platform_targets::enqueue_proposed_targets(
-            db,
-            &config.proposed_targets,
-            model_id,
-        )
-        .await;
-        tracing::info!(
-            accepted,
-            dropped,
-            "applied proposed_targets from steerer cycle"
-        );
+        if !config.proposed_targets.is_empty() {
+            let (accepted, dropped) = crate::platform_targets::enqueue_proposed_targets(
+                db,
+                &config.proposed_targets,
+                model_id,
+            )
+            .await;
+            tracing::info!(
+                accepted,
+                dropped,
+                "applied proposed_targets from steerer cycle"
+            );
+        }
     }
 
     // Hot-reload the in-process snapshot. Workers see the new config
@@ -457,11 +543,13 @@ pub async fn run_one_cycle(
     // explicitly so they don't see a stale pairing of axioms+config.
     let body = serde_json::to_vec(&config).unwrap_or_default();
     let etag = xxhash_rust::xxh64::xxh64(&body, 0);
-    state.steering.store(Arc::new(crate::state::SteeringSnapshot {
-        config: serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
-        etag,
-        started_at: row.started_at.with_timezone(&Utc),
-    }));
+    state
+        .steering
+        .store(Arc::new(crate::state::SteeringSnapshot {
+            config: serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
+            etag,
+            started_at: row.started_at.with_timezone(&Utc),
+        }));
     state.invalidate_seed_cache();
 
     Ok(row.id)
@@ -487,6 +575,28 @@ fn parse_and_validate(text: &str, expected_scope: &str) -> Result<SteeringConfig
     }
     c.validate()?;
     Ok(c)
+}
+
+fn steering_from_state_cache(
+    state: &Arc<AppState>,
+    expected_scope: &str,
+) -> Result<SteeringConfig, CycleError> {
+    let snapshot = state.steering.load();
+    let mut config =
+        serde_json::from_value(snapshot.config.clone()).unwrap_or_else(|_| default_config());
+    if let Err(err) = config.validate() {
+        tracing::warn!(error=%err, "cached steering config invalid; using default_config");
+        config = default_config();
+    }
+    config.scope = expected_scope.into();
+    if config.scope == "B" {
+        config.hard_targets.clear();
+        config.mutation_knobs = None;
+        config.cluster_directives.clear();
+        config.compute_directives.clear();
+    }
+    config.validate()?;
+    Ok(config)
 }
 
 fn strip_code_fence(s: &str) -> &str {
@@ -547,6 +657,25 @@ async fn last_known_good(
     Ok(row.and_then(|r| serde_json::from_value(r.config_json).ok()))
 }
 
+async fn fallback_config(
+    db: &DatabaseConnection,
+    scope: &str,
+) -> Result<SteeringConfig, sea_orm::DbErr> {
+    let mut c = last_known_good(db).await?.unwrap_or_else(|| {
+        let mut c = default_config();
+        c.scope = scope.into();
+        c
+    });
+    c.scope = scope.into();
+    if c.scope == "B" {
+        c.hard_targets.clear();
+        c.mutation_knobs = None;
+        c.cluster_directives.clear();
+        c.compute_directives.clear();
+    }
+    Ok(c)
+}
+
 /// Pull every `tier='platform'` conjecture_jobs row's (hunch, state)
 /// pair into a tiny JSON list the LLM uses to decide whether to emit
 /// `proposed_targets`. Returning [] means "platform queue empty" —
@@ -591,15 +720,29 @@ async fn load_platform_target_states(
 pub struct GradientCaller {
     provider: nasrudin_llm::GradientProvider,
     model: String,
+    max_completion_tokens: u32,
+    max_total_tokens: u32,
     /// Atomic so the fallback can flip without `&mut self`.
     strict_failed: std::sync::atomic::AtomicBool,
 }
 
 impl GradientCaller {
-    pub fn new(provider: nasrudin_llm::GradientProvider, model: String) -> Self {
+    pub fn new(
+        provider: nasrudin_llm::GradientProvider,
+        model: String,
+        max_completion_tokens: u32,
+        max_total_tokens: u32,
+    ) -> Self {
+        let max_total_tokens = std::cmp::max(max_total_tokens, MIN_STEERER_COMPLETION_TOKENS);
+        let max_completion_tokens = std::cmp::max(
+            std::cmp::min(max_completion_tokens, max_total_tokens),
+            MIN_STEERER_COMPLETION_TOKENS,
+        );
         Self {
             provider,
             model,
+            max_completion_tokens,
+            max_total_tokens,
             strict_failed: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -626,14 +769,24 @@ impl LlmCaller for GradientCaller {
         user: &str,
     ) -> Result<(String, Option<i32>, Option<i32>), CycleError> {
         use nasrudin_llm::{CompletionRequest, LlmProvider, ResponseFormat};
-        // Kimi K2.6 (and other reasoning models on Gradient) burn
-        // tokens on `reasoning_content` before producing the actual
-        // SteeringConfig JSON in `content`. 16384 is a generous
-        // ceiling that keeps a SteeringConfig (~1500 token JSON) +
-        // K2.6's longer agentic chain-of-thought comfortably below
-        // the wall. If the model truncates anyway, the parse will
-        // fail and the cycle falls back to last-known-good — see
-        // parse_and_validate.
+        let approx_input_tokens = approximate_tokens(system) + approximate_tokens(user);
+        let Some(available_completion_tokens) =
+            self.max_total_tokens.checked_sub(approx_input_tokens)
+        else {
+            return Err(CycleError::Llm(format!(
+                "steerer prompt budget refusal: approx_input_tokens={} exceeds max_total_tokens={}",
+                approx_input_tokens, self.max_total_tokens
+            )));
+        };
+        if available_completion_tokens < MIN_STEERER_COMPLETION_TOKENS {
+            return Err(CycleError::Llm(format!(
+                "steerer prompt budget refusal: approx_input_tokens={} leaves only {} completion tokens below minimum {}",
+                approx_input_tokens, available_completion_tokens, MIN_STEERER_COMPLETION_TOKENS
+            )));
+        }
+        let request_max_tokens =
+            std::cmp::min(self.max_completion_tokens, available_completion_tokens);
+
         let response_format = if self
             .strict_failed
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -654,30 +807,34 @@ impl LlmCaller for GradientCaller {
             model: self.model.clone(),
             system_prompt: system.to_owned(),
             user_prompt: user.to_owned(),
-            // Kimi K2.5 caps non-streaming at 9000 tokens; K2.6 raised
-            // it but the .env still pins K2.5 on prod. Every cycle was
-            // 400ing with "exceeds the non-streaming limit of 9000".
-            // 8192 leaves headroom and works for both models.
-            max_tokens: 8192,
+            max_tokens: request_max_tokens,
             temperature: 0.4,
             stop_sequences: vec![],
             response_format: response_format.clone(),
         };
         match self.provider.complete(req).await {
-            Ok(r) => Ok((
-                r.text,
-                Some(r.input_tokens as i32),
-                Some(r.output_tokens as i32),
-            )),
+            Ok(r) => {
+                let total_tokens = r.input_tokens.saturating_add(r.output_tokens);
+                if total_tokens > self.max_total_tokens {
+                    tracing::warn!(
+                        input_tokens = r.input_tokens,
+                        output_tokens = r.output_tokens,
+                        max_total_tokens = self.max_total_tokens,
+                        "steerer LLM call exceeded configured token budget according to provider usage"
+                    );
+                }
+                Ok((
+                    r.text,
+                    Some(r.input_tokens as i32),
+                    Some(r.output_tokens as i32),
+                ))
+            }
             Err(e) => {
                 // If we tried strict mode and got an HTTP 400, the
                 // provider doesn't accept json_schema. Flip the
                 // fallback flag and retry once with plain json_object.
                 let was_strict = matches!(response_format, ResponseFormat::JsonSchema { .. });
-                let is_400 = matches!(
-                    &e,
-                    nasrudin_llm::LlmError::Http { status: 400, .. }
-                );
+                let is_400 = matches!(&e, nasrudin_llm::LlmError::Http { status: 400, .. });
                 if was_strict && is_400 {
                     self.strict_failed
                         .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -690,11 +847,7 @@ impl LlmCaller for GradientCaller {
                         model: self.model.clone(),
                         system_prompt: system.to_owned(),
                         user_prompt: user.to_owned(),
-                        // Kimi K2.5 caps non-streaming at 9000 tokens; K2.6 raised
-            // it but the .env still pins K2.5 on prod. Every cycle was
-            // 400ing with "exceeds the non-streaming limit of 9000".
-            // 8192 leaves headroom and works for both models.
-            max_tokens: 8192,
+                        max_tokens: request_max_tokens,
                         temperature: 0.4,
                         stop_sequences: vec![],
                         response_format: ResponseFormat::Json {
@@ -706,6 +859,15 @@ impl LlmCaller for GradientCaller {
                         .complete(retry_req)
                         .await
                         .map_err(|e2| CycleError::Llm(e2.to_string()))?;
+                    let total_tokens = r.input_tokens.saturating_add(r.output_tokens);
+                    if total_tokens > self.max_total_tokens {
+                        tracing::warn!(
+                            input_tokens = r.input_tokens,
+                            output_tokens = r.output_tokens,
+                            max_total_tokens = self.max_total_tokens,
+                            "steerer LLM retry exceeded configured token budget according to provider usage"
+                        );
+                    }
                     Ok((
                         r.text,
                         Some(r.input_tokens as i32),
@@ -717,6 +879,13 @@ impl LlmCaller for GradientCaller {
             }
         }
     }
+}
+
+fn approximate_tokens(s: &str) -> u32 {
+    // Conservative enough for budget gating without pulling tokenizer
+    // assets into the API hot path. English/JSON prompts are usually
+    // around 3-4 chars/token; using 3 overestimates and refuses early.
+    ((s.len() as u32).saturating_add(2)) / 3
 }
 
 #[cfg(test)]
@@ -747,7 +916,10 @@ mod tests {
         }
         // The cluster action enum must enumerate all four variants.
         for variant in ["boost", "exploit", "diversify", "kill"] {
-            assert!(s.contains(variant), "schema missing ClusterAction::{variant}");
+            assert!(
+                s.contains(variant),
+                "schema missing ClusterAction::{variant}"
+            );
         }
     }
 
@@ -824,10 +996,7 @@ mod tests {
         let entry = wire_val.get("sr_rest_energy").unwrap().clone();
         let steps: Vec<RuleStep> =
             serde_json::from_value(entry).expect("worker-side deserialisation");
-        assert!(matches!(
-            steps[0],
-            RuleStep::IntroduceAxiom { .. }
-        ));
+        assert!(matches!(steps[0], RuleStep::IntroduceAxiom { .. }));
         assert!(matches!(steps[3], RuleStep::AlgebraicSimplify));
     }
 
@@ -839,10 +1008,8 @@ mod tests {
     fn parse_accepts_fenced_proposed_chains_payload() {
         use nasrudin_derive::RuleStep;
         let mut cfg = default_config();
-        cfg.proposed_chains.insert(
-            "sr_rest_energy".into(),
-            vec![RuleStep::AlgebraicSimplify],
-        );
+        cfg.proposed_chains
+            .insert("sr_rest_energy".into(), vec![RuleStep::AlgebraicSimplify]);
         let json = serde_json::to_string(&cfg).unwrap();
         let fenced = format!("```json\n{}\n```", json);
         let parsed = parse_and_validate(&fenced, "C").unwrap();

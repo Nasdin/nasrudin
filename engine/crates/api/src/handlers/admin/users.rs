@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::admin::audit::{actions, perform_audited, AuditError, RequestMeta};
+use crate::admin::audit::{AuditError, RequestMeta, actions, perform_audited};
 use crate::admin::require_admin::RequireAdmin;
 use crate::state::AppState;
 use crate::trust::CacheInvalidation;
@@ -105,11 +105,7 @@ pub async fn detail(
     let user = match nasrudin_pg::query::admin_users::find_by_id(pg, id).await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "not_found"})),
-            )
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response();
         }
         Err(e) => {
             return (
@@ -180,11 +176,7 @@ fn audit_into_response(result: Result<(), AuditError>) -> axum::response::Respon
                 return (StatusCode::CONFLICT, Json(json!({"error": "last_admin"})))
                     .into_response();
             }
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": s})),
-            )
-                .into_response()
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": s}))).into_response()
         }
     }
 }
@@ -214,8 +206,7 @@ pub async fn set_admin(
     let before = match nasrudin_pg::query::admin_users::find_by_id(pg, id).await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"})))
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response();
         }
         Err(e) => {
             return (
@@ -263,8 +254,7 @@ pub async fn set_trust(
     let before = match nasrudin_pg::query::admin_users::find_by_id(pg, id).await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"})))
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response();
         }
         Err(e) => {
             return (
@@ -292,7 +282,9 @@ pub async fn set_trust(
     )
     .await;
     if result.is_ok() {
-        let _ = state.trust_invalidation_tx.send(CacheInvalidation::User(id));
+        let _ = state
+            .trust_invalidation_tx
+            .send(CacheInvalidation::User(id));
     }
     audit_into_response(result.map(|_| ()))
 }
@@ -324,8 +316,7 @@ pub async fn set_spot_check_rate(
     let before = match nasrudin_pg::query::admin_users::find_by_id(pg, id).await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"})))
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response();
         }
         Err(e) => {
             return (
@@ -353,7 +344,9 @@ pub async fn set_spot_check_rate(
     )
     .await;
     if result.is_ok() {
-        let _ = state.trust_invalidation_tx.send(CacheInvalidation::User(id));
+        let _ = state
+            .trust_invalidation_tx
+            .send(CacheInvalidation::User(id));
     }
     audit_into_response(result.map(|_| ()))
 }
@@ -386,8 +379,7 @@ pub async fn set_plan(
     let before = match nasrudin_pg::query::admin_users::find_by_id(pg, id).await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"})))
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response();
         }
         Err(e) => {
             return (
@@ -436,8 +428,7 @@ pub async fn adjust_credits(
     let before = match nasrudin_pg::query::admin_users::find_by_id(pg, id).await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"})))
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response();
         }
         Err(e) => {
             return (

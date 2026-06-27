@@ -10,13 +10,13 @@
 mod test_app;
 
 use async_trait::async_trait;
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 use serde_json::json;
 
 use nasrudin_ga::chain_engine::DiscoveryConfig;
 use nasrudin_ga::steering_knobs::apply_steering_knobs;
-use physics_api::steerer::cycle::{run_one_cycle, CycleError, LlmCaller};
+use physics_api::steerer::cycle::{CycleError, LlmCaller, run_one_cycle};
 
 struct FakeLlmCaller {
     canned: String,
@@ -84,6 +84,7 @@ async fn llm_steering_changes_ga_behavior() {
         &app.pg,
         &fake,
         "test-model",
+        true,
     )
     .await
     .expect("cycle ran");
@@ -183,8 +184,7 @@ async fn cluster_report_round_trips() {
     // bearer auth + IP rate-limit); for this test we mount it bare.
     let router = app.router.clone().route(
         "/api/cluster-report",
-        axum::routing::post(physics_api::handlers::cluster_report::handler)
-            .with_state(app.state()),
+        axum::routing::post(physics_api::handlers::cluster_report::handler).with_state(app.state()),
     );
 
     let body = json!({
@@ -208,7 +208,7 @@ async fn cluster_report_round_trips() {
         }]
     });
 
-    use axum::body::{to_bytes, Body};
+    use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use tower::util::ServiceExt;
 
@@ -226,15 +226,11 @@ async fn cluster_report_round_trips() {
     assert_eq!(v["stored"], 1);
 
     // Verify the row landed in PG.
-    let recent = nasrudin_pg::query::cluster_reports::recent_for_island(
-        &app.pg,
-        "special_relativity",
-        10,
-    )
-    .await
-    .unwrap();
+    let recent =
+        nasrudin_pg::query::cluster_reports::recent_for_island(&app.pg, "special_relativity", 10)
+            .await
+            .unwrap();
     assert_eq!(recent.len(), 1);
     assert_eq!(recent[0].chunk_index, 7);
     assert_eq!(recent[0].k_used, 4);
 }
-

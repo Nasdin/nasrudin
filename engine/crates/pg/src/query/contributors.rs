@@ -4,7 +4,10 @@
 //! totals: worker count, theorems contributed, active workers.
 
 use anyhow::Result;
-use sea_orm::{ConnectionTrait, FromQueryResult, Statement, DatabaseBackend, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Order};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, FromQueryResult, Order,
+    QueryFilter, QueryOrder, Statement,
+};
 use uuid::Uuid;
 
 use crate::entity::{api_keys, users, workers};
@@ -26,7 +29,7 @@ pub struct ContributorStats {
 /// then aggregates by user_id. Users with no workers are excluded.
 pub async fn list_contributors(db: &impl ConnectionTrait) -> Result<Vec<ContributorStats>> {
     use sea_orm::FromQueryResult;
-    
+
     let stmt = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
@@ -45,7 +48,7 @@ pub async fn list_contributors(db: &impl ConnectionTrait) -> Result<Vec<Contribu
         "#,
         [],
     );
-    
+
     let rows = ContributorStats::find_by_statement(stmt).all(db).await?;
     Ok(rows)
 }
@@ -63,12 +66,12 @@ pub async fn get_user_workers(
         .filter(api_keys::Column::RevokedAt.is_null())
         .all(db)
         .await?;
-    
+
     let worker_names: Vec<String> = keys.into_iter().map(|k| k.name).collect();
     if worker_names.is_empty() {
         return Ok(vec![]);
     }
-    
+
     workers::Entity::find()
         .filter(workers::Column::Id.is_in(worker_names))
         .order_by(workers::Column::TheoremsContributed, Order::Desc)

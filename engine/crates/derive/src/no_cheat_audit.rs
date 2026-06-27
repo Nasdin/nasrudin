@@ -16,7 +16,7 @@
 //! — every entry is a target the system is supposed to *derive*.
 
 use crate::axiom_store::AxiomStore;
-use nasrudin_core::{Axiom, BinOp, Expr, PhysConst, UnOp};
+use nasrudin_core::{BinOp, Expr, PhysConst, UnOp};
 
 /// Build the deny-list of canonical-form statements that must never
 /// appear as starting axioms. Each entry is constructed as the same
@@ -42,7 +42,10 @@ pub fn forbidden_canonical_statements() -> Vec<(&'static str, String)> {
     out.push(("emc2", eq(e(), mc2.clone()).to_canonical()));
 
     // E² = (m·c²)² (rest energy squared — direct precursor)
-    out.push(("e_sq_eq_mc2_sq", eq(pow(e(), two()), pow(mc2.clone(), two())).to_canonical()));
+    out.push((
+        "e_sq_eq_mc2_sq",
+        eq(pow(e(), two()), pow(mc2.clone(), two())).to_canonical(),
+    ));
 
     // Mass-shell: E² − p²c² = (mc²)²  AND  E² = (mc²)² + (pc)²
     let pc_sq = pow(mul(p(), c()), two());
@@ -60,7 +63,10 @@ pub fn forbidden_canonical_statements() -> Vec<(&'static str, String)> {
         "mass_shell_c4",
         eq(
             pow(e(), two()),
-            add(mul(pow(p(), two()), pow(c(), two())), mul(pow(m(), two()), pow(c(), four()))),
+            add(
+                mul(pow(p(), two()), pow(c(), two())),
+                mul(pow(m(), two()), pow(c(), four())),
+            ),
         )
         .to_canonical(),
     ));
@@ -85,11 +91,7 @@ pub fn forbidden_canonical_statements() -> Vec<(&'static str, String)> {
     // free-particle Hamiltonian + momentum operator squared.
     out.push((
         "qm_free_particle_dispersion",
-        eq(
-            e(),
-            div(pow(p(), two()), mul(two(), Expr::Var("m".into()))),
-        )
-        .to_canonical(),
+        eq(e(), div(pow(p(), two()), mul(two(), Expr::Var("m".into())))).to_canonical(),
     ));
 
     // Heisenberg uncertainty (textbook form): Δx·Δp ≥ ℏ/2.
@@ -256,7 +258,9 @@ pub fn audit_or_panic(store: &AxiomStore, context: &str) {
             eprintln!("    • {v}");
         }
         eprintln!("  Headline results must be *derived* by the GA, not registered.");
-        eprintln!("  Remove these entries (or fix the loader that registered them) before retrying.\n");
+        eprintln!(
+            "  Remove these entries (or fix the loader that registered them) before retrying.\n"
+        );
         std::process::exit(2);
     }
 }
@@ -303,7 +307,10 @@ mod tests {
         // Boot-time audit ran clean (covered by `upstream_sr_passes`),
         // so a forbidden-headline name like `mass_shell_condition` is
         // definitively NOT in the store.
-        assert!(audit(&store).is_empty(), "test pre-condition: audit must be clean");
+        assert!(
+            audit(&store).is_empty(),
+            "test pre-condition: audit must be clean"
+        );
         let llm_chain = Chain(vec![
             RuleStep::IntroduceAxiom {
                 axiom_name: "mass_shell_condition".into(),

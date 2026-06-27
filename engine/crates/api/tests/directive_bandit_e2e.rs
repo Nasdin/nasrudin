@@ -12,7 +12,7 @@ mod test_app;
 use async_trait::async_trait;
 use serde_json::json;
 
-use physics_api::steerer::cycle::{run_one_cycle, CycleError, LlmCaller};
+use physics_api::steerer::cycle::{CycleError, LlmCaller, run_one_cycle};
 
 struct FakeLlmCaller {
     canned: String,
@@ -92,7 +92,7 @@ async fn directive_arms_snapshot_carries_seeded_skew() {
     })
     .to_string();
     let fake = FakeLlmCaller { canned };
-    run_one_cycle(&app.state(), &app.pg, &fake, "test-model")
+    run_one_cycle(&app.state(), &app.pg, &fake, "test-model", true)
         .await
         .expect("cycle ran");
 
@@ -178,7 +178,7 @@ async fn directive_feedback_records_pulls() {
             .with_state(app.state()),
     );
 
-    use axum::body::{to_bytes, Body};
+    use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use tower::util::ServiceExt;
 
@@ -244,7 +244,7 @@ async fn directive_feedback_rejects_bad_action_and_buckets() {
         axum::routing::post(physics_api::handlers::directive_feedback::handler)
             .with_state(app.state()),
     );
-    use axum::body::{to_bytes, Body};
+    use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use tower::util::ServiceExt;
 

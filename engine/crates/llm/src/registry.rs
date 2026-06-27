@@ -35,9 +35,8 @@ impl Registry {
                 AnthropicProvider::new(key).complete(req).await
             }
             "openai" => {
-                let key = api_key.ok_or_else(|| {
-                    LlmError::Unauthorized("openai requires an api key".into())
-                })?;
+                let key = api_key
+                    .ok_or_else(|| LlmError::Unauthorized("openai requires an api key".into()))?;
                 OpenAiProvider::new(key).complete(req).await
             }
             "ollama" => OllamaProvider::new().complete(req).await,

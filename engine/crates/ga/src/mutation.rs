@@ -148,9 +148,8 @@ pub fn apply_mutation_with_store_excluding(
 
 /// Domain-relevant variable names for physics.
 const PHYSICS_VARS: &[&str] = &[
-    "E", "m", "c", "p", "v", "t", "F", "a", "x", "r", "T", "S", "k", "h", "q", "V", "I", "R",
-    "B", "G", "L", "H", "U", "W", "P", "n", "f", "omega", "lambda", "phi", "theta", "rho",
-    "sigma",
+    "E", "m", "c", "p", "v", "t", "F", "a", "x", "r", "T", "S", "k", "h", "q", "V", "I", "R", "B",
+    "G", "L", "H", "U", "W", "P", "n", "f", "omega", "lambda", "phi", "theta", "rho", "sigma",
 ];
 
 /// Swap a random variable with a different one from the physics vocabulary.
@@ -178,13 +177,7 @@ fn var_swap(expr: &Expr, rng: &mut impl Rng) -> Expr {
 }
 
 /// Algebraic binary ops suitable for swapping.
-const ALGEBRAIC_OPS: &[BinOp] = &[
-    BinOp::Add,
-    BinOp::Sub,
-    BinOp::Mul,
-    BinOp::Div,
-    BinOp::Pow,
-];
+const ALGEBRAIC_OPS: &[BinOp] = &[BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div, BinOp::Pow];
 
 /// Replace a binary operator with a different one.
 fn op_swap(expr: &Expr, rng: &mut impl Rng) -> Expr {
@@ -315,9 +308,7 @@ fn sample_any_axiom(
         } else {
             &cold_names[pick - hot_keys.len()]
         };
-        if !forbidden.is_empty()
-            && forbidden.contains(&nasrudin_core::axiom_id_from_name(name))
-        {
+        if !forbidden.is_empty() && forbidden.contains(&nasrudin_core::axiom_id_from_name(name)) {
             continue;
         }
         return store.get(name);
@@ -329,11 +320,7 @@ fn sample_any_axiom(
 fn extract_meaningful_fragment(stmt: &Expr, rng: &mut impl Rng) -> Expr {
     match stmt {
         // For Eq(LHS, RHS) — both sides are useful. Pick at random.
-        Expr::BinOp(
-            BinOp::Eq | BinOp::Iff,
-            l,
-            r,
-        ) => {
+        Expr::BinOp(BinOp::Eq | BinOp::Iff, l, r) => {
             if rng.random_bool(0.5) {
                 (**l).clone()
             } else {
@@ -502,13 +489,7 @@ fn simplify(expr: &Expr) -> Expr {
 }
 
 /// Unary operators suitable for wrapping.
-const WRAP_OPS: &[UnOp] = &[
-    UnOp::Neg,
-    UnOp::Abs,
-    UnOp::Sqrt,
-    UnOp::Exp,
-    UnOp::Ln,
-];
+const WRAP_OPS: &[UnOp] = &[UnOp::Neg, UnOp::Abs, UnOp::Sqrt, UnOp::Exp, UnOp::Ln];
 
 /// Wrap a random subtree with a unary operator.
 fn unary_wrap(expr: &Expr, rng: &mut impl Rng) -> Expr {
@@ -659,6 +640,9 @@ mod tests {
                 break;
             }
         }
-        assert!(found_different, "Mutation should produce different expressions");
+        assert!(
+            found_different,
+            "Mutation should produce different expressions"
+        );
     }
 }

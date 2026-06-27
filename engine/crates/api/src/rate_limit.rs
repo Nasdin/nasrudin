@@ -33,7 +33,11 @@ impl KeyExtractor for UdsAwareKeyExtractor {
     type Key = IpAddr;
 
     fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
-        if req.extensions().get::<crate::trust::LocalSocket>().is_some() {
+        if req
+            .extensions()
+            .get::<crate::trust::LocalSocket>()
+            .is_some()
+        {
             // All UDS traffic shares one bucket. The bucket gets a fixed
             // sentinel address — never appears on the public TCP path so
             // it can't collide with a real client.

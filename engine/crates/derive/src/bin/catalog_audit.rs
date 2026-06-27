@@ -20,9 +20,9 @@ use nasrudin_core::Expr;
 use std::collections::BTreeMap;
 
 fn main() -> anyhow::Result<()> {
-    let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "physics_data/physlean-extract/output/catalog.json".into()
-    });
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "physics_data/physlean-extract/output/catalog.json".into());
     let content = std::fs::read_to_string(&path)?;
     let mut deser = serde_json::Deserializer::from_str(&content);
     deser.disable_recursion_limit();
@@ -77,10 +77,14 @@ fn main() -> anyhow::Result<()> {
     println!("Catalog: {path}");
     println!("  total theorems:       {total}");
     println!("  has expr_ast field:   {has_ast_field}");
-    println!("  parsed into Expr:     {parsed_ok}  ({:.1}%)",
-             100.0 * parsed_ok as f64 / total as f64);
-    println!("  Eq/BinOp at top:      {parsed_into_eq_or_binop}  ({:.1}%)",
-             100.0 * parsed_into_eq_or_binop as f64 / total as f64);
+    println!(
+        "  parsed into Expr:     {parsed_ok}  ({:.1}%)",
+        100.0 * parsed_ok as f64 / total as f64
+    );
+    println!(
+        "  Eq/BinOp at top:      {parsed_into_eq_or_binop}  ({:.1}%)",
+        100.0 * parsed_into_eq_or_binop as f64 / total as f64
+    );
     println!();
     println!("Root variant counts (across all expr_ast):");
     for (k, v) in &root_variants {
@@ -111,9 +115,7 @@ fn expr_contains_eq_or_binop_at_top(e: &Expr) -> bool {
         Expr::Pi(_, _, body) => expr_contains_eq_or_binop_at_top(body),
         // Lambdas / Let bindings also commonly wrap the algebraic
         // core.
-        Expr::Lam(_, _, body) | Expr::Let(_, _, body) => {
-            expr_contains_eq_or_binop_at_top(body)
-        }
+        Expr::Lam(_, _, body) | Expr::Let(_, _, body) => expr_contains_eq_or_binop_at_top(body),
         _ => false,
     }
 }

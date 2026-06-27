@@ -5,8 +5,8 @@
 //! filtering through `iter_excluding` skips it.
 
 use nasrudin_core::{
-    axiom_id_from_name, Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremOrigin,
-    VerificationStatus,
+    Domain, Expr, FitnessScore, ProofTree, Theorem, TheoremOrigin, VerificationStatus,
+    axiom_id_from_name,
 };
 use nasrudin_derive::DerivationEngine;
 use nasrudin_rocks::TheoremDb;

@@ -160,7 +160,11 @@ pub async fn landing(State(state): State<Arc<AppState>>) -> Json<LandingStats> {
         Ok(stats) => stats,
         Err(e) => {
             tracing::warn!(error = %e, "landing stats: compute failed; returning stale or zeros");
-            state.landing_stats.get_stale().await.unwrap_or_else(LandingStats::zero)
+            state
+                .landing_stats
+                .get_stale()
+                .await
+                .unwrap_or_else(LandingStats::zero)
         }
     };
 
@@ -172,11 +176,7 @@ async fn compute(state: &Arc<AppState>) -> anyhow::Result<LandingStats> {
     // RocksDB total — exposed as `corpus_size` for transparency. Includes
     // imported PhysLean entries that may not have been drained into PG
     // yet (so it can be larger than `verified_theorems`).
-    let corpus_size = state
-        .db
-        .get_stats()
-        .map(|s| s.total_theorems)
-        .unwrap_or(0);
+    let corpus_size = state.db.get_stats().map(|s| s.total_theorems).unwrap_or(0);
 
     let mut stats = LandingStats {
         corpus_size,
@@ -187,16 +187,14 @@ async fn compute(state: &Arc<AppState>) -> anyhow::Result<LandingStats> {
         // Lifetime verified count from PG — this is what `/browse`
         // paginates over, so the public-facing "X theorems" badge stays
         // in lockstep with what users can actually click into.
-        stats.verified_theorems =
-            nasrudin_pg::query::theorems::count_verified(pg).await?;
+        stats.verified_theorems = nasrudin_pg::query::theorems::count_verified(pg).await?;
 
         stats.active_workers = nasrudin_pg::query::workers::count_active_workers(
             pg,
             chrono::Duration::minutes(ACTIVE_WINDOW_MIN),
         )
         .await?;
-        stats.contributors =
-            nasrudin_pg::query::workers::count_distinct_contributors(pg).await?;
+        stats.contributors = nasrudin_pg::query::workers::count_distinct_contributors(pg).await?;
 
         let now = chrono::Utc::now();
         let since_24h = now - chrono::Duration::hours(24);
@@ -217,8 +215,7 @@ async fn compute(state: &Arc<AppState>) -> anyhow::Result<LandingStats> {
             })
             .collect();
 
-        if let Some((verified_at, domain)) =
-            nasrudin_pg::query::theorems::last_verified(pg).await?
+        if let Some((verified_at, domain)) = nasrudin_pg::query::theorems::last_verified(pg).await?
         {
             stats.last_verified_at = Some(verified_at.to_rfc3339());
             stats.last_verified_domain = Some(domain);

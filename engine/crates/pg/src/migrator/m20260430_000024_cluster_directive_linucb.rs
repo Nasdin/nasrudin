@@ -63,10 +63,12 @@ impl MigrationTrait for Migration {
                             .col(ClusterDirectiveLinucb::IslandDomain)
                             .col(ClusterDirectiveLinucb::Action),
                     )
-                    .check(
-                        Expr::col(ClusterDirectiveLinucb::Action)
-                            .is_in(["boost", "exploit", "diversify", "kill"]),
-                    )
+                    .check(Expr::col(ClusterDirectiveLinucb::Action).is_in([
+                        "boost",
+                        "exploit",
+                        "diversify",
+                        "kill",
+                    ]))
                     .to_owned(),
             )
             .await?;

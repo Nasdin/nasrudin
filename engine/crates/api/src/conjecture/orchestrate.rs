@@ -8,8 +8,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use nasrudin_llm::{
-    encryption::{decrypt, EncryptedKey},
     CompletionRequest, LlmError, Registry, ResponseFormat,
+    encryption::{EncryptedKey, decrypt},
 };
 
 use crate::conjecture::prompt::{self, AxiomEntry, NeighbourTheorem};
@@ -58,8 +58,8 @@ pub async fn run_llm_phase(
     let cipher = nasrudin_pg::query::user_llm_keys::get_ciphertext(pg, user_id, provider)
         .await?
         .ok_or_else(|| OrchestrateError::NoProviderKey(provider.into()))?;
-    let api_key = decrypt(&EncryptedKey(cipher), encrypt_key)
-        .map_err(|_| OrchestrateError::DecryptFailed)?;
+    let api_key =
+        decrypt(&EncryptedKey(cipher), encrypt_key).map_err(|_| OrchestrateError::DecryptFailed)?;
 
     let neighbours = nearest_neighbours(state, hunch, 10);
     let axioms = axiom_catalog(state);

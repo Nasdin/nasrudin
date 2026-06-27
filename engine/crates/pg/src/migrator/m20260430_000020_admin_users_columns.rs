@@ -29,9 +29,7 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(false),
                     )
-                    .add_column_if_not_exists(
-                        ColumnDef::new(Users::SpotCheckRate).integer().null(),
-                    )
+                    .add_column_if_not_exists(ColumnDef::new(Users::SpotCheckRate).integer().null())
                     .to_owned(),
             )
             .await

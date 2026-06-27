@@ -99,13 +99,8 @@ async fn b_path_verified_flips_status_and_increments_contributor() {
     worker_q::register(&pg, "w1", None, None).await.unwrap();
 
     // 2. Build a LakeBuilder pointing at the real `prover/` tree.
-    let lake = Arc::new(LakeBuilder::new(
-        prover_root(),
-        std::env::temp_dir(),
-        1,
-    ));
-    let axiom_store =
-        physics_api::state::SharedAxiomStore::new(nasrudin_derive::AxiomStore::new());
+    let lake = Arc::new(LakeBuilder::new(prover_root(), std::env::temp_dir(), 1));
+    let axiom_store = physics_api::state::SharedAxiomStore::new(nasrudin_derive::AxiomStore::new());
     let (tx, mut rx) = tokio::sync::broadcast::channel::<DiscoveryEvent>(16);
 
     // 3. Insert a Pending theorem with a trivially-true proof. The B-path

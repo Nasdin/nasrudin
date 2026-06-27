@@ -181,10 +181,18 @@ pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<
         dimension: Set(n.dimension),
         engine_git_sha: Set(n.engine_git_sha),
         lean_version: Set(n.lean_version),
-        verification_tactic: Set(if pre_verified { Some("imported".into()) } else { None }),
+        verification_tactic: Set(if pre_verified {
+            Some("imported".into())
+        } else {
+            None
+        }),
         verification_duration_ms: Set(None),
         verification_path: Set(None),
-        status: Set(if pre_verified { "Verified".into() } else { "Pending".into() }),
+        status: Set(if pre_verified {
+            "Verified".into()
+        } else {
+            "Pending".into()
+        }),
         rejected_reason: Set(None),
         contributor_id: Set(n.contributor_id),
         // Let the DB default (NOW()) populate created_at — saves a clock RTT.
@@ -198,18 +206,12 @@ pub async fn insert_pending(db: &impl ConnectionTrait, n: NewTheorem) -> Result<
         description: Set(None),
     };
 
-    active
-        .insert(db)
-        .await
-        .context("insert pending theorem")?;
+    active.insert(db).await.context("insert pending theorem")?;
     Ok(id)
 }
 
 /// Look up a single theorem by its 8-byte primary key.
-pub async fn get_by_id(
-    db: &impl ConnectionTrait,
-    id: &[u8],
-) -> Result<Option<theorems::Model>> {
+pub async fn get_by_id(db: &impl ConnectionTrait, id: &[u8]) -> Result<Option<theorems::Model>> {
     theorems::Entity::find_by_id(id.to_vec())
         .one(db)
         .await
@@ -354,7 +356,10 @@ pub async fn set_display_name(
         description: Set(Some(description.into())),
         ..Default::default()
     };
-    active.update(db).await.context("set_display_name theorem")?;
+    active
+        .update(db)
+        .await
+        .context("set_display_name theorem")?;
     Ok(())
 }
 
@@ -382,11 +387,7 @@ pub async fn list_unnamed_verified(
 }
 
 /// Flip a pending theorem to `Rejected`, recording a free-form reason.
-pub async fn mark_rejected(
-    db: &impl ConnectionTrait,
-    id: &[u8],
-    reason: &str,
-) -> Result<()> {
+pub async fn mark_rejected(db: &impl ConnectionTrait, id: &[u8], reason: &str) -> Result<()> {
     let active = theorems::ActiveModel {
         id: Set(id.to_vec()),
         status: Set("Rejected".into()),
@@ -428,11 +429,7 @@ pub async fn mark_rejected_batch(
          WHERE id IN ({})",
         placeholders.join(",")
     );
-    let stmt = Statement::from_sql_and_values(
-        sea_orm::DatabaseBackend::Postgres,
-        &sql,
-        values,
-    );
+    let stmt = Statement::from_sql_and_values(sea_orm::DatabaseBackend::Postgres, &sql, values);
     let rows = db
         .execute_raw(stmt)
         .await
@@ -596,10 +593,7 @@ pub async fn list_verified(
 /// the raw `COUNT(*)` over `(status = 'Verified', contributor_id = $1)` —
 /// no cap, since per-user totals are bounded by realistic contribution rates
 /// rather than the global theorem volume.
-pub async fn count_by_contributor(
-    db: &impl ConnectionTrait,
-    contributor_id: &str,
-) -> Result<u64> {
+pub async fn count_by_contributor(db: &impl ConnectionTrait, contributor_id: &str) -> Result<u64> {
     use sea_orm::PaginatorTrait;
     let count = theorems::Entity::find()
         .filter(theorems::Column::Status.eq("Verified"))
@@ -794,6 +788,15 @@ pub async fn count_pending(db: &impl ConnectionTrait) -> Result<u64> {
         .count(db)
         .await
         .context("count_pending")
+}
+
+pub async fn count_rejected(db: &impl ConnectionTrait) -> Result<u64> {
+    use sea_orm::PaginatorTrait;
+    theorems::Entity::find()
+        .filter(theorems::Column::Status.eq("Rejected"))
+        .count(db)
+        .await
+        .context("count_rejected")
 }
 
 /// Most-recent `Verified` theorem's metadata for the "last verification Ks

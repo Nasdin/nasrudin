@@ -8,7 +8,7 @@
 //! Transport is `WorkerHttp` so this client works equally over TCP and
 //! the unix socket trust-bypass entry point.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -102,8 +102,7 @@ impl ResearchClient {
         if !(200..300).contains(&status) {
             return Err(anyhow!("claim failed: {status}"));
         }
-        let parsed: ClaimedJob =
-            serde_json::from_slice(&body).context("decode ClaimedJob")?;
+        let parsed: ClaimedJob = serde_json::from_slice(&body).context("decode ClaimedJob")?;
         Ok(Some(parsed))
     }
 

@@ -98,11 +98,11 @@ impl DerivationEngine {
         target_id: &nasrudin_core::TheoremId,
         db: &nasrudin_rocks::TheoremDb,
     ) -> Result<DerivationContext, DeriveError> {
-        let forbidden = db
-            .forbidden_for_target(target_id)
-            .map_err(|e| DeriveError::StoreError {
-                reason: format!("forbidden_for_target: {e}"),
-            })?;
+        let forbidden =
+            db.forbidden_for_target(target_id)
+                .map_err(|e| DeriveError::StoreError {
+                    reason: format!("forbidden_for_target: {e}"),
+                })?;
         let mut ctx = DerivationContext::new();
         ctx.set_forbidden_axioms(forbidden);
         Ok(ctx)

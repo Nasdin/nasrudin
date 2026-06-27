@@ -193,7 +193,10 @@ pub async fn seed(
                 return (
                     StatusCode::OK,
                     [
-                        (axum::http::header::CONTENT_TYPE, "application/json".to_string()),
+                        (
+                            axum::http::header::CONTENT_TYPE,
+                            "application/json".to_string(),
+                        ),
                         (axum::http::header::ETAG, etag),
                         (
                             axum::http::header::CACHE_CONTROL,
@@ -243,8 +246,8 @@ pub async fn seed(
                 continue;
             }
         }
-        let statement = serde_json::to_string(&a.statement)
-            .unwrap_or_else(|_| format!("{:?}", a.statement));
+        let statement =
+            serde_json::to_string(&a.statement).unwrap_or_else(|_| format!("{:?}", a.statement));
         axioms.push(serde_json::json!({
             "name": a.name,
             "statement": statement,
@@ -321,8 +324,8 @@ pub async fn seed(
                     // demand). The /api/seed endpoint heating up the
                     // promotion queue means workers polling create
                     // pressure to graduate the freshest theorems first.
-                    if let nasrudin_core::VerificationStatus::Verified { tactic_used, .. }
-                        = &theorem.verified
+                    if let nasrudin_core::VerificationStatus::Verified { tactic_used, .. } =
+                        &theorem.verified
                     {
                         if tactic_used == "chain_replay" {
                             let _ = state.db.enqueue_lake_promotion(&id, 1);
@@ -338,8 +341,7 @@ pub async fn seed(
                     }
                 }
                 seed_theorems.push(
-                    serde_json::to_value(&theorem)
-                        .unwrap_or_else(|_| serde_json::Value::Null),
+                    serde_json::to_value(&theorem).unwrap_or_else(|_| serde_json::Value::Null),
                 );
             }
         }
@@ -358,9 +360,7 @@ pub async fn seed(
                 seed_theorems = page
                     .items
                     .into_iter()
-                    .map(|m| {
-                        serde_json::to_value(&m).unwrap_or_else(|_| serde_json::Value::Null)
-                    })
+                    .map(|m| serde_json::to_value(&m).unwrap_or_else(|_| serde_json::Value::Null))
                     .collect();
             }
             Err(e) => {
@@ -411,11 +411,17 @@ pub async fn seed(
     if let Ok(mut map) = state.seed_cache.lock() {
         map.insert(cache_key, (Instant::now(), Arc::clone(&body_arc)));
     }
-    let etag = format!("\"{:016x}\"", xxhash_rust::xxh64::xxh64(body_arc.as_bytes(), 0));
+    let etag = format!(
+        "\"{:016x}\"",
+        xxhash_rust::xxh64::xxh64(body_arc.as_bytes(), 0)
+    );
     (
         StatusCode::OK,
         [
-            (axum::http::header::CONTENT_TYPE, "application/json".to_string()),
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/json".to_string(),
+            ),
             (axum::http::header::ETAG, etag),
             (
                 axum::http::header::CACHE_CONTROL,

@@ -18,7 +18,7 @@ use std::net::SocketAddr;
 
 use nasrudin_derive::AxiomStore;
 
-use crate::admin::audit::{actions, perform_audited, RequestMeta};
+use crate::admin::audit::{RequestMeta, actions, perform_audited};
 use crate::admin::require_admin::RequireAdmin;
 use crate::state::AppState;
 
@@ -77,8 +77,8 @@ pub async fn reload_corpus(
                 corpus_db_for_blocking.count().unwrap_or(0)
             };
             let mut store = AxiomStore::with_corpus(corpus_db_for_blocking);
-            let catalog = std::path::Path::new(&prover_root)
-                .join("../physlean-extract/output/catalog.json");
+            let catalog =
+                std::path::Path::new(&prover_root).join("../physlean-extract/output/catalog.json");
             if catalog.exists() {
                 store.load_from_catalog(&catalog)?;
             }
@@ -131,10 +131,7 @@ pub async fn reload_corpus(
         json!({"prev_total": prev_total}),
         move |_txn| {
             Box::pin(async move {
-                Ok::<_, sea_orm::DbErr>((
-                    (),
-                    json!({"new_total": total, "math_count": math_count}),
-                ))
+                Ok::<_, sea_orm::DbErr>(((), json!({"new_total": total, "math_count": math_count})))
             })
         },
     )

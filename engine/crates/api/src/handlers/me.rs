@@ -23,10 +23,9 @@ pub async fn stats(auth: AuthOrApiKey, auth_sess: AuthSess) -> impl IntoResponse
         .unwrap_or(0);
 
     let contributor_id = auth.user.id.to_string();
-    let theorems_total =
-        nasrudin_pg::query::theorems::count_by_contributor(db, &contributor_id)
-            .await
-            .unwrap_or(0);
+    let theorems_total = nasrudin_pg::query::theorems::count_by_contributor(db, &contributor_id)
+        .await
+        .unwrap_or(0);
     let theorems_recent =
         nasrudin_pg::query::theorems::list_by_contributor(db, &contributor_id, 10)
             .await
@@ -84,8 +83,13 @@ pub async fn update_profile(
 
     if let Some(name) = body.display_name.as_deref() {
         let trimmed = name.trim();
-        let value = if trimmed.is_empty() { None } else { Some(trimmed) };
-        if let Err(e) = nasrudin_pg::query::users::update_display_name(db, auth.user.id, value).await
+        let value = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
+        if let Err(e) =
+            nasrudin_pg::query::users::update_display_name(db, auth.user.id, value).await
         {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -104,12 +108,9 @@ pub async fn update_profile(
                 );
             }
         };
-        if let Err(e) = nasrudin_pg::query::users::update_country_code(
-            db,
-            auth.user.id,
-            canonical.as_deref(),
-        )
-        .await
+        if let Err(e) =
+            nasrudin_pg::query::users::update_country_code(db, auth.user.id, canonical.as_deref())
+                .await
         {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -148,13 +149,8 @@ pub async fn update_profile(
                 }
             }
         }
-        next_obj.insert(
-            "profile".to_string(),
-            serde_json::Value::Object(merged),
-        );
-        if let Err(e) =
-            nasrudin_pg::query::user_preferences::set(db, auth.user.id, next).await
-        {
+        next_obj.insert("profile".to_string(), serde_json::Value::Object(merged));
+        if let Err(e) = nasrudin_pg::query::user_preferences::set(db, auth.user.id, next).await {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": format!("profile: {e}") })),
@@ -229,10 +225,7 @@ pub async fn get_profile(auth: AuthOrApiKey, auth_sess: AuthSess) -> impl IntoRe
 pub async fn workers(auth: AuthOrApiKey, auth_sess: AuthSess) -> impl IntoResponse {
     let db = &auth_sess.backend.db;
     match nasrudin_pg::query::me_workers::list_for_user(db, auth.user.id).await {
-        Ok(rows) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "workers": rows })),
-        ),
+        Ok(rows) => (StatusCode::OK, Json(serde_json::json!({ "workers": rows }))),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": format!("{e}") })),

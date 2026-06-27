@@ -40,22 +40,17 @@ pub const EXPAND_MIN_REWARD: f64 = 0.65;
 /// Full 9-choice multiplier tables. The first 5 entries are the
 /// boot-materialised range; entries 5..=8 are the expansion zone
 /// the bandit grows into when an outer choice dominates.
-pub const BOOST_MULTIPLIERS: [f32; 9] =
-    [1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00];
-pub const EXPLOIT_MULTIPLIERS: [f32; 9] =
-    [1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00];
-pub const DIVERSIFY_FRACTIONS: [f32; 9] =
-    [0.00, 0.10, 0.20, 0.30, 0.50, 0.65, 0.75, 0.85, 0.95];
-pub const KILL_FRACTIONS: [f32; 9] =
-    [0.00, 0.10, 0.20, 0.30, 0.50, 0.65, 0.75, 0.85, 0.95];
+pub const BOOST_MULTIPLIERS: [f32; 9] = [1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00];
+pub const EXPLOIT_MULTIPLIERS: [f32; 9] = [1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00];
+pub const DIVERSIFY_FRACTIONS: [f32; 9] = [0.00, 0.10, 0.20, 0.30, 0.50, 0.65, 0.75, 0.85, 0.95];
+pub const KILL_FRACTIONS: [f32; 9] = [0.00, 0.10, 0.20, 0.30, 0.50, 0.65, 0.75, 0.85, 0.95];
 /// Compute-scaling multipliers for the test-time-compute bandit.
 /// Applied to chunk_config.population_size AND chunk_config.generations
 /// (the two compute knobs the GA respects). Range covers
 /// 0.5×→5× total compute via the 9-choice expansion zone. The 1.0×
 /// choice exists so the bandit can learn that scaling DOWN from
 /// baseline is sometimes optimal.
-pub const COMPUTE_MULTIPLIERS: [f32; 9] =
-    [0.50, 0.75, 1.00, 1.50, 3.00, 3.50, 4.00, 4.50, 5.00];
+pub const COMPUTE_MULTIPLIERS: [f32; 9] = [0.50, 0.75, 1.00, 1.50, 3.00, 3.50, 4.00, 4.50, 5.00];
 
 pub const ACTIONS: &[ClusterAction] = &[
     ClusterAction::Boost,
@@ -160,16 +155,12 @@ pub fn lookup_compute_multiplier(choice: u8) -> f32 {
 /// Materialise every (island_domain, strength_bucket,
 /// multiplier_choice) row in `cluster_compute_arms` at zero stats.
 /// Idempotent. 6 × 5 × 5 = 150 rows.
-pub async fn ensure_all_compute_arms(
-    db: &DatabaseConnection,
-) -> Result<(), sea_orm::DbErr> {
+pub async fn ensure_all_compute_arms(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
     for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
         for bucket in 0..STRENGTH_BUCKETS as i16 {
             for choice in 0..MULTIPLIER_CHOICES as i16 {
-                nasrudin_pg::query::cluster_compute_arms::ensure_arm(
-                    db, domain, bucket, choice,
-                )
-                .await?;
+                nasrudin_pg::query::cluster_compute_arms::ensure_arm(db, domain, bucket, choice)
+                    .await?;
             }
         }
     }
@@ -192,32 +183,20 @@ pub async fn ensure_all_compute_arms(
 ///
 /// Called from the steerer cycle after the directive-arm snapshot
 /// step, so workers see new arms on their next /api/seed poll.
-pub async fn expand_dominant_arms(
-    db: &DatabaseConnection,
-) -> Result<u32, sea_orm::DbErr> {
+pub async fn expand_dominant_arms(db: &DatabaseConnection) -> Result<u32, sea_orm::DbErr> {
     use nasrudin_pg::query::cluster_directive_arms;
     let mut materialised = 0u32;
     for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
         for &action in ACTIONS {
             for bucket in 0..STRENGTH_BUCKETS as i16 {
-                let arms = cluster_directive_arms::list_for_slot(
-                    db,
-                    domain,
-                    action_str(action),
-                    bucket,
-                )
-                .await?;
-                let max_existing = arms
-                    .iter()
-                    .map(|a| a.multiplier_choice)
-                    .max()
-                    .unwrap_or(-1);
+                let arms =
+                    cluster_directive_arms::list_for_slot(db, domain, action_str(action), bucket)
+                        .await?;
+                let max_existing = arms.iter().map(|a| a.multiplier_choice).max().unwrap_or(-1);
                 if max_existing >= MAX_MULTIPLIER_CHOICES as i16 - 1 {
                     continue;
                 }
-                let outer = arms
-                    .iter()
-                    .find(|a| a.multiplier_choice == max_existing);
+                let outer = arms.iter().find(|a| a.multiplier_choice == max_existing);
                 if let Some(arm) = outer {
                     if arm.pulls < EXPAND_MIN_PULLS {
                         continue;
@@ -253,19 +232,13 @@ pub async fn expand_dominant_arms(
 
 /// Same as `expand_dominant_arms` for the compute-scaling bandit.
 /// One less dimension (no per-action) so the iteration is smaller.
-pub async fn expand_dominant_compute_arms(
-    db: &DatabaseConnection,
-) -> Result<u32, sea_orm::DbErr> {
+pub async fn expand_dominant_compute_arms(db: &DatabaseConnection) -> Result<u32, sea_orm::DbErr> {
     use nasrudin_pg::query::cluster_compute_arms;
     let mut materialised = 0u32;
     for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
         for bucket in 0..STRENGTH_BUCKETS as i16 {
             let arms = cluster_compute_arms::list_for_slot(db, domain, bucket).await?;
-            let max_existing = arms
-                .iter()
-                .map(|a| a.multiplier_choice)
-                .max()
-                .unwrap_or(-1);
+            let max_existing = arms.iter().map(|a| a.multiplier_choice).max().unwrap_or(-1);
             if max_existing >= MAX_MULTIPLIER_CHOICES as i16 - 1 {
                 continue;
             }
@@ -278,13 +251,7 @@ pub async fn expand_dominant_compute_arms(
                 if mean < EXPAND_MIN_REWARD {
                     continue;
                 }
-                cluster_compute_arms::ensure_arm(
-                    db,
-                    domain,
-                    bucket,
-                    max_existing + 1,
-                )
-                .await?;
+                cluster_compute_arms::ensure_arm(db, domain, bucket, max_existing + 1).await?;
                 materialised += 1;
                 tracing::info!(
                     domain,
@@ -304,9 +271,7 @@ pub async fn expand_dominant_compute_arms(
 /// rows. Each row stores A (λ·I) and b (zeros) — the Bayesian prior
 /// for the contextual bandit. 6 islands × 4 actions = 24 rows.
 /// Idempotent.
-pub async fn ensure_all_linucb_rows(
-    db: &DatabaseConnection,
-) -> Result<(), sea_orm::DbErr> {
+pub async fn ensure_all_linucb_rows(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
     for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
         for &action in ACTIONS {
             nasrudin_pg::query::cluster_directive_linucb::ensure_row(
@@ -323,9 +288,7 @@ pub async fn ensure_all_linucb_rows(
 
 /// Materialise the per-island LinUCB sufficient-statistics rows for
 /// the compute bandit. 6 rows; same A=λI, b=0 prior. Idempotent.
-pub async fn ensure_all_compute_linucb_rows(
-    db: &DatabaseConnection,
-) -> Result<(), sea_orm::DbErr> {
+pub async fn ensure_all_compute_linucb_rows(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
     for &domain in crate::steerer::bandit::ISLAND_DOMAINS {
         nasrudin_pg::query::cluster_compute_linucb::ensure_row(
             db,
@@ -377,9 +340,7 @@ mod tests {
     fn lookup_clamps_out_of_range() {
         // Out-of-range choice now saturates at index 8 (3.00× cap of
         // the expanded 9-choice table from Phase H).
-        assert!(
-            (lookup_multiplier_value(ClusterAction::Boost, 99) - 3.00).abs() < 1e-6
-        );
+        assert!((lookup_multiplier_value(ClusterAction::Boost, 99) - 3.00).abs() < 1e-6);
     }
 
     #[test]

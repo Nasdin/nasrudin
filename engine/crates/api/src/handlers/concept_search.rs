@@ -17,10 +17,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -139,7 +139,11 @@ pub async fn concept_search(
         nasrudin_pg::query::search::list_by_text(pg, q, limit, params.include_pending).await
     {
         for row in rows {
-            let id_hex = row.id.iter().map(|b| format!("{b:02x}")).collect::<String>();
+            let id_hex = row
+                .id
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>();
             // Shorter-match-better: q.len() / canonical.len(), capped at 1.
             let denom = row.canonical_statement.len().max(q.len()).max(1) as f32;
             let text_score = (q.len() as f32 / denom).clamp(0.0, 1.0);
@@ -163,7 +167,11 @@ pub async fn concept_search(
     }
 
     let mut hits: Vec<ConceptHit> = merged.into_values().collect();
-    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     hits.truncate(limit as usize);
 
     Json(ConceptSearchResponse {

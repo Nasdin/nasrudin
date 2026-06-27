@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use nasrudin_derive::AxiomStore;
 use nasrudin_ga::{
-    beam::{beam_search, BeamConfig},
+    beam::{BeamConfig, beam_search},
     target::TargetSpec,
 };
 
@@ -26,9 +26,7 @@ use nasrudin_ga::{
 async fn main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     let get_arg = |key: &str| -> Option<String> {
-        argv.windows(2)
-            .find(|w| w[0] == key)
-            .map(|w| w[1].clone())
+        argv.windows(2).find(|w| w[0] == key).map(|w| w[1].clone())
     };
     let has_flag = |key: &str| -> bool { argv.iter().any(|a| a == key) };
 
@@ -36,9 +34,7 @@ async fn main() -> anyhow::Result<()> {
         .or_else(|| std::env::var("NASRUDIN_TARGET").ok())
         .unwrap_or_else(|| "sr_rest_energy".into());
     let target = TargetSpec::lookup(&target_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unknown target spec `{target_name}` (available: sr_rest_energy)"
-        )
+        anyhow::anyhow!("unknown target spec `{target_name}` (available: sr_rest_energy)")
     })?;
 
     let width = get_arg("--width")
@@ -209,7 +205,10 @@ async fn main() -> anyhow::Result<()> {
     let prover_root = match &prover_root {
         Some(p) => p,
         None => {
-            println!("▶ {} candidate(s) above threshold but --verify <prover_root> not given.", report.candidates.len());
+            println!(
+                "▶ {} candidate(s) above threshold but --verify <prover_root> not given.",
+                report.candidates.len()
+            );
             println!("  Re-run with `--verify ./prover` to lake-build and submit.");
             return Ok(());
         }
@@ -233,7 +232,10 @@ async fn main() -> anyhow::Result<()> {
             &mod_name,
             &theorem_name,
         ) {
-            nasrudin_ga::chain_ga::ChainVerifyOutcome::Verified { lean_source, module_path } => {
+            nasrudin_ga::chain_ga::ChainVerifyOutcome::Verified {
+                lean_source,
+                module_path,
+            } => {
                 println!("    ✓ lake-verified");
                 if let (Some(api), Some(key)) = (api_url.as_ref(), worker_key.as_ref()) {
                     if let Err(e) = submit(api, key, &worker_id, cand, &lean_source).await {
@@ -245,7 +247,10 @@ async fn main() -> anyhow::Result<()> {
                 let _ = module_path;
             }
             nasrudin_ga::chain_ga::ChainVerifyOutcome::LeanRejected { stderr, .. } => {
-                println!("    ✗ lean rejected: {}", stderr.lines().next().unwrap_or("(no stderr)"));
+                println!(
+                    "    ✗ lean rejected: {}",
+                    stderr.lines().next().unwrap_or("(no stderr)")
+                );
             }
             nasrudin_ga::chain_ga::ChainVerifyOutcome::PreFilterFailed { reason } => {
                 println!("    ✗ pre-filter failed: {reason}");
@@ -265,7 +270,9 @@ async fn seed_sync(
     store: &mut AxiomStore,
 ) -> anyhow::Result<(usize, usize)> {
     use nasrudin_core::Expr;
-    use nasrudin_derive::{Axiom, Chain, DerivationContext, RuleStep, strategies::DerivationStrategy};
+    use nasrudin_derive::{
+        Axiom, Chain, DerivationContext, RuleStep, strategies::DerivationStrategy,
+    };
     let domain_param = match domain {
         "sr" => "SpecialRelativity",
         "em" => "Electromagnetism",
@@ -287,10 +294,18 @@ async fn seed_sync(
     let mut axioms_added = 0;
     if let Some(arr) = body.get("axioms").and_then(|v| v.as_array()) {
         for entry in arr {
-            let Some(name) = entry.get("name").and_then(|v| v.as_str()) else { continue };
-            if store.get(name).is_some() { continue; }
-            let Some(stmt_str) = entry.get("statement").and_then(|v| v.as_str()) else { continue };
-            let Ok(stmt) = serde_json::from_str::<Expr>(stmt_str) else { continue };
+            let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if store.get(name).is_some() {
+                continue;
+            }
+            let Some(stmt_str) = entry.get("statement").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(stmt) = serde_json::from_str::<Expr>(stmt_str) else {
+                continue;
+            };
             store.register(Axiom {
                 name: name.to_string(),
                 domain: nasrudin_core::Domain::PureMath,
@@ -303,17 +318,39 @@ async fn seed_sync(
     let mut theorems_added = 0;
     if let Some(arr) = body.get("seed_theorems").and_then(|v| v.as_array()) {
         for t in arr {
-            let chain_val = match t.get("chain_json") { Some(c) => c, None => continue };
-            if chain_val.is_null() { continue; }
-            let Ok(steps): Result<Vec<RuleStep>, _> = serde_json::from_value(chain_val.clone()) else { continue };
-            if steps.is_empty() { continue; }
+            let chain_val = match t.get("chain_json") {
+                Some(c) => c,
+                None => continue,
+            };
+            if chain_val.is_null() {
+                continue;
+            }
+            let Ok(steps): Result<Vec<RuleStep>, _> = serde_json::from_value(chain_val.clone())
+            else {
+                continue;
+            };
+            if steps.is_empty() {
+                continue;
+            }
             let chain = Chain(steps);
             let mut ctx = DerivationContext::new();
-            let Ok(final_expr) = chain.execute(store, &mut ctx) else { continue };
-            let canon = t.get("canonical_statement").and_then(|v| v.as_str()).unwrap_or_default();
-            if canon.is_empty() { continue; }
-            let name = format!("peer_{:016x}", xxhash_rust::xxh64::xxh64(canon.as_bytes(), 0));
-            if store.get(&name).is_some() { continue; }
+            let Ok(final_expr) = chain.execute(store, &mut ctx) else {
+                continue;
+            };
+            let canon = t
+                .get("canonical_statement")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if canon.is_empty() {
+                continue;
+            }
+            let name = format!(
+                "peer_{:016x}",
+                xxhash_rust::xxh64::xxh64(canon.as_bytes(), 0)
+            );
+            if store.get(&name).is_some() {
+                continue;
+            }
             store.register(Axiom {
                 name,
                 domain: nasrudin_core::Domain::PureMath,
@@ -367,7 +404,11 @@ async fn submit(
         .send()
         .await?;
     if !resp.status().is_success() {
-        anyhow::bail!("ingest http {}: {}", resp.status(), resp.text().await.unwrap_or_default());
+        anyhow::bail!(
+            "ingest http {}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        );
     }
     Ok(())
 }

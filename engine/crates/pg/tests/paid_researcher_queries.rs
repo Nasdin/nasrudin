@@ -8,8 +8,7 @@
 use nasrudin_pg::{
     connect_simple,
     query::{conjecture_jobs as q, users as u},
-    run_migrations,
-    sea_orm,
+    run_migrations, sea_orm,
 };
 use sea_orm::{ConnectionTrait, DatabaseConnection, EntityTrait, Statement};
 use tokio::sync::{Mutex, MutexGuard};
@@ -129,7 +128,10 @@ async fn atomic_claim_paid_one_winner_under_concurrency() {
     );
     let one = r1.unwrap();
     let two = r2.unwrap();
-    let winners = [one.is_some(), two.is_some()].iter().filter(|x| **x).count();
+    let winners = [one.is_some(), two.is_some()]
+        .iter()
+        .filter(|x| **x)
+        .count();
     assert_eq!(
         winners, 1,
         "exactly one concurrent claim must succeed (got one={one:?} two={two:?})"
@@ -213,7 +215,10 @@ async fn heartbeat_paid_clamps_consumed_delta_against_wallclock() {
     };
     let owner = seed_owner(&db, "heartbeat-cap").await;
     seed_queued_paid_job(&db, owner).await;
-    let claimed = q::atomic_claim_paid(&db, "worker", 4).await.unwrap().unwrap();
+    let claimed = q::atomic_claim_paid(&db, "worker", 4)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Force last_heartbeat_at to "1 second ago" so the cap math is
     // tight: max_delta = 2 × (1/3600) × 4 ≈ 0.0022 h.
@@ -245,7 +250,10 @@ async fn heartbeat_paid_returns_exhausted_when_consumed_meets_quota() {
     };
     let owner = seed_owner(&db, "exhausted").await;
     seed_queued_paid_job(&db, owner).await;
-    let claimed = q::atomic_claim_paid(&db, "worker", 4).await.unwrap().unwrap();
+    let claimed = q::atomic_claim_paid(&db, "worker", 4)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Pre-fill consumed to just below the 96h quota and stretch
     // last_heartbeat_at so the cap allows the remaining delta.
@@ -277,7 +285,10 @@ async fn heartbeat_paid_rejects_wrong_worker() {
     };
     let owner = seed_owner(&db, "wrong-worker").await;
     seed_queued_paid_job(&db, owner).await;
-    let claimed = q::atomic_claim_paid(&db, "worker-A", 4).await.unwrap().unwrap();
+    let claimed = q::atomic_claim_paid(&db, "worker-A", 4)
+        .await
+        .unwrap()
+        .unwrap();
 
     // worker-B doesn't own the lease — get None back.
     let r = q::heartbeat_paid(&db, claimed.id, "worker-B", 1, 0, 0.01)
@@ -444,7 +455,10 @@ async fn try_decrement_n_fails_when_remaining_lt_n() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(m.research_credits, 2, "ledger untouched on failed decrement");
+    assert_eq!(
+        m.research_credits, 2,
+        "ledger untouched on failed decrement"
+    );
 }
 
 #[tokio::test]
@@ -539,7 +553,10 @@ async fn heartbeat_paid_no_ops_after_cancel() {
     };
     let owner = seed_owner(&db, "heartbeat-after-cancel").await;
     seed_queued_paid_job(&db, owner).await;
-    let claimed = q::atomic_claim_paid(&db, "worker", 4).await.unwrap().unwrap();
+    let claimed = q::atomic_claim_paid(&db, "worker", 4)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Mark cancelled directly (simulating the cancel transaction
     // having committed before this stale heartbeat lands).
@@ -556,7 +573,10 @@ async fn heartbeat_paid_no_ops_after_cancel() {
     let r = q::heartbeat_paid(&db, claimed.id, "worker", 100, 0, 1.0)
         .await
         .unwrap();
-    assert!(r.is_none(), "heartbeat must return None when row is terminal");
+    assert!(
+        r.is_none(),
+        "heartbeat must return None when row is terminal"
+    );
 
     let after = q::get_by_id(&db, claimed.id).await.unwrap().unwrap();
     assert_eq!(after.state, "cancelled", "state must remain cancelled");
@@ -651,7 +671,10 @@ async fn cancel_with_refund_queued_job_marks_was_in_flight_false() {
 
     let r = q::cancel_paid_with_refund(&db, job, owner).await.unwrap();
     assert!(r.row_was_cancelled);
-    assert!(!r.was_in_flight, "queued state must report was_in_flight=false");
+    assert!(
+        !r.was_in_flight,
+        "queued state must report was_in_flight=false"
+    );
     assert_eq!(r.refunded_credits, 5);
 }
 
@@ -726,7 +749,10 @@ async fn cancel_with_refund_already_terminal_returns_none() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(user.research_credits, 0, "no refund applied to already-terminal job");
+    assert_eq!(
+        user.research_credits, 0,
+        "no refund applied to already-terminal job"
+    );
 }
 
 #[tokio::test]

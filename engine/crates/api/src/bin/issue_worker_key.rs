@@ -22,8 +22,7 @@ async fn main() -> Result<()> {
 
     let database_url = std::env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL env var required"))?;
-    let conn =
-        nasrudin_pg::connect_and_migrate(&nasrudin_pg::PgConfig::new(&database_url)).await?;
+    let conn = nasrudin_pg::connect_and_migrate(&nasrudin_pg::PgConfig::new(&database_url)).await?;
 
     let key = keygen::generate("worker")?;
     nasrudin_pg::query::api_keys::create(

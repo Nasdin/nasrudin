@@ -3,9 +3,9 @@
 //! tree is opaque (TacticProof). The acyclicity infra works against
 //! the explicit `parents` list.
 
-use nasrudin_core::{axiom_id_from_name, Domain, Expr};
-use nasrudin_derive::physlean_import::{import_entries, split_and_load, CatalogEntry};
+use nasrudin_core::{Domain, Expr, axiom_id_from_name};
 use nasrudin_derive::AxiomStore;
+use nasrudin_derive::physlean_import::{CatalogEntry, import_entries, split_and_load};
 use nasrudin_rocks::TheoremDb;
 use tempfile::TempDir;
 
@@ -40,8 +40,7 @@ fn import_chain_populates_lineage_and_reverse_deps() {
 
     // Lineage on C must include A (transitive) and B (immediate).
     let lin_c = db.get_lineage(&c_id).unwrap().unwrap();
-    let ancestors: std::collections::HashSet<_> =
-        lin_c.axiom_ancestors.iter().copied().collect();
+    let ancestors: std::collections::HashSet<_> = lin_c.axiom_ancestors.iter().copied().collect();
     assert!(ancestors.contains(&a_id), "C must transitively cite A");
     assert!(ancestors.contains(&b_id), "C must directly cite B");
 
@@ -69,7 +68,11 @@ fn import_skips_external_deps() {
 
     let entries = vec![entry(
         "physlean_thm",
-        &["physlean_thm_dep", "Real.add_comm", "Mathlib.kernel.eq_refl"],
+        &[
+            "physlean_thm_dep",
+            "Real.add_comm",
+            "Mathlib.kernel.eq_refl",
+        ],
     )];
     let count = import_entries(entries, &db).unwrap();
     assert_eq!(count, 1);
@@ -109,8 +112,7 @@ fn split_and_load_routes_by_deps_presence() {
     // The derived theorem IS in TheoremDb with both leaves as ancestors.
     let derived_id = axiom_id_from_name("derived_thm");
     let lin = db.get_lineage(&derived_id).unwrap().unwrap();
-    let ancestors: std::collections::HashSet<_> =
-        lin.axiom_ancestors.iter().copied().collect();
+    let ancestors: std::collections::HashSet<_> = lin.axiom_ancestors.iter().copied().collect();
     assert!(ancestors.contains(&axiom_id_from_name("postulate_one")));
     assert!(ancestors.contains(&axiom_id_from_name("postulate_two")));
 }
@@ -119,10 +121,7 @@ fn split_and_load_routes_by_deps_presence() {
 fn import_rejects_cycles() {
     // Lean enforces DAG so this shouldn't occur in real catalogs, but
     // we guard against malformed input.
-    let entries = vec![
-        entry("alpha", &["beta"]),
-        entry("beta", &["alpha"]),
-    ];
+    let entries = vec![entry("alpha", &["beta"]), entry("beta", &["alpha"])];
     let dir = TempDir::new().unwrap();
     let db = TheoremDb::new(dir.path().to_str().unwrap()).unwrap();
     let err = import_entries(entries, &db).unwrap_err();

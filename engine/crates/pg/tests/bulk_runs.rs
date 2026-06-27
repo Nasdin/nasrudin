@@ -25,13 +25,20 @@ async fn bulk_run_lifecycle() {
     let id = query::bulk_runs::insert(&db, admin.id, "set_trust", json!({"to": true}), 5)
         .await
         .unwrap();
-    query::bulk_runs::increment_completed(&db, id).await.unwrap();
+    query::bulk_runs::increment_completed(&db, id)
+        .await
+        .unwrap();
     query::bulk_runs::increment_failed(&db, id, json!([{"user":"x","err":"e"}]))
         .await
         .unwrap();
-    query::bulk_runs::complete(&db, id, "completed").await.unwrap();
+    query::bulk_runs::complete(&db, id, "completed")
+        .await
+        .unwrap();
 
-    let r = query::bulk_runs::find_by_id(&db, id).await.unwrap().unwrap();
+    let r = query::bulk_runs::find_by_id(&db, id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(r.completed_count, 1);
     assert_eq!(r.failed_count, 1);
     assert_eq!(r.status, "completed");

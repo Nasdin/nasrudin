@@ -175,7 +175,10 @@ fn test_substitute_p_zero_in_equation() {
         assert_eq!(**lhs, e_sq);
         // RHS should contain 0 where p was
         let canonical = rhs.to_canonical();
-        assert!(canonical.contains("n:0"), "RHS should contain 0: {canonical}");
+        assert!(
+            canonical.contains("n:0"),
+            "RHS should contain 0: {canonical}"
+        );
     } else {
         panic!("Expected equation");
     }

@@ -62,7 +62,9 @@ mod tests {
     #[test]
     fn parses_unix_url() {
         let b = parse_api_base("unix:///run/nasrudin/api-local.sock").unwrap();
-        assert!(matches!(b, ApiBase::Unix(ref p) if p.as_os_str() == "/run/nasrudin/api-local.sock"));
+        assert!(
+            matches!(b, ApiBase::Unix(ref p) if p.as_os_str() == "/run/nasrudin/api-local.sock")
+        );
     }
 
     #[test]

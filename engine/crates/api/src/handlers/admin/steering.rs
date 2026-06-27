@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::net::SocketAddr;
 
-use crate::admin::audit::{actions, perform_audited, RequestMeta};
+use crate::admin::audit::{RequestMeta, actions, perform_audited};
 use crate::admin::require_admin::RequireAdmin;
 use crate::state::AppState;
 

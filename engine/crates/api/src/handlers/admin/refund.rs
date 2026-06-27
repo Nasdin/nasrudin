@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::admin::audit::{actions, perform_audited, RequestMeta};
+use crate::admin::audit::{RequestMeta, actions, perform_audited};
 use crate::admin::require_admin::RequireAdmin;
 use crate::state::AppState;
 
@@ -48,8 +48,7 @@ pub async fn refund(
     let user = match nasrudin_pg::query::admin_users::find_by_id(pg, user_id).await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"})))
-                .into_response();
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response();
         }
         Err(e) => {
             return (

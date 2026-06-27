@@ -66,7 +66,10 @@ fn make_jwks(decoding: DecodingKey) -> JwksCache {
 }
 
 fn now_secs() -> usize {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize
 }
 
 fn default_claims() -> WireClaims {
@@ -101,7 +104,9 @@ async fn accepts_valid_token() {
     let kp = gen_keypair();
     let jwks = make_jwks(kp.decoding);
     let token = sign(&default_claims(), &kp.encoding);
-    let claims = verify_id_token(&token, TEST_PROJECT_ID, &jwks).await.unwrap();
+    let claims = verify_id_token(&token, TEST_PROJECT_ID, &jwks)
+        .await
+        .unwrap();
     assert_eq!(claims.uid, "fb-uid-1");
     assert_eq!(claims.email, "alice@example.test");
     assert!(claims.email_verified);
@@ -118,7 +123,9 @@ async fn rejects_expired_token() {
     c.exp = now_secs() - 120;
     c.iat = now_secs() - 3600;
     let token = sign(&c, &kp.encoding);
-    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks).await.unwrap_err();
+    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks)
+        .await
+        .unwrap_err();
     assert!(matches!(err, VerifyError::Expired));
 }
 
@@ -129,7 +136,9 @@ async fn rejects_wrong_audience() {
     let mut c = default_claims();
     c.aud = "another-project".into();
     let token = sign(&c, &kp.encoding);
-    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks).await.unwrap_err();
+    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks)
+        .await
+        .unwrap_err();
     assert!(matches!(err, VerifyError::WrongAudience));
 }
 
@@ -140,7 +149,9 @@ async fn rejects_wrong_issuer() {
     let mut c = default_claims();
     c.iss = "https://evil.example.com/test-project".into();
     let token = sign(&c, &kp.encoding);
-    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks).await.unwrap_err();
+    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks)
+        .await
+        .unwrap_err();
     assert!(matches!(err, VerifyError::WrongIssuer));
 }
 
@@ -152,7 +163,9 @@ async fn rejects_token_signed_with_wrong_key() {
     let jwks = make_jwks(kp_real.decoding);
     // Token signed with the *attacker's* private key.
     let token = sign(&default_claims(), &kp_attacker.encoding);
-    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks).await.unwrap_err();
+    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks)
+        .await
+        .unwrap_err();
     assert!(matches!(err, VerifyError::BadSignature));
 }
 
@@ -160,7 +173,9 @@ async fn rejects_token_signed_with_wrong_key() {
 async fn rejects_malformed_token() {
     let kp = gen_keypair();
     let jwks = make_jwks(kp.decoding);
-    let err = verify_id_token("not.a.jwt", TEST_PROJECT_ID, &jwks).await.unwrap_err();
+    let err = verify_id_token("not.a.jwt", TEST_PROJECT_ID, &jwks)
+        .await
+        .unwrap_err();
     assert!(matches!(err, VerifyError::MalformedToken(_)));
 }
 
@@ -174,7 +189,9 @@ async fn rejects_kid_not_in_jwks() {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some("unknown-kid".into());
     let token = encode(&header, &default_claims(), &kp_other.encoding).unwrap();
-    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks).await.unwrap_err();
+    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks)
+        .await
+        .unwrap_err();
     assert!(matches!(err, VerifyError::BadSignature));
 }
 
@@ -184,6 +201,8 @@ async fn rejects_missing_kid_in_header() {
     let jwks = make_jwks(kp.decoding);
     let header_no_kid = Header::new(Algorithm::RS256);
     let token = encode(&header_no_kid, &default_claims(), &kp.encoding).unwrap();
-    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks).await.unwrap_err();
+    let err = verify_id_token(&token, TEST_PROJECT_ID, &jwks)
+        .await
+        .unwrap_err();
     assert!(matches!(err, VerifyError::MalformedToken(_)));
 }

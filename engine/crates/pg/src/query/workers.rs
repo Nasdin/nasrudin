@@ -141,10 +141,7 @@ pub struct WorkerPoolStats {
 
 /// Look up a single worker by ID. Generic over `ConnectionTrait` so callers in
 /// transactions can use it too.
-pub async fn get(
-    db: &impl ConnectionTrait,
-    id: &str,
-) -> Result<Option<workers::Model>> {
+pub async fn get(db: &impl ConnectionTrait, id: &str) -> Result<Option<workers::Model>> {
     Ok(workers::Entity::find_by_id(id.to_string()).one(db).await?)
 }
 
@@ -210,10 +207,7 @@ pub async fn update_heartbeat(
 /// Atomically increment `theorems_contributed` by 1 and stamp
 /// `last_contribution_at = NOW()`. Implemented as a single UPDATE so concurrent
 /// increments from the verification worker pool can't lose updates.
-pub async fn increment_contribution(
-    db: &impl ConnectionTrait,
-    id: &str,
-) -> Result<()> {
+pub async fn increment_contribution(db: &impl ConnectionTrait, id: &str) -> Result<()> {
     let now: chrono::DateTime<chrono::FixedOffset> = Utc::now().into();
     db.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
@@ -236,11 +230,7 @@ pub async fn increment_contribution(
 /// Called by the lake_promotion drain after every Verified or
 /// Rejected outcome, looking up the contributor_id from the theorem
 /// row.
-pub async fn record_spot_check(
-    db: &impl ConnectionTrait,
-    id: &str,
-    passed: bool,
-) -> Result<()> {
+pub async fn record_spot_check(db: &impl ConnectionTrait, id: &str, passed: bool) -> Result<()> {
     let pass_inc = if passed { 1 } else { 0 };
     let fail_inc = if passed { 0 } else { 1 };
     let target = if passed { 1.0_f64 } else { 0.0_f64 };
@@ -317,8 +307,7 @@ pub async fn list_paginated(
     cursor: Option<String>,
 ) -> Result<(Vec<workers::Model>, Option<String>)> {
     let limit = std::cmp::min(limit, 100); // Cap at 100 per page
-    let mut query = workers::Entity::find()
-        .order_by_desc(workers::Column::TheoremsContributed);
+    let mut query = workers::Entity::find().order_by_desc(workers::Column::TheoremsContributed);
 
     // If cursor is provided, decode it and use it to skip to that position
     if let Some(cursor) = cursor {
@@ -327,14 +316,13 @@ pub async fn list_paginated(
         }
     }
 
-    let workers_list = query
-        .limit(limit as u64)
-        .all(db)
-        .await?;
+    let workers_list = query.limit(limit as u64).all(db).await?;
 
     // Generate next cursor from the last worker's theorems_contributed value
     let next_cursor = if workers_list.len() >= limit as usize {
-        workers_list.last().map(|w| w.theorems_contributed.to_string())
+        workers_list
+            .last()
+            .map(|w| w.theorems_contributed.to_string())
     } else {
         None
     };

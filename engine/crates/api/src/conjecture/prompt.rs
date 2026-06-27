@@ -95,7 +95,11 @@ mod tests {
         let p = build_user_prompt(
             "Energy and mass relate by c squared",
             Some("SpecialRelativity"),
-            &[neighbour("deadbeef", "(c·p)² + m²c⁴ = E²", "SpecialRelativity")],
+            &[neighbour(
+                "deadbeef",
+                "(c·p)² + m²c⁴ = E²",
+                "SpecialRelativity",
+            )],
             &[axiom(
                 "sr_invariant_interval",
                 "SpecialRelativity",

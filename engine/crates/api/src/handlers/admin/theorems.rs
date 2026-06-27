@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::admin::require_admin::RequireAdmin;
-use crate::reverify::{naming_action, NamingAction};
+use crate::reverify::{NamingAction, naming_action};
 use crate::state::AppState;
 
 #[derive(Deserialize, Default)]
@@ -65,8 +65,7 @@ pub async fn backfill_names(
     };
     let limit = params.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
 
-    let rows = match nasrudin_pg::query::theorems::list_unnamed_verified(&pg, limit).await
-    {
+    let rows = match nasrudin_pg::query::theorems::list_unnamed_verified(&pg, limit).await {
         Ok(r) => r,
         Err(e) => {
             return (

@@ -28,11 +28,13 @@
 
 use crate::cache_bundle::CacheBundle;
 use nasrudin_core::{
-    axiom_id_from_name, axiom_set_hash, canonical_hash, skeleton_hash, BinOp, Expr, FitnessScore,
-    PhysConst,
+    BinOp, Expr, FitnessScore, PhysConst, axiom_id_from_name, axiom_set_hash, canonical_hash,
+    skeleton_hash,
 };
 use nasrudin_derive::lean_emitter::{LeanEmitConfig, emit_lean_file};
-use nasrudin_derive::lean_verify::{verify_with_cache, LeanVerifier, LeanVerifyResult, VerifyWithCacheCtx};
+use nasrudin_derive::lean_verify::{
+    LeanVerifier, LeanVerifyResult, VerifyWithCacheCtx, verify_with_cache,
+};
 use nasrudin_derive::{
     AxiomStore, Chain, DerivationContext, DerivationStrategy, RuleStep,
     equation_definitely_inconsistent, sr_variable_dimensions,
@@ -114,12 +116,41 @@ pub fn mutate_chain_full(
     suffix_bias: f32,
     atom_pool: Option<&[(String, f32)]>,
 ) {
+    let _ = mutate_chain_full_report_operator(chain, store, rng, priors, suffix_bias, atom_pool);
+}
+
+/// Same mutation path as [`mutate_chain_full`], but returns the
+/// operator index from [`MUTATION_OPS`] that was selected. The GA uses
+/// this for local adaptive-operator-selection credit assignment:
+/// mutate, evaluate the child, then reward the selected operator by
+/// fitness/QD improvement.
+pub fn mutate_chain_full_report_operator(
+    chain: &mut Chain,
+    store: &AxiomStore,
+    rng: &mut impl Rng,
+    priors: Option<&std::collections::HashMap<String, f32>>,
+    suffix_bias: f32,
+    atom_pool: Option<&[(String, f32)]>,
+) -> u8 {
+    let weights = resolve_weights(priors, suffix_bias);
+    mutate_chain_full_with_weights(chain, store, rng, &weights, atom_pool)
+}
+
+/// Mutation path with caller-resolved operator weights. This lets the
+/// GA combine LLM priors with a local RL bandit without round-tripping
+/// through JSON/hash maps on every mutation.
+pub fn mutate_chain_full_with_weights(
+    chain: &mut Chain,
+    store: &AxiomStore,
+    rng: &mut impl Rng,
+    weights: &[f32; 6],
+    atom_pool: Option<&[(String, f32)]>,
+) -> u8 {
     if chain.is_empty() {
         insert_random(chain, store, rng);
-        return;
+        return 0;
     }
-    let weights = resolve_weights(priors, suffix_bias);
-    let pick = weighted_pick(&weights, rng);
+    let pick = weighted_pick(weights, rng);
     match pick {
         0 => insert_random(chain, store, rng),
         1 => delete_random(chain, rng),
@@ -128,6 +159,7 @@ pub fn mutate_chain_full(
         4 => mutate_param(chain, store, rng),
         _ => append_productive_suffix_with_pool(chain, store, rng, atom_pool),
     }
+    pick
 }
 
 fn resolve_weights(
@@ -363,7 +395,9 @@ fn mutate_param(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
             let facts = collect_chain_facts(chain, store);
             let new_target = synthesize_target_from_facts(&facts, rng);
             if let RuleStep::RearrangeEquation {
-                description, target, ..
+                description,
+                target,
+                ..
             } = &mut chain.0[pos]
             {
                 *description = "Synthesised from facts".into();
@@ -382,17 +416,14 @@ fn mutate_param(chain: &mut Chain, store: &AxiomStore, rng: &mut impl Rng) {
 /// `AxiomStore::get` decodes fresh from RocksDB so there's no stable
 /// borrow lifetime to thread through. The clones are cheap relative
 /// to the chain-mutation work that consumes the facts.
-fn collect_chain_facts(
-    chain: &Chain,
-    store: &AxiomStore,
-) -> Vec<(String, Expr)> {
+fn collect_chain_facts(chain: &Chain, store: &AxiomStore) -> Vec<(String, Expr)> {
     chain
         .0
         .iter()
         .filter_map(|step| match step {
-            RuleStep::IntroduceAxiom { axiom_name } => {
-                store.get(axiom_name).map(|ax| (axiom_name.clone(), ax.statement))
-            }
+            RuleStep::IntroduceAxiom { axiom_name } => store
+                .get(axiom_name)
+                .map(|ax| (axiom_name.clone(), ax.statement)),
             _ => None,
         })
         .collect()
@@ -480,11 +511,7 @@ pub fn synthesize_target_from_facts(facts: &[(String, Expr)], rng: &mut impl Rng
             if facts.len() >= 2 {
                 let (_, f1) = facts.iter().choose(rng).unwrap();
                 let (_, f2) = facts.iter().choose(rng).unwrap();
-                if let (
-                    Expr::BinOp(BinOp::Eq, l1, r1),
-                    Expr::BinOp(BinOp::Eq, l2, r2),
-                ) = (f1, f2)
-                {
+                if let (Expr::BinOp(BinOp::Eq, l1, r1), Expr::BinOp(BinOp::Eq, l2, r2)) = (f1, f2) {
                     return Expr::BinOp(
                         BinOp::Eq,
                         Box::new(Expr::BinOp(
@@ -507,11 +534,7 @@ pub fn synthesize_target_from_facts(facts: &[(String, Expr)], rng: &mut impl Rng
             if facts.len() >= 2 {
                 let (_, f1) = facts.iter().choose(rng).unwrap();
                 let (_, f2) = facts.iter().choose(rng).unwrap();
-                if let (
-                    Expr::BinOp(BinOp::Eq, l1, r1),
-                    Expr::BinOp(BinOp::Eq, l2, r2),
-                ) = (f1, f2)
-                {
+                if let (Expr::BinOp(BinOp::Eq, l1, r1), Expr::BinOp(BinOp::Eq, l2, r2)) = (f1, f2) {
                     if l1 == l2 {
                         return Expr::BinOp(
                             BinOp::Eq,
@@ -541,7 +564,11 @@ pub fn synthesize_target_from_facts(facts: &[(String, Expr)], rng: &mut impl Rng
         _ => {
             let (_, expr) = facts.iter().choose(rng).unwrap();
             if let Expr::BinOp(BinOp::Eq, lhs, rhs) = expr {
-                Expr::BinOp(BinOp::Eq, Box::new((**rhs).clone()), Box::new((**lhs).clone()))
+                Expr::BinOp(
+                    BinOp::Eq,
+                    Box::new((**rhs).clone()),
+                    Box::new((**lhs).clone()),
+                )
             } else {
                 expr.clone()
             }
@@ -577,7 +604,11 @@ pub fn synthesize_physics_target(rng: &mut impl Rng) -> Expr {
         // ?lhs² = ?rhs²  (most useful — feeds TakePositiveRoot)
         0 | 1 => Expr::BinOp(
             BinOp::Eq,
-            Box::new(Expr::BinOp(BinOp::Pow, Box::new(lhs), Box::new(two.clone()))),
+            Box::new(Expr::BinOp(
+                BinOp::Pow,
+                Box::new(lhs),
+                Box::new(two.clone()),
+            )),
             Box::new(Expr::BinOp(BinOp::Pow, Box::new(rhs), Box::new(two))),
         ),
         // ?lhs = ?rhs
@@ -729,8 +760,7 @@ fn physics_atom_by_name(name: &str) -> Option<Expr> {
 /// silently dropped so newer steerer schemas can ship before all
 /// workers update.
 fn random_physics_compound(rng: &mut impl Rng) -> Expr {
-    random_physics_compound_weighted(rng, None)
-        .expect("baseline pool always has ≥1 known atom")
+    random_physics_compound_weighted(rng, None).expect("baseline pool always has ≥1 known atom")
 }
 
 /// Weighted variant of `random_physics_compound`. Exposed pub(crate)
@@ -1191,7 +1221,9 @@ fn count_distinct_symbols(expr: &nasrudin_core::Expr) -> usize {
                 walk(l, vars, consts);
                 walk(r, vars, consts);
             }
-            Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => walk(e, vars, consts),
+            Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => {
+                walk(e, vars, consts)
+            }
             Expr::App(f, x) => {
                 walk(f, vars, consts);
                 walk(x, vars, consts);
@@ -1200,7 +1232,9 @@ fn count_distinct_symbols(expr: &nasrudin_core::Expr) -> usize {
                 walk(t, vars, consts);
                 walk(b, vars, consts);
             }
-            Expr::Integral { body, lower, upper, .. } => {
+            Expr::Integral {
+                body, lower, upper, ..
+            } => {
                 walk(body, vars, consts);
                 if let Some(l) = lower {
                     walk(l, vars, consts);
@@ -1209,12 +1243,19 @@ fn count_distinct_symbols(expr: &nasrudin_core::Expr) -> usize {
                     walk(u, vars, consts);
                 }
             }
-            Expr::Sum { body, lower, upper, .. } | Expr::Prod { body, lower, upper, .. } => {
+            Expr::Sum {
+                body, lower, upper, ..
+            }
+            | Expr::Prod {
+                body, lower, upper, ..
+            } => {
                 walk(body, vars, consts);
                 walk(lower, vars, consts);
                 walk(upper, vars, consts);
             }
-            Expr::Limit { body, approaching, .. } => {
+            Expr::Limit {
+                body, approaching, ..
+            } => {
                 walk(body, vars, consts);
                 walk(approaching, vars, consts);
             }
@@ -1229,7 +1270,10 @@ fn count_distinct_symbols(expr: &nasrudin_core::Expr) -> usize {
 pub enum ChainVerifyOutcome {
     /// Chain ran, Lean accepted the proof. The .lean source is the
     /// `proof_term`.
-    Verified { lean_source: String, module_path: String },
+    Verified {
+        lean_source: String,
+        module_path: String,
+    },
     /// Chain ran, but Lean rejected the proof.
     LeanRejected { lean_source: String, stderr: String },
     /// Chain failed the pre-filter (didn't execute).
@@ -1309,7 +1353,14 @@ pub fn verify_chain(
     module_basename: &str,
     theorem_name: &str,
 ) -> ChainVerifyOutcome {
-    verify_chain_cached(chain, store, prover_root, module_basename, theorem_name, None)
+    verify_chain_cached(
+        chain,
+        store,
+        prover_root,
+        module_basename,
+        theorem_name,
+        None,
+    )
 }
 
 /// Cache-aware variant of [`verify_chain`].
@@ -1395,7 +1446,10 @@ pub fn verify_chain_cached_full(
             PersistentOutcome::Rejected { stderr } => {
                 // Elaborator says no — clean up the (not-written) file
                 // path is no-op and we trust the kernel verdict.
-                return ChainVerifyOutcome::LeanRejected { lean_source, stderr };
+                return ChainVerifyOutcome::LeanRejected {
+                    lean_source,
+                    stderr,
+                };
             }
             PersistentOutcome::FellBack { reason } => {
                 tracing::debug!(
@@ -1490,7 +1544,9 @@ pub fn verify_chain_cached_full(
             lean_source,
             stderr,
         },
-        LeanVerifyResult::ProcessError { message } => ChainVerifyOutcome::ToolchainError { message },
+        LeanVerifyResult::ProcessError { message } => {
+            ChainVerifyOutcome::ToolchainError { message }
+        }
     }
 }
 
@@ -1587,10 +1643,7 @@ mod tests {
     #[test]
     fn random_physics_compound_weighted_all_unknown_falls_back_to_baseline() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(99);
-        let pool = vec![
-            ("future_a".to_string(), 1.0),
-            ("future_b".to_string(), 1.0),
-        ];
+        let pool = vec![("future_a".to_string(), 1.0), ("future_b".to_string(), 1.0)];
         // No known atom in the LLM pool → fall through to uniform
         // baseline, which always produces a known compound.
         for _ in 0..32 {
@@ -1631,7 +1684,10 @@ mod tests {
             "test_thm",
             Some(&bundle),
         );
-        assert!(matches!(outcome, ChainVerifyOutcome::PreFilterFailed { .. }));
+        assert!(matches!(
+            outcome,
+            ChainVerifyOutcome::PreFilterFailed { .. }
+        ));
     }
 
     #[test]
@@ -1735,10 +1791,7 @@ mod tests {
         // or stayed the same (already ends in TakePositiveRoot — not the
         // case here).
         assert_eq!(chain.len(), before + 2);
-        assert!(matches!(
-            chain.0.last(),
-            Some(RuleStep::TakePositiveRoot)
-        ));
+        assert!(matches!(chain.0.last(), Some(RuleStep::TakePositiveRoot)));
     }
 
     #[test]
@@ -1753,7 +1806,11 @@ mod tests {
         ]);
         let before = chain.len();
         super::append_productive_suffix(&mut chain, &store, &mut rng);
-        assert_eq!(chain.len(), before, "shouldn't append after TakePositiveRoot");
+        assert_eq!(
+            chain.len(),
+            before,
+            "shouldn't append after TakePositiveRoot"
+        );
     }
 
     #[test]
@@ -1862,7 +1919,10 @@ mod tests {
             final_expr: Some(trivial),
             steps_run: 3,
         };
-        assert_eq!(super::chain_meaningfulness(&trivial_eval, &dummy_chain), 0.0);
+        assert_eq!(
+            super::chain_meaningfulness(&trivial_eval, &dummy_chain),
+            0.0
+        );
 
         // E² = m²·c⁴ — non-trivial, dimensionally consistent.
         let e_sq = Expr::BinOp(BinOp::Pow, Box::new(e), Box::new(two.clone()));
@@ -1936,7 +1996,10 @@ mod tests {
             steps_run: 3,
         };
         let m_trivial = super::chain_meaningfulness(&trivial_eval, &dummy);
-        assert_eq!(m_trivial, 0.0, "tautology must be rejected by meaningfulness");
+        assert_eq!(
+            m_trivial, 0.0,
+            "tautology must be rejected by meaningfulness"
+        );
 
         // Implication for the novelty channel: trivial chain's novelty
         // collapses from 1.0 (executes only) to 0.2. That 5×

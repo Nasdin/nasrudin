@@ -6,6 +6,8 @@ import PhysicsGenerator.Basic
 # Theorem: rest_energy_seed_chain_local
 -/
 
+set_option maxHeartbeats 50000
+
 namespace PhysicsGenerator.Derived
 
 open PhysicsGenerator

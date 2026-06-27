@@ -71,6 +71,12 @@ You have FOUR load-bearing levers:\n\
      mass-shell, photon dispersion, Hubble's law, …) — they are dropped \
      with a warn. This is a curriculum-extension lever, not a \
      soft-target substitute.\n\n\
+  6. `extension.strategy_genome_v1` — a compact AlphaEvolve-style \
+     strategy genome. Use this to make large moves with few tokens: \
+     one domain policy can scale compute, bias mutation operators, \
+     shift suffix pressure, and adjust elitism. Workers treat it as a \
+     candidate strategy; local RL/QD statistics decide whether it keeps \
+     helping across chunks. Emit only the domains you want to change.\n\n\
 Keep rationale ≤500 chars; rewrite `lessons_learned` each cycle as a \
 rolling indefinite-horizon memory of what works.";
 
@@ -190,12 +196,29 @@ const SCHEMA_HINT: &str = r#"{
       "action": "boost"|"exploit"|"diversify"|"kill",
       "strength": <0..1> }
   ] -- empty in B,
-  "extension": <any JSON>     -- free-form pass-through. Use this to
-                                  experiment with directive shapes the
-                                  current daemon doesn't recognise yet
-                                  (proof plans, axiom hints, etc.).
-                                  Persisted in history; ignored by the
-                                  GA until a future version reads it,
+  "extension": {
+    "strategy_genome_v1": {
+      "domain_policies": {
+        "<domain>": {
+          "compute_scale": <0.25..4.0>,
+          "mutation_rate_mult": <0.25..4.0>,
+          "suffix_bias_delta": <-1.0..1.0>,
+          "elitism_delta": <-0.2..0.2>,
+          "operator_bias": { "<op_name>": <0..4> }
+        }
+      }
+    },
+    "...": "other free-form fields"
+  }                           -- compact high-level strategy genome.
+                                Workers apply only the matching domain
+                                policy in scope C, clamp all values, and
+                                let local RL/QD statistics evaluate the
+                                effect across chunks. This is the preferred
+                                way to make large moves under the 10k-token
+                                / 2h budget: emit a small policy instead of
+                                verbose per-cluster micromanagement. Free-
+                                form fields are persisted in history; unknown
+                                fields are ignored by older workers,
   "lessons_learned": "<= 4000 chars; rolling notes. REPLACE each cycle
                       (don't append). Indefinite-horizon memory of what
                       worked / what didn't / current focus. Survives
@@ -355,8 +378,18 @@ mod tests {
     #[test]
     fn schema_mentions_required_fields() {
         let (cs, bs, kp, ift, pts) = empty_extras();
-        let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
+        let p = build_prompt(
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cs,
+            &bs,
+            &kp,
+            &ift,
+            "",
+            &pts,
+        );
         for f in &[
             "version",
             "scope",
@@ -371,8 +404,18 @@ mod tests {
     #[test]
     fn schema_hint_lists_mutation_priors_and_op_names() {
         let (cs, bs, kp, ift, pts) = empty_extras();
-        let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
+        let p = build_prompt(
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cs,
+            &bs,
+            &kp,
+            &ift,
+            "",
+            &pts,
+        );
         assert!(
             p.contains("mutation_priors"),
             "schema must mention mutation_priors"
@@ -412,8 +455,18 @@ mod tests {
     #[test]
     fn schema_hint_documents_lessons_learned() {
         let (cs, bs, kp, ift, pts) = empty_extras();
-        let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
+        let p = build_prompt(
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cs,
+            &bs,
+            &kp,
+            &ift,
+            "",
+            &pts,
+        );
         assert!(
             p.contains("lessons_learned"),
             "schema must mention lessons_learned"
@@ -448,8 +501,18 @@ mod tests {
     #[test]
     fn schema_hint_documents_proposed_chains() {
         let (cs, bs, kp, ift, pts) = empty_extras();
-        let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
+        let p = build_prompt(
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cs,
+            &bs,
+            &kp,
+            &ift,
+            "",
+            &pts,
+        );
         assert!(
             p.contains("proposed_chains"),
             "schema hint must document proposed_chains shape"
@@ -458,8 +521,7 @@ mod tests {
         // least one real upstream axiom so the LLM has a concrete
         // anchor to imitate.
         assert!(
-            p.contains("four_momentum_time_component")
-                || p.contains("IntroduceAxiom"),
+            p.contains("four_momentum_time_component") || p.contains("IntroduceAxiom"),
             "schema hint should include a worked RuleStep example"
         );
     }
@@ -480,10 +542,62 @@ mod tests {
     fn schema_hint_documents_proposed_targets() {
         let (cs, bs, kp, ift, pts) = empty_extras();
         let p = build_prompt(
-            "C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts,
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cs,
+            &bs,
+            &kp,
+            &ift,
+            "",
+            &pts,
         );
         for f in &["proposed_targets", "hunch", "domain_hint", "rationale"] {
-            assert!(p.contains(f), "schema hint must mention proposed_targets field: {f}");
+            assert!(
+                p.contains(f),
+                "schema hint must mention proposed_targets field: {f}"
+            );
+        }
+    }
+
+    #[test]
+    fn system_prompt_documents_strategy_genome() {
+        assert!(
+            SYSTEM_PROMPT.contains("strategy_genome_v1"),
+            "system prompt must teach the compact strategy-genome lever"
+        );
+        assert!(
+            SYSTEM_PROMPT.contains("AlphaEvolve"),
+            "system prompt should connect strategy genomes to AlphaEvolve-style search"
+        );
+    }
+
+    #[test]
+    fn schema_hint_documents_strategy_genome() {
+        let (cs, bs, kp, ift, pts) = empty_extras();
+        let p = build_prompt(
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cs,
+            &bs,
+            &kp,
+            &ift,
+            "",
+            &pts,
+        );
+        for f in &[
+            "strategy_genome_v1",
+            "domain_policies",
+            "compute_scale",
+            "operator_bias",
+        ] {
+            assert!(
+                p.contains(f),
+                "schema hint must mention strategy genome field: {f}"
+            );
         }
     }
 
@@ -495,7 +609,16 @@ mod tests {
             "state": "proved",
         })];
         let p = build_prompt(
-            "C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts,
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cs,
+            &bs,
+            &kp,
+            &ift,
+            "",
+            &pts,
         );
         assert!(p.contains("platform_target_states"));
         assert!(p.contains("E = m * c^2"));
@@ -504,8 +627,18 @@ mod tests {
     #[test]
     fn instructions_explain_rolling_memory() {
         let (cs, bs, kp, ift, pts) = empty_extras();
-        let p =
-            build_prompt("C", &[], &DemandSnapshot::default(), &[], &cs, &bs, &kp, &ift, "", &pts);
+        let p = build_prompt(
+            "C",
+            &[],
+            &DemandSnapshot::default(),
+            &[],
+            &cs,
+            &bs,
+            &kp,
+            &ift,
+            "",
+            &pts,
+        );
         assert!(
             p.contains("REPLACE the previous version"),
             "instructions must tell the LLM to replace not append"

@@ -63,9 +63,10 @@ pub struct ReverifyQueue {
     /// `cache_ctx.config.attempts_enabled`, the reverify path goes
     /// through `LakeBuilder::verify_cached` instead of `verify`.
     pub cache_ctx: Option<Arc<crate::cache::CacheCtx>>,
-    /// LLM-naming client (Kimi K2.6). `None` when GRADIENT_API_KEY is
-    /// unset; `flip_verified` then skips the post-verify naming task
-    /// entirely instead of failing the verification flip.
+    /// LLM-naming client (Kimi K2.6). `None` unless
+    /// `LLM_NAMING_ENABLED=1` and `GRADIENT_API_KEY` is configured;
+    /// `flip_verified` then skips the post-verify naming task entirely
+    /// instead of failing the verification flip.
     pub naming_client: Option<Arc<crate::theorem_naming::NamingClient>>,
     /// Bounded-concurrency permit for LLM-naming. Shared with the
     /// admin backfill endpoint via `AppState.naming_semaphore`.
@@ -220,10 +221,7 @@ impl ReverifyQueue {
                 // worker_claim / chain_replay split.
                 let trust_decision = crate::trust::TrustDecision {
                     trusted: row.worker_trusted,
-                    spot_check_rate: row
-                        .worker_spot_check_rate
-                        .map(|r| r as u32)
-                        .unwrap_or(50),
+                    spot_check_rate: row.worker_spot_check_rate.map(|r| r as u32).unwrap_or(50),
                     source: crate::trust::TrustSource::Default,
                 };
                 let bypass = !crate::trust::should_promote(&trust_decision, &row.id);
@@ -249,7 +247,9 @@ impl ReverifyQueue {
                 let mut id_arr = [0u8; 8];
                 if row.id.len() == 8 {
                     id_arr.copy_from_slice(&row.id);
-                    let _ = self.rocks.enqueue_lake_promotion(&id_arr, promotion_priority);
+                    let _ = self
+                        .rocks
+                        .enqueue_lake_promotion(&id_arr, promotion_priority);
                 }
 
                 self.rocks.dequeue_reverify(&job.theorem_id).ok();
@@ -498,7 +498,10 @@ impl ReverifyQueue {
                 let id = row.id.clone();
                 tokio::spawn(async move {
                     if let Err(e) = nasrudin_pg::query::theorems::set_display_name(
-                        &pg, &id, &name, &description,
+                        &pg,
+                        &id,
+                        &name,
+                        &description,
                     )
                     .await
                     {
@@ -699,9 +702,7 @@ pub fn naming_action(row: &nasrudin_pg::entity::theorems::Model) -> NamingAction
     if row.verification_tactic.as_deref() == Some("imported") {
         return NamingAction::Skip;
     }
-    if let Some(h) =
-        nasrudin_derive::headline_registry::match_canonical(&row.canonical_statement)
-    {
+    if let Some(h) = nasrudin_derive::headline_registry::match_canonical(&row.canonical_statement) {
         return NamingAction::UseHeadline {
             name: h.name.to_string(),
             description: h.description.to_string(),

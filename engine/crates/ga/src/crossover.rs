@@ -43,30 +43,19 @@ fn count_positions(expr: &Expr) -> usize {
             1 + count_positions(ty) + count_positions(body)
         }
         Expr::BinOp(_, l, r) => 1 + count_positions(l) + count_positions(r),
-        Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => {
-            1 + count_positions(e)
-        }
+        Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => 1 + count_positions(e),
         Expr::Integral {
-            body,
-            lower,
-            upper,
-            ..
+            body, lower, upper, ..
         } => {
             1 + count_positions(body)
                 + lower.as_ref().map_or(0, |e| count_positions(e))
                 + upper.as_ref().map_or(0, |e| count_positions(e))
         }
         Expr::Sum {
-            body,
-            lower,
-            upper,
-            ..
+            body, lower, upper, ..
         }
         | Expr::Prod {
-            body,
-            lower,
-            upper,
-            ..
+            body, lower, upper, ..
         } => 1 + count_positions(body) + count_positions(lower) + count_positions(upper),
         Expr::Limit {
             body, approaching, ..
@@ -89,37 +78,24 @@ fn extract_subtree(expr: &Expr, target: usize) -> Expr {
                 walk(ty, pos, target).or_else(|| walk(body, pos, target))
             }
             Expr::BinOp(_, l, r) => walk(l, pos, target).or_else(|| walk(r, pos, target)),
-            Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => {
-                walk(e, pos, target)
-            }
+            Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => walk(e, pos, target),
             Expr::Integral {
-                body,
-                lower,
-                upper,
-                ..
+                body, lower, upper, ..
             } => walk(body, pos, target)
                 .or_else(|| lower.as_ref().and_then(|e| walk(e, pos, target)))
                 .or_else(|| upper.as_ref().and_then(|e| walk(e, pos, target))),
             Expr::Sum {
-                body,
-                lower,
-                upper,
-                ..
+                body, lower, upper, ..
             }
             | Expr::Prod {
-                body,
-                lower,
-                upper,
-                ..
+                body, lower, upper, ..
             } => walk(body, pos, target)
                 .or_else(|| walk(lower, pos, target))
                 .or_else(|| walk(upper, pos, target)),
             Expr::Limit {
                 body, approaching, ..
             } => walk(body, pos, target).or_else(|| walk(approaching, pos, target)),
-            Expr::Let(_, val, body) => {
-                walk(val, pos, target).or_else(|| walk(body, pos, target))
-            }
+            Expr::Let(_, val, body) => walk(val, pos, target).or_else(|| walk(body, pos, target)),
         }
     }
 

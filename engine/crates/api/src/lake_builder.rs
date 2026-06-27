@@ -22,25 +22,17 @@ use tokio::sync::Semaphore;
 
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(300);
 
-static AXIOM_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"(?m)^\s*axiom\s+\w+").expect("static regex compiles")
-});
+static AXIOM_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?m)^\s*axiom\s+\w+").expect("static regex compiles"));
 
-static SORRY_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"\bsorry\b").expect("static regex compiles")
-});
+static SORRY_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\bsorry\b").expect("static regex compiles"));
 
 /// Outcome of a single verification attempt.
 #[derive(Debug, Clone)]
 pub enum VerifyOutcome {
-    Verified {
-        tactic: String,
-        duration_ms: u32,
-    },
-    Rejected {
-        reason: String,
-        stderr_tail: String,
-    },
+    Verified { tactic: String, duration_ms: u32 },
+    Rejected { reason: String, stderr_tail: String },
 }
 
 /// Tokio task pool that runs `lake build` against the trusted `prover/`
@@ -116,11 +108,7 @@ impl LakeBuilder {
     /// The submission file is removed after verification regardless of
     /// outcome (the `.olean` artifact lingers in `.lake/build/` — cheap
     /// disk, helpful if the same chain ever re-verifies).
-    pub async fn verify(
-        &self,
-        lean_source: &str,
-        theorem_id_hex: &str,
-    ) -> Result<VerifyOutcome> {
+    pub async fn verify(&self, lean_source: &str, theorem_id_hex: &str) -> Result<VerifyOutcome> {
         // 1. Pre-flight first — reject before we even allocate a slot.
         if let Err(reason) = preflight_axiom_or_sorry(lean_source) {
             return Ok(VerifyOutcome::Rejected {
@@ -148,9 +136,8 @@ impl LakeBuilder {
         let prover_root = self.prover_template.clone();
         let lean_source = lean_source.to_string();
         let theorem_id_hex = theorem_id_hex.to_string();
-        let submission_relative = format!(
-            "PhysicsGenerator/Derived/Submission_{theorem_id_hex}.lean"
-        );
+        let submission_relative =
+            format!("PhysicsGenerator/Derived/Submission_{theorem_id_hex}.lean");
         let submission_path = prover_root.join(&submission_relative);
 
         let write_result = {
@@ -185,9 +172,7 @@ impl LakeBuilder {
         // Targeting the specific module (not bare `lake build`) tells lake
         // to only build this one submission + its transitive deps; the
         // prebuilt PhysicsGenerator.LeafImports oleans satisfy the deps.
-        let module_target = format!(
-            "PhysicsGenerator.Derived.Submission_{theorem_id_hex}"
-        );
+        let module_target = format!("PhysicsGenerator.Derived.Submission_{theorem_id_hex}");
         let start = std::time::Instant::now();
         let mut cmd = Command::new("lake");
         cmd.arg("build")
@@ -214,11 +199,7 @@ impl LakeBuilder {
                 // Timed out — kill the subprocess so it doesn't leak RAM/CPU.
                 let _ = child.start_kill();
                 // Reap so we don't leave a zombie. Bound the wait at 5s.
-                let _ = tokio::time::timeout(
-                    Duration::from_secs(5),
-                    child.wait(),
-                )
-                .await;
+                let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
                 Ok(VerifyOutcome::Rejected {
                     reason: "verify_timeout".into(),
                     stderr_tail: String::new(),
@@ -299,7 +280,10 @@ impl LakeBuilder {
                 theorem_id: [0u8; 8],
                 tactic: tactic.clone(),
             },
-            VerifyOutcome::Rejected { reason, stderr_tail } => AttemptOutcome::RejectedTypeError {
+            VerifyOutcome::Rejected {
+                reason,
+                stderr_tail,
+            } => AttemptOutcome::RejectedTypeError {
                 msg: format!("{reason}: {stderr_tail}"),
             },
         };

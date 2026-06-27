@@ -11,9 +11,9 @@ pub mod features;
 pub mod kmeans;
 pub mod summary;
 
-pub use features::{signature_distance, ClusterFeatures, MINHASH_SIG_LEN};
-pub use kmeans::{cluster_individuals, Centroid, ClusterAssignment};
-pub use summary::{compute_summaries, ClusterSummary};
+pub use features::{ClusterFeatures, MINHASH_SIG_LEN, signature_distance};
+pub use kmeans::{Centroid, ClusterAssignment, cluster_individuals};
+pub use summary::{ClusterSummary, compute_summaries};
 
 use nasrudin_derive::{Chain, RuleStep};
 use serde::{Deserialize, Serialize};

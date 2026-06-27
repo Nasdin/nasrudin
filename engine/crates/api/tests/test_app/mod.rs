@@ -161,15 +161,22 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
     // Seed a known worker row so the public list endpoint has something to
     // return and so tests asserting "id_mismatch" on heartbeat have a real
     // counter-party in PG.
-    nasrudin_pg::query::workers::register(&pg, "test-worker", Some("test-worker"), Some("localhost"))
-        .await
-        .ok()?;
+    nasrudin_pg::query::workers::register(
+        &pg,
+        "test-worker",
+        Some("test-worker"),
+        Some("localhost"),
+    )
+    .await
+    .ok()?;
 
     // Materialise bandit arms so tests that exercise the steering
     // cycle don't need to seed each (island, K) and (island, action,
     // bucket, choice) row themselves. The production boot does this
     // in main.rs; this is the test-harness equivalent.
-    physics_api::steerer::bandit::ensure_all_arms(&pg).await.ok()?;
+    physics_api::steerer::bandit::ensure_all_arms(&pg)
+        .await
+        .ok()?;
     physics_api::steerer::directive_bandit::ensure_all_arms(&pg)
         .await
         .ok()?;
@@ -183,9 +190,8 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
     let (ga_discovery_tx, _) = tokio::sync::broadcast::channel::<GaDiscoveryEvent>(16);
     let (reverify_event_tx, _) = tokio::sync::broadcast::channel::<ReverifyDiscoveryEvent>(16);
     let reverify_event_tx_for_test = reverify_event_tx.clone();
-    let (conjecture_event_tx, _) = tokio::sync::broadcast::channel::<
-        physics_api::conjecture::ConjectureEvent,
-    >(16);
+    let (conjecture_event_tx, _) =
+        tokio::sync::broadcast::channel::<physics_api::conjecture::ConjectureEvent>(16);
 
     let lake = Arc::new(LakeBuilder::new(
         std::env::temp_dir(),
@@ -198,8 +204,7 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
     let initial_body = serde_json::to_vec(&initial_steering).unwrap_or_default();
     let initial_etag = xxhash_rust::xxh64::xxh64(&initial_body, 0);
     let initial_snapshot = physics_api::state::SteeringSnapshot {
-        config: serde_json::to_value(&initial_steering)
-            .unwrap_or(serde_json::Value::Null),
+        config: serde_json::to_value(&initial_steering).unwrap_or(serde_json::Value::Null),
         etag: initial_etag,
         started_at: chrono::Utc::now(),
     };
@@ -223,9 +228,7 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         conjecture_event_tx,
         lake_promotion: None,
         billing: None,
-        seed_cache: Arc::new(std::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
+        seed_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         steering: Arc::new(arc_swap::ArcSwap::from_pointee(initial_snapshot)),
         cluster_config: Arc::new(arc_swap::ArcSwap::from_pointee(
             physics_api::state::ClusterConfigSnapshot::default(),
@@ -240,9 +243,7 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         job_events: Arc::new(dashmap::DashMap::new()),
         landing_stats: Arc::new(physics_api::handlers::stats::LandingStatsCache::new()),
         workers_list_cache: Arc::new(physics_api::handlers::workers::WorkersListCache::new()),
-        theorems_recent_cache: Arc::new(
-            physics_api::handlers::theorems::TheoremsRecentCache::new(),
-        ),
+        theorems_recent_cache: Arc::new(physics_api::handlers::theorems::TheoremsRecentCache::new()),
         contributors_list_cache: Arc::new(
             physics_api::handlers::contributors::ContributorsListCache::new(),
         ),
@@ -257,10 +258,7 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         stripe_secret: String::new(),
         impersonation_signing_key: Some(b"test-signing-key-32-bytes-aaaaaaaa".to_vec()),
         bulk_run_progress_tx: tokio::sync::broadcast::channel(16).0,
-        trust_cache: physics_api::trust::TrustCache::new(
-            std::time::Duration::from_secs(30),
-            128,
-        ),
+        trust_cache: physics_api::trust::TrustCache::new(std::time::Duration::from_secs(30), 128),
         trust_invalidation_tx: tokio::sync::broadcast::channel(16).0,
         trusted_spot_check_rate: 50,
         catalog_hashes: physics_api::state::CatalogHashSet::empty(),
@@ -303,22 +301,13 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
             "/api/events/stats",
             axum::routing::get(handlers::events::stats),
         )
-        .route(
-            "/api/seed",
-            axum::routing::get(handlers::seed::seed),
-        )
-        .route(
-            "/api/workers",
-            axum::routing::get(handlers::workers::list),
-        )
+        .route("/api/seed", axum::routing::get(handlers::seed::seed))
+        .route("/api/workers", axum::routing::get(handlers::workers::list))
         .route(
             "/api/workers/heartbeat",
             axum::routing::post(handlers::workers::heartbeat),
         )
-        .route(
-            "/api/me/stats",
-            axum::routing::get(handlers::me::stats),
-        )
+        .route("/api/me/stats", axum::routing::get(handlers::me::stats))
         .route(
             "/api/stats/landing",
             axum::routing::get(handlers::stats::landing),
@@ -327,10 +316,7 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
             "/api/auth/firebase-session",
             axum::routing::post(physics_api::auth::firebase_session),
         )
-        .route(
-            "/api/auth/me",
-            axum::routing::get(physics_api::auth::me),
-        )
+        .route("/api/auth/me", axum::routing::get(physics_api::auth::me))
         .route(
             "/api/me/llm-keys",
             axum::routing::get(handlers::llm_keys::list),
@@ -393,8 +379,7 @@ pub async fn build_with_opts(opts: BuildOpts) -> Option<TestApp> {
         // they can exercise credits_budget/rush at the handler level.
         .route(
             "/api/research/jobs",
-            axum::routing::post(handlers::research_jobs::create)
-                .get(handlers::research_jobs::list),
+            axum::routing::post(handlers::research_jobs::create).get(handlers::research_jobs::list),
         )
         .route(
             "/api/research/jobs/{id}",
@@ -454,7 +439,10 @@ pub async fn get(app: &TestApp, path: &str) -> Resp {
         .unwrap();
     let resp = app.router.clone().oneshot(req).await.unwrap();
     let status = resp.status();
-    let body_bytes = to_bytes(resp.into_body(), 1024 * 1024).await.unwrap().to_vec();
+    let body_bytes = to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap()
+        .to_vec();
     Resp {
         status,
         body: body_bytes,
@@ -481,7 +469,10 @@ pub async fn post(
         .unwrap();
     let resp = app.router.clone().oneshot(req).await.unwrap();
     let status = resp.status();
-    let body_bytes = to_bytes(resp.into_body(), 1024 * 1024).await.unwrap().to_vec();
+    let body_bytes = to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap()
+        .to_vec();
     Resp {
         status,
         body: body_bytes,

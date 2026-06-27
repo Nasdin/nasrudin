@@ -128,7 +128,12 @@ impl LakePromotion {
         // Park on the Notify with timeout.
         let _ = tokio::time::timeout(timeout, notify.notified()).await;
         // Re-read final state.
-        Ok(self.rocks.get_theorem(&id).ok().flatten().map(|t| t.verified))
+        Ok(self
+            .rocks
+            .get_theorem(&id)
+            .ok()
+            .flatten()
+            .map(|t| t.verified))
     }
 
     fn is_terminal(status: &nasrudin_core::VerificationStatus) -> bool {
@@ -406,9 +411,7 @@ impl LakePromotion {
 pub async fn drain_loop(promotion: Arc<LakePromotion>) {
     if let Ok(depth) = promotion.rocks.lake_promotion_queue_depth() {
         if depth > 0 {
-            tracing::info!(
-                "lake_promotion: drain loop starting with {depth} queued promotions"
-            );
+            tracing::info!("lake_promotion: drain loop starting with {depth} queued promotions");
         }
     }
     loop {

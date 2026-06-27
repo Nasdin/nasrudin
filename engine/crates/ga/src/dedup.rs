@@ -38,8 +38,8 @@ impl DedupFilter {
     ///
     /// Memory usage scales with capacity: ~12 MB at 10M items with 1% FPR.
     pub fn with_capacity(capacity: usize) -> Self {
-        let bloom = Bloom::new_for_fp_rate(capacity, FALSE_POSITIVE_RATE)
-            .expect("bloom params are valid");
+        let bloom =
+            Bloom::new_for_fp_rate(capacity, FALSE_POSITIVE_RATE).expect("bloom params are valid");
         Self { bloom, count: 0 }
     }
 

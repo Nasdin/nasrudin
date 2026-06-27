@@ -33,33 +33,39 @@ pub fn tag_domain_from_name(name: &str) -> Option<Domain> {
     // Clifford algebras (used for spinors), and the raw Minkowski
     // metric all live in flat namespaces. Tagging them SR collects
     // them on the SR island.
-    if has_prefix(name, &[
-        "Lorentz.",
-        "LorentzGroup.",
-        "SpaceTime.",
-        "Spacetime.",
-        "minkowskiMatrix.",
-        "complexLorentzTensor.",
-        "realLorentzTensor.",
-        "CliffordAlgebra.",
-        "Space.",
-        "PhysLean.Relativity.",
-        "PhysLean.SpaceAndTime.",
-    ]) {
+    if has_prefix(
+        name,
+        &[
+            "Lorentz.",
+            "LorentzGroup.",
+            "SpaceTime.",
+            "Spacetime.",
+            "minkowskiMatrix.",
+            "complexLorentzTensor.",
+            "realLorentzTensor.",
+            "CliffordAlgebra.",
+            "Space.",
+            "PhysLean.Relativity.",
+            "PhysLean.SpaceAndTime.",
+        ],
+    ) {
         return Some(Domain::SpecialRelativity);
     }
 
     // ── General relativity & cosmology ─────────────────────────────
     // FLRW, Friedmann equations, Hubble constant, spatial geometry
     // all live under `Cosmology.*` in PhysLean v4.26.0.
-    if has_prefix(name, &[
-        "Cosmology.",
-        "PhysLean.Cosmology.",
-        "FLRW.",
-        "FriedmannEquation.",
-        "GeneralRelativity.",
-        "PhysLean.GeneralRelativity.",
-    ]) {
+    if has_prefix(
+        name,
+        &[
+            "Cosmology.",
+            "PhysLean.Cosmology.",
+            "FLRW.",
+            "FriedmannEquation.",
+            "GeneralRelativity.",
+            "PhysLean.GeneralRelativity.",
+        ],
+    ) {
         return Some(Domain::GeneralRelativity);
     }
 
@@ -71,32 +77,29 @@ pub fn tag_domain_from_name(name: &str) -> Option<Domain> {
     // (HarmonicOscillator.foo) appear when PhysLean uses
     // `namespace HarmonicOscillator` inside a ClassicalMechanics
     // file.
-    if has_prefix(name, &[
-        "ClassicalMechanics.",
-        "PhysLean.ClassicalMechanics.",
-        "HarmonicOscillator.",
-        "Pendulum.",
-        "RigidBody.",
-        "Scattering.",
-        "WaveEquation.",
-        "Vibrations.",
-    ]) {
+    if has_prefix(
+        name,
+        &[
+            "ClassicalMechanics.",
+            "PhysLean.ClassicalMechanics.",
+            "HarmonicOscillator.",
+            "Pendulum.",
+            "RigidBody.",
+            "Scattering.",
+            "WaveEquation.",
+            "Vibrations.",
+        ],
+    ) {
         return Some(Domain::ClassicalMechanics);
     }
 
     // ── Electromagnetism ───────────────────────────────────────────
-    if has_prefix(name, &[
-        "Electromagnetism.",
-        "PhysLean.Electromagnetism.",
-    ]) {
+    if has_prefix(name, &["Electromagnetism.", "PhysLean.Electromagnetism."]) {
         return Some(Domain::Electromagnetism);
     }
 
     // ── Optics ─────────────────────────────────────────────────────
-    if has_prefix(name, &[
-        "Optics.",
-        "PhysLean.Optics.",
-    ]) {
+    if has_prefix(name, &["Optics.", "PhysLean.Optics."]) {
         return Some(Domain::Optics);
     }
 
@@ -106,27 +109,33 @@ pub fn tag_domain_from_name(name: &str) -> Option<Domain> {
     // `TemperatureUnit`). `IdealGas` is under
     // `Thermodynamics.IdealGas.*` (caught by `Thermodynamics.`
     // prefix).
-    if has_prefix(name, &[
-        "Thermodynamics.",
-        "PhysLean.Thermodynamics.",
-        "Temperature.",
-        "TemperatureUnit.",
-        "BlackBody.",
-        "ThermalSystem.",
-        "Entropy.",
-    ]) {
+    if has_prefix(
+        name,
+        &[
+            "Thermodynamics.",
+            "PhysLean.Thermodynamics.",
+            "Temperature.",
+            "TemperatureUnit.",
+            "BlackBody.",
+            "ThermalSystem.",
+            "Entropy.",
+        ],
+    ) {
         return Some(Domain::Thermodynamics);
     }
 
     // ── Statistical mechanics & condensed matter ───────────────────
-    if has_prefix(name, &[
-        "StatisticalMechanics.",
-        "PhysLean.StatisticalMechanics.",
-        "CondensedMatter.",
-        "PhysLean.CondensedMatter.",
-        "TightBindingChain.",
-        "CanonicalEnsemble.",
-    ]) {
+    if has_prefix(
+        name,
+        &[
+            "StatisticalMechanics.",
+            "PhysLean.StatisticalMechanics.",
+            "CondensedMatter.",
+            "PhysLean.CondensedMatter.",
+            "TightBindingChain.",
+            "CanonicalEnsemble.",
+        ],
+    ) {
         return Some(Domain::StatisticalMechanics);
     }
 
@@ -137,31 +146,34 @@ pub fn tag_domain_from_name(name: &str) -> Option<Domain> {
     // (string-theory), SuperSymmetry, SMRHN (Standard Model right-
     // handed neutrinos), Action principles, BeyondTheStandardModel,
     // FlavorPhysics, NeutrinoPhysics. All QFT-adjacent.
-    if has_prefix(name, &[
-        "QFT.",
-        "PhysLean.QFT.",
-        "QuantumFieldTheory.",
-        "FieldSpecification.",
-        "WickContraction.",
-        "TensorSpecies.",
-        "PureU1.",
-        "StandardModel.",
-        "Higgs.",
-        "Fermion.",
-        "SuperSymmetry.",
-        "FTheory.",
-        "SMRHN.",
-        "Action.",
-        "AnomalyCancellation.",
-        "BeyondTheStandardModel.",
-        "FlavorPhysics.",
-        "NeutrinoPhysics.",
-        "PhysLean.Particles.",
-        "Particles.",
-        "PhysLean.StringTheory.",
-        "StringTheory.",
-        "PhysLean.AnomalyCancellation.",
-    ]) {
+    if has_prefix(
+        name,
+        &[
+            "QFT.",
+            "PhysLean.QFT.",
+            "QuantumFieldTheory.",
+            "FieldSpecification.",
+            "WickContraction.",
+            "TensorSpecies.",
+            "PureU1.",
+            "StandardModel.",
+            "Higgs.",
+            "Fermion.",
+            "SuperSymmetry.",
+            "FTheory.",
+            "SMRHN.",
+            "Action.",
+            "AnomalyCancellation.",
+            "BeyondTheStandardModel.",
+            "FlavorPhysics.",
+            "NeutrinoPhysics.",
+            "PhysLean.Particles.",
+            "Particles.",
+            "PhysLean.StringTheory.",
+            "StringTheory.",
+            "PhysLean.AnomalyCancellation.",
+        ],
+    ) {
         return Some(Domain::QuantumFieldTheory);
     }
 
@@ -173,34 +185,34 @@ pub fn tag_domain_from_name(name: &str) -> Option<Domain> {
     // `SchwartzMap.*` (distributions used in QM), `Hilbert.*` if
     // present. Including them as QM substrate makes a QM-island's
     // `seed_from_axioms(by_domain(QM))` materially richer.
-    if has_prefix(name, &[
-        "QuantumMechanics.",
-        "PhysLean.QuantumMechanics.",
-        "InnerProductSpace.",
-        "Hilbert.",
-        "SchwartzMap.",
-        // Keep the Mathlib-prefixed forms in case a future
-        // extraction emits the full path.
-        "Mathlib.Analysis.InnerProductSpace.",
-        "Mathlib.Analysis.Normed.Module.",
-        "Mathlib.Analysis.NormedSpace.Spectrum.",
-        "Mathlib.Analysis.NormedSpace.OperatorNorm.",
-        "Mathlib.Analysis.Hilbert",
-        "Mathlib.LinearAlgebra.SelfAdjoint",
-        "Mathlib.LinearAlgebra.Matrix.Hermitian",
-        "Mathlib.LinearAlgebra.Matrix.Spectrum",
-        "Mathlib.LinearAlgebra.TensorProduct.",
-        "Mathlib.LinearAlgebra.Eigenspace",
-        "Mathlib.Topology.ContinuousFunction.Algebra.",
-    ]) {
+    if has_prefix(
+        name,
+        &[
+            "QuantumMechanics.",
+            "PhysLean.QuantumMechanics.",
+            "InnerProductSpace.",
+            "Hilbert.",
+            "SchwartzMap.",
+            // Keep the Mathlib-prefixed forms in case a future
+            // extraction emits the full path.
+            "Mathlib.Analysis.InnerProductSpace.",
+            "Mathlib.Analysis.Normed.Module.",
+            "Mathlib.Analysis.NormedSpace.Spectrum.",
+            "Mathlib.Analysis.NormedSpace.OperatorNorm.",
+            "Mathlib.Analysis.Hilbert",
+            "Mathlib.LinearAlgebra.SelfAdjoint",
+            "Mathlib.LinearAlgebra.Matrix.Hermitian",
+            "Mathlib.LinearAlgebra.Matrix.Spectrum",
+            "Mathlib.LinearAlgebra.TensorProduct.",
+            "Mathlib.LinearAlgebra.Eigenspace",
+            "Mathlib.Topology.ContinuousFunction.Algebra.",
+        ],
+    ) {
         return Some(Domain::QuantumMechanics);
     }
 
     // ── Fluid dynamics ─────────────────────────────────────────────
-    if has_prefix(name, &[
-        "FluidDynamics.",
-        "PhysLean.FluidDynamics.",
-    ]) {
+    if has_prefix(name, &["FluidDynamics.", "PhysLean.FluidDynamics."]) {
         return Some(Domain::FluidDynamics);
     }
 
@@ -265,18 +277,48 @@ pub fn resolve_domain(
 /// score form emitted into the catalog's `name` field
 /// (`classicalmechanics_harmonicoscillator_k_pos` etc.).
 fn tag_domain_from_lowercase_name(name: &str) -> Option<Domain> {
-    if has_prefix(name, &["lorentz_", "lorentzgroup_", "spacetime_",
-        "minkowskimatrix_", "complexlorentztensor_", "reallorentztensor_",
-        "cliffordalgebra_", "physlean_relativity_", "physlean_spaceandtime_"]) {
+    if has_prefix(
+        name,
+        &[
+            "lorentz_",
+            "lorentzgroup_",
+            "spacetime_",
+            "minkowskimatrix_",
+            "complexlorentztensor_",
+            "reallorentztensor_",
+            "cliffordalgebra_",
+            "physlean_relativity_",
+            "physlean_spaceandtime_",
+        ],
+    ) {
         return Some(Domain::SpecialRelativity);
     }
-    if has_prefix(name, &["cosmology_", "flrw_", "friedmannequation_",
-        "physlean_cosmology_", "generalrelativity_", "physlean_generalrelativity_"]) {
+    if has_prefix(
+        name,
+        &[
+            "cosmology_",
+            "flrw_",
+            "friedmannequation_",
+            "physlean_cosmology_",
+            "generalrelativity_",
+            "physlean_generalrelativity_",
+        ],
+    ) {
         return Some(Domain::GeneralRelativity);
     }
-    if has_prefix(name, &["classicalmechanics_", "physlean_classicalmechanics_",
-        "harmonicoscillator_", "pendulum_", "rigidbody_", "scattering_",
-        "waveequation_", "vibrations_"]) {
+    if has_prefix(
+        name,
+        &[
+            "classicalmechanics_",
+            "physlean_classicalmechanics_",
+            "harmonicoscillator_",
+            "pendulum_",
+            "rigidbody_",
+            "scattering_",
+            "waveequation_",
+            "vibrations_",
+        ],
+    ) {
         return Some(Domain::ClassicalMechanics);
     }
     if has_prefix(name, &["electromagnetism_", "physlean_electromagnetism_"]) {
@@ -285,27 +327,72 @@ fn tag_domain_from_lowercase_name(name: &str) -> Option<Domain> {
     if has_prefix(name, &["optics_", "physlean_optics_"]) {
         return Some(Domain::Optics);
     }
-    if has_prefix(name, &["thermodynamics_", "physlean_thermodynamics_",
-        "temperature_", "temperatureunit_",
-        "blackbody_", "thermalsystem_", "entropy_"]) {
+    if has_prefix(
+        name,
+        &[
+            "thermodynamics_",
+            "physlean_thermodynamics_",
+            "temperature_",
+            "temperatureunit_",
+            "blackbody_",
+            "thermalsystem_",
+            "entropy_",
+        ],
+    ) {
         return Some(Domain::Thermodynamics);
     }
-    if has_prefix(name, &["statisticalmechanics_", "physlean_statisticalmechanics_",
-        "condensedmatter_", "physlean_condensedmatter_",
-        "tightbindingchain_", "canonicalensemble_"]) {
+    if has_prefix(
+        name,
+        &[
+            "statisticalmechanics_",
+            "physlean_statisticalmechanics_",
+            "condensedmatter_",
+            "physlean_condensedmatter_",
+            "tightbindingchain_",
+            "canonicalensemble_",
+        ],
+    ) {
         return Some(Domain::StatisticalMechanics);
     }
-    if has_prefix(name, &["qft_", "physlean_qft_", "quantumfieldtheory_",
-        "fieldspecification_", "wickcontraction_", "tensorspecies_",
-        "pureu1_", "standardmodel_", "higgs_", "fermion_", "supersymmetry_",
-        "ftheory_", "smrhn_", "anomalycancellation_",
-        "beyondthestandardmodel_", "flavorphysics_", "neutrinophysics_",
-        "physlean_anomalycancellation_", "physlean_particles_", "particles_",
-        "physlean_stringtheory_", "stringtheory_"]) {
+    if has_prefix(
+        name,
+        &[
+            "qft_",
+            "physlean_qft_",
+            "quantumfieldtheory_",
+            "fieldspecification_",
+            "wickcontraction_",
+            "tensorspecies_",
+            "pureu1_",
+            "standardmodel_",
+            "higgs_",
+            "fermion_",
+            "supersymmetry_",
+            "ftheory_",
+            "smrhn_",
+            "anomalycancellation_",
+            "beyondthestandardmodel_",
+            "flavorphysics_",
+            "neutrinophysics_",
+            "physlean_anomalycancellation_",
+            "physlean_particles_",
+            "particles_",
+            "physlean_stringtheory_",
+            "stringtheory_",
+        ],
+    ) {
         return Some(Domain::QuantumFieldTheory);
     }
-    if has_prefix(name, &["quantummechanics_", "physlean_quantummechanics_",
-        "innerproductspace_", "hilbert_", "schwartzmap_"]) {
+    if has_prefix(
+        name,
+        &[
+            "quantummechanics_",
+            "physlean_quantummechanics_",
+            "innerproductspace_",
+            "hilbert_",
+            "schwartzmap_",
+        ],
+    ) {
         return Some(Domain::QuantumMechanics);
     }
     if has_prefix(name, &["fluiddynamics_", "physlean_fluiddynamics_"]) {
@@ -445,7 +532,11 @@ mod tests {
         // No prefix match anywhere — honour the JSON tag if it's a
         // known string.
         assert_eq!(
-            resolve_domain(Some("UnknownNs.foo"), "unknownns_foo", Some("SpecialRelativity")),
+            resolve_domain(
+                Some("UnknownNs.foo"),
+                "unknownns_foo",
+                Some("SpecialRelativity")
+            ),
             Domain::SpecialRelativity,
         );
         assert_eq!(

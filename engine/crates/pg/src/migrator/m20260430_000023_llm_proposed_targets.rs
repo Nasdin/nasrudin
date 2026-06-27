@@ -30,16 +30,8 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(LlmProposedTargets::Latex)
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(LlmProposedTargets::Domain)
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(LlmProposedTargets::Latex).text().not_null())
+                    .col(ColumnDef::new(LlmProposedTargets::Domain).text().not_null())
                     .col(
                         ColumnDef::new(LlmProposedTargets::Weight)
                             .double()
@@ -64,10 +56,12 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
-                    .check(
-                        Expr::col(LlmProposedTargets::Status)
-                            .is_in(["open", "proving", "proved", "abandoned"]),
-                    )
+                    .check(Expr::col(LlmProposedTargets::Status).is_in([
+                        "open",
+                        "proving",
+                        "proved",
+                        "abandoned",
+                    ]))
                     .to_owned(),
             )
             .await?;
@@ -96,11 +90,7 @@ impl MigrationTrait for Migration {
             .await
             .ok();
         manager
-            .drop_table(
-                Table::drop()
-                    .table(LlmProposedTargets::Table)
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(LlmProposedTargets::Table).to_owned())
             .await
     }
 }

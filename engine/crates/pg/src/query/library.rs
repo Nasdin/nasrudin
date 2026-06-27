@@ -185,8 +185,8 @@ pub async fn list_saved(
     limit: u64,
     offset: u64,
 ) -> Result<Vec<SavedTheoremRow>, DbErr> {
-    let mut q = user_saved_theorems::Entity::find()
-        .filter(user_saved_theorems::Column::UserId.eq(user_id));
+    let mut q =
+        user_saved_theorems::Entity::find().filter(user_saved_theorems::Column::UserId.eq(user_id));
     match folder_filter {
         FolderFilter::All => {}
         FolderFilter::Ungrouped => {

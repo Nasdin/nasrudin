@@ -29,9 +29,7 @@ pub enum ResponseFormat {
     /// `response_format: {"type": "json_object"}`. The `schema` field
     /// is currently unused; kept for backwards compat with callers
     /// that pass an empty `{}`. Use `JsonSchema` for strict mode.
-    Json {
-        schema: serde_json::Value,
-    },
+    Json { schema: serde_json::Value },
     /// Strict JSON Schema mode: the model is constrained to emit
     /// JSON matching `schema` exactly. OpenAI and Gradient/Kimi K2.6
     /// support this via

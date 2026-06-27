@@ -60,10 +60,8 @@ use uuid::Uuid;
 
 use nasrudin_derive::AxiomStore;
 
-use crate::chain_engine::{run_discovery, DiscoveryConfig, DiscoveryReport};
-use crate::paid_jobs_client::{
-    HeartbeatBody, MarkProvedBody, PaidJob, PaidJobsClient,
-};
+use crate::chain_engine::{DiscoveryConfig, DiscoveryReport, run_discovery};
+use crate::paid_jobs_client::{HeartbeatBody, MarkProvedBody, PaidJob, PaidJobsClient};
 use crate::steering_knobs::apply_steering_knobs_for_domain;
 
 /// Heartbeat cadence — 30 s aligns with the server's 5-minute lease
@@ -123,9 +121,7 @@ fn collect_vars(expr: &nasrudin_core::Expr, out: &mut std::collections::HashSet<
             collect_vars(f, out);
             collect_vars(x, out);
         }
-        Expr::Lam(_, ty, body)
-        | Expr::Pi(_, ty, body)
-        | Expr::Let(_, ty, body) => {
+        Expr::Lam(_, ty, body) | Expr::Pi(_, ty, body) | Expr::Let(_, ty, body) => {
             collect_vars(ty, out);
             collect_vars(body, out);
         }
@@ -136,12 +132,19 @@ fn collect_vars(expr: &nasrudin_core::Expr, out: &mut std::collections::HashSet<
         Expr::UnOp(_, e) | Expr::Deriv(e, _) | Expr::PartialDeriv(e, _) => {
             collect_vars(e, out);
         }
-        Expr::Sum { body, lower, upper, .. } | Expr::Prod { body, lower, upper, .. } => {
+        Expr::Sum {
+            body, lower, upper, ..
+        }
+        | Expr::Prod {
+            body, lower, upper, ..
+        } => {
             collect_vars(body, out);
             collect_vars(lower, out);
             collect_vars(upper, out);
         }
-        Expr::Integral { body, lower, upper, .. } => {
+        Expr::Integral {
+            body, lower, upper, ..
+        } => {
             collect_vars(body, out);
             if let Some(l) = lower {
                 collect_vars(l, out);
@@ -150,7 +153,9 @@ fn collect_vars(expr: &nasrudin_core::Expr, out: &mut std::collections::HashSet<
                 collect_vars(u, out);
             }
         }
-        Expr::Limit { body, approaching, .. } => {
+        Expr::Limit {
+            body, approaching, ..
+        } => {
             collect_vars(body, out);
             collect_vars(approaching, out);
         }
@@ -170,8 +175,7 @@ fn subset_store_for_hunch(
     if wanted_idents.is_empty() {
         return full.clone();
     }
-    let always: std::collections::HashSet<&str> =
-        ALWAYS_KEEP_AXIOMS.iter().copied().collect();
+    let always: std::collections::HashSet<&str> = ALWAYS_KEEP_AXIOMS.iter().copied().collect();
     let mut out = AxiomStore::new();
     let mut kept = 0usize;
     // `full.iter()` walks both hot and cold tiers. The cold half is
@@ -232,29 +236,28 @@ pub async fn run_paid_slice(
     // While we're at it, walk the parsed Expr to collect the variable
     // identifiers — feeds the axiom-subsetting pass below.
     let mut wanted_idents: std::collections::HashSet<String> = Default::default();
-    let target_hash: Option<[u8; 8]> =
-        match nasrudin_core::parse::parse_latex(job.hunch.trim()) {
-            Ok(expr) => {
-                collect_vars(&expr, &mut wanted_idents);
-                let h = nasrudin_core::canonical_ac_hash(&expr);
-                tracing::info!(
-                    %job_id,
-                    target_hash = hex::encode(h),
-                    idents = ?wanted_idents,
-                    "paid slice target compiled from hunch"
-                );
-                Some(h)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    %job_id,
-                    error = %e,
-                    hunch = job.hunch.chars().take(80).collect::<String>(),
-                    "paid slice could not parse hunch as LaTeX; falling back to first-verified semantics"
-                );
-                None
-            }
-        };
+    let target_hash: Option<[u8; 8]> = match nasrudin_core::parse::parse_latex(job.hunch.trim()) {
+        Ok(expr) => {
+            collect_vars(&expr, &mut wanted_idents);
+            let h = nasrudin_core::canonical_ac_hash(&expr);
+            tracing::info!(
+                %job_id,
+                target_hash = hex::encode(h),
+                idents = ?wanted_idents,
+                "paid slice target compiled from hunch"
+            );
+            Some(h)
+        }
+        Err(e) => {
+            tracing::warn!(
+                %job_id,
+                error = %e,
+                hunch = job.hunch.chars().take(80).collect::<String>(),
+                "paid slice could not parse hunch as LaTeX; falling back to first-verified semantics"
+            );
+            None
+        }
+    };
 
     // Conjecture-relative axiom subsetting: if we extracted identifiers
     // from the hunch, narrow the GA's AxiomStore to axioms whose
@@ -291,10 +294,7 @@ pub async fn run_paid_slice(
         .seed
         .as_ref()
         .map(|s| serde_json::json!({ "config": s }));
-    let steering_domain_key: &str = job
-        .domain_hint
-        .as_deref()
-        .unwrap_or("");
+    let steering_domain_key: &str = job.domain_hint.as_deref().unwrap_or("");
 
     tracing::info!(
         %job_id,

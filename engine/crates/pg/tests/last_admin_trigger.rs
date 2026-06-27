@@ -56,8 +56,7 @@ async fn cannot_demote_last_admin() {
     demote.is_admin = Set(false);
     let err = demote.update(&db).await.unwrap_err();
     assert!(
-        err.to_string().contains("cannot demote last admin")
-            || err.to_string().contains("P0001"),
+        err.to_string().contains("cannot demote last admin") || err.to_string().contains("P0001"),
         "expected last-admin trigger error, got: {err}"
     );
 

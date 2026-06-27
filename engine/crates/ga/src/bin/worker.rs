@@ -18,6 +18,7 @@
 //!   worker --domain pure-math                  # patient compute, all axioms
 //!   worker --domain sr                         # SR upstream postulates only
 //!   worker --verify <prover_root>              # lake-verify top candidates
+//!   worker --verify <prover_root> --no-submit  # local verification smoke
 //!   worker --gens N --pop M                    # tune scale
 //!
 //! The driver is designed for *long-horizon* runs. With max_lake_verifications
@@ -42,7 +43,7 @@
 
 use nasrudin_derive::axiom_store::AxiomStore;
 use nasrudin_derive::{Chain, RuleStep};
-use nasrudin_ga::chain_engine::{DiscoveryConfig, VerifiedDiscovery, run_discovery};
+use nasrudin_ga::chain_engine::{DiscoveryConfig, VerifiedDiscovery};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -50,6 +51,323 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_API_URL: &str = "http://localhost:3001";
 const DEFAULT_WORKER_ID: &str = "in-proc-worker-1";
+const DEFAULT_RL_HALF_LIFE_HOURS: f64 = 168.0;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct WorkerRlState {
+    version: u32,
+    scopes: std::collections::BTreeMap<String, WorkerRlScopeState>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct WorkerRlScopeState {
+    #[serde(default)]
+    updated_at_unix_secs: i64,
+    #[serde(default)]
+    corpus_len: usize,
+    #[serde(default)]
+    mutation_operator: nasrudin_ga::chain_engine::MutationOperatorStats,
+    #[serde(default)]
+    qd_archive: nasrudin_ga::chain_engine::QdArchiveStats,
+    #[serde(default)]
+    strategy_genomes: std::collections::BTreeMap<String, StrategyGenomeStats>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct StrategyGenomeStats {
+    #[serde(default)]
+    pulls: u32,
+    #[serde(default)]
+    total_reward: f64,
+    #[serde(default)]
+    weight_mean: f64,
+    #[serde(default)]
+    weight_sigma: f64,
+    #[serde(default)]
+    last_weight: f64,
+    #[serde(default)]
+    last_reward: f64,
+    #[serde(default)]
+    best_reward: f64,
+}
+
+impl Default for WorkerRlState {
+    fn default() -> Self {
+        Self {
+            version: 2,
+            scopes: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct LegacyWorkerRlState {
+    mutation_operator: nasrudin_ga::chain_engine::MutationOperatorStats,
+    qd_archive: nasrudin_ga::chain_engine::QdArchiveStats,
+}
+
+fn worker_rl_state_path() -> PathBuf {
+    if let Ok(path) = std::env::var("NASRUDIN_WORKER_RL_STATE") {
+        return PathBuf::from(path);
+    }
+    if let Ok(path) = std::env::var("NASRUDIN_MUTATION_RL_STATE") {
+        return PathBuf::from(path);
+    }
+    let rocks = nasrudin_ga::corpus_sync::resolve_local_path();
+    rocks
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("worker_rl_state.json")
+}
+
+fn resolve_local_catalog_path(prover_root: Option<&Path>) -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("NASRUDIN_CATALOG_PATH") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    if let Some(root) = prover_root {
+        let path = root.join("../physlean-extract/output/catalog.json");
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    let local = PathBuf::from("physlean-extract/output/catalog.json");
+    if local.exists() { Some(local) } else { None }
+}
+
+fn load_worker_rl_state(path: &Path) -> WorkerRlState {
+    let Ok(bytes) = std::fs::read(path) else {
+        return WorkerRlState::default();
+    };
+    if let Ok(state) = serde_json::from_slice::<WorkerRlState>(&bytes) {
+        return state;
+    }
+    if let Ok(legacy) = serde_json::from_slice::<LegacyWorkerRlState>(&bytes) {
+        let mut state = WorkerRlState::default();
+        state.scopes.insert(
+            "legacy-global".to_string(),
+            WorkerRlScopeState {
+                updated_at_unix_secs: 0,
+                corpus_len: 0,
+                mutation_operator: legacy.mutation_operator,
+                qd_archive: legacy.qd_archive,
+                strategy_genomes: std::collections::BTreeMap::new(),
+            },
+        );
+        return state;
+    }
+    if let Ok(stats) =
+        serde_json::from_slice::<nasrudin_ga::chain_engine::MutationOperatorStats>(&bytes)
+    {
+        let mut state = WorkerRlState::default();
+        state.scopes.insert(
+            "legacy-global".to_string(),
+            WorkerRlScopeState {
+                updated_at_unix_secs: 0,
+                corpus_len: 0,
+                mutation_operator: stats,
+                qd_archive: nasrudin_ga::chain_engine::QdArchiveStats::default(),
+                strategy_genomes: std::collections::BTreeMap::new(),
+            },
+        );
+        return state;
+    }
+    tracing::warn!(
+        path = %path.display(),
+        "ignoring corrupt worker RL state"
+    );
+    WorkerRlState::default()
+}
+
+fn save_worker_rl_state(path: &Path, state: &WorkerRlState) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(state)?;
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+fn worker_rl_scope_key(domain: &str, target_name: Option<&str>) -> String {
+    let target = target_name
+        .filter(|s| !s.is_empty())
+        .unwrap_or("background");
+    format!("domain={domain}|target={target}")
+}
+
+fn now_unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn rl_half_life_hours() -> Option<f64> {
+    let h = std::env::var("NASRUDIN_RL_HALF_LIFE_HOURS")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(DEFAULT_RL_HALF_LIFE_HOURS);
+    (h.is_finite() && h > 0.0).then_some(h)
+}
+
+fn decay_worker_rl_scope_state(
+    scope: &mut WorkerRlScopeState,
+    now_secs: i64,
+    half_life_hours: Option<f64>,
+) {
+    let Some(half_life_hours) = half_life_hours else {
+        return;
+    };
+    if scope.updated_at_unix_secs <= 0 || now_secs <= scope.updated_at_unix_secs {
+        return;
+    }
+    let age_hours = (now_secs - scope.updated_at_unix_secs) as f64 / 3600.0;
+    let factor = 0.5f64.powf(age_hours / half_life_hours).clamp(0.0, 1.0);
+    if factor >= 0.999_999 {
+        return;
+    }
+    apply_worker_rl_decay_factor(scope, factor);
+}
+
+fn apply_worker_rl_decay_factor(scope: &mut WorkerRlScopeState, factor: f64) {
+    let factor = factor.clamp(0.0, 1.0);
+    if factor >= 0.999_999 {
+        return;
+    }
+    for i in 0..scope.mutation_operator.pulls.len() {
+        let decayed_pulls = (scope.mutation_operator.pulls[i] as f64 * factor).round() as u32;
+        scope.mutation_operator.pulls[i] = decayed_pulls;
+        scope.mutation_operator.total_reward[i] *= factor;
+        if decayed_pulls == 0 {
+            scope.mutation_operator.total_reward[i] = 0.0;
+        }
+    }
+    for cell in &mut scope.qd_archive.cells {
+        cell.best_score *= factor;
+    }
+    scope
+        .qd_archive
+        .cells
+        .retain(|cell| cell.best_score.is_finite() && cell.best_score > 1e-9);
+    for stats in scope.strategy_genomes.values_mut() {
+        stats.pulls = (stats.pulls as f64 * factor).round() as u32;
+        stats.total_reward *= factor;
+        if stats.pulls == 0 {
+            stats.total_reward = 0.0;
+        }
+    }
+    scope
+        .strategy_genomes
+        .retain(|_, stats| stats.pulls > 0 && stats.total_reward.is_finite());
+}
+
+fn decay_worker_rl_scope_for_corpus_drift(
+    scope: &mut WorkerRlScopeState,
+    current_corpus_len: usize,
+) {
+    if scope.corpus_len == 0 || current_corpus_len == 0 || scope.corpus_len == current_corpus_len {
+        return;
+    }
+    let old = scope.corpus_len as f64;
+    let new = current_corpus_len as f64;
+    let drift_ratio = ((new - old).abs() / old.max(new)).clamp(0.0, 1.0);
+    let factor = 0.5f64.powf(drift_ratio * 10.0);
+    apply_worker_rl_decay_factor(scope, factor);
+}
+
+fn strategy_genome_weight(stats: Option<&StrategyGenomeStats>) -> f64 {
+    let Some(stats) = stats else {
+        return 1.0;
+    };
+    if stats.pulls == 0 || !stats.total_reward.is_finite() {
+        return 1.0;
+    }
+    (0.5 + stats.total_reward / stats.pulls as f64).clamp(0.25, 1.75)
+}
+
+fn strategy_genome_evo_mean(stats: &StrategyGenomeStats) -> f64 {
+    if stats.weight_mean.is_finite() && stats.weight_mean > 0.0 {
+        stats.weight_mean.clamp(0.25, 1.75)
+    } else {
+        strategy_genome_weight(Some(stats))
+    }
+}
+
+fn strategy_genome_evo_sigma(stats: &StrategyGenomeStats) -> f64 {
+    if stats.weight_sigma.is_finite() && stats.weight_sigma > 0.0 {
+        stats.weight_sigma.clamp(0.05, 0.50)
+    } else {
+        0.25
+    }
+}
+
+fn strategy_genome_select_weight(stats: Option<&StrategyGenomeStats>) -> f64 {
+    let Some(stats) = stats else {
+        return 1.0;
+    };
+    if stats.pulls == 0 {
+        return 1.0;
+    }
+    let reward_weight = strategy_genome_weight(Some(stats));
+    let mean = strategy_genome_evo_mean(stats);
+    let sigma = strategy_genome_evo_sigma(stats);
+    // Deterministic antithetic exploration. This gives the worker a
+    // tiny local evolution-strategy population over successive chunks
+    // without extra randomness, coordination, or LLM calls.
+    let perturb = match stats.pulls % 4 {
+        0 => 1.0,
+        1 => -1.0,
+        2 => 0.5,
+        _ => -0.5,
+    };
+    (0.65 * mean + 0.35 * reward_weight + perturb * sigma).clamp(0.25, 1.75)
+}
+
+fn strategy_genome_update(stats: &mut StrategyGenomeStats, weight: f64, reward: f64) {
+    if !reward.is_finite() || !weight.is_finite() {
+        return;
+    }
+    let previous_mean_reward = if stats.pulls > 0 {
+        stats.total_reward / stats.pulls as f64
+    } else {
+        reward
+    };
+    let mean = strategy_genome_evo_mean(stats);
+    let sigma = strategy_genome_evo_sigma(stats);
+    let advantage = (reward - previous_mean_reward).clamp(-1.0, 1.0);
+    let lr = (0.35 / (stats.pulls.max(1) as f64).sqrt()).clamp(0.03, 0.35);
+    let gradient = ((weight - mean) / sigma.max(0.05)).clamp(-2.0, 2.0);
+    stats.weight_mean = (mean + lr * advantage * gradient).clamp(0.25, 1.75);
+    stats.weight_sigma = if advantage >= 0.0 {
+        (sigma * 0.97).clamp(0.05, 0.50)
+    } else {
+        (sigma * 1.05).clamp(0.05, 0.50)
+    };
+    stats.last_weight = weight.clamp(0.25, 1.75);
+    stats.last_reward = reward.clamp(0.0, 1.0);
+    stats.best_reward = stats.best_reward.max(stats.last_reward);
+    stats.pulls = stats.pulls.saturating_add(1);
+    stats.total_reward += stats.last_reward;
+}
+
+fn strategy_genome_reward(report: &nasrudin_ga::chain_engine::DiscoveryReport) -> f64 {
+    let pass_rate = if report.lake_attempts > 0 {
+        report.lake_passed as f64 / report.lake_attempts as f64
+    } else {
+        0.0
+    };
+    let novelty = if report.total_candidates > 0 {
+        ((report.unique_executable as f64 / report.total_candidates as f64) * 8.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let verified = if report.verified.is_empty() { 0.0 } else { 1.0 };
+    (0.2 * novelty + 0.4 * pass_rate + 0.4 * verified).clamp(0.0, 1.0)
+}
 
 #[tokio::main]
 async fn main() {
@@ -112,12 +430,8 @@ async fn main() {
         eprintln!(
             "⚠ --no-local-lake is a DEV-ONLY mode. Production workers MUST lake-build locally."
         );
-        eprintln!(
-            "  Submissions in this mode are flagged worker_verified=false; the server's"
-        );
-        eprintln!(
-            "  lazy lake-promotion drain handles kernel confirmation, which is slower"
-        );
+        eprintln!("  Submissions in this mode are flagged worker_verified=false; the server's");
+        eprintln!("  lazy lake-promotion drain handles kernel confirmation, which is slower");
         eprintln!("  and may produce cascade-rejects on bogus chains.");
     }
     // Default to 4 unverified candidates per gen, regardless of whether
@@ -144,6 +458,15 @@ async fn main() {
         .position(|a| a == "--verify")
         .and_then(|pos| args.get(pos + 1))
         .map(PathBuf::from);
+    let no_submit: bool = args.iter().any(|a| a == "--no-submit")
+        || std::env::var("NASRUDIN_NO_SUBMIT")
+            .map(|v| {
+                matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false);
     let domain: String = args
         .iter()
         .position(|a| a == "--domain")
@@ -161,10 +484,10 @@ async fn main() {
     println!();
 
     // ── Resolve API submission config (Task 7.1) ─────────────────────
-    // Worker key is REQUIRED *only if* we're going to verify (otherwise
-    // there are no discoveries to submit). For dry runs (no `--verify`),
-    // we skip the check so devs can run the GA without the API up.
-    let api_cfg = if prover_root.is_some() {
+    // Worker key is REQUIRED only if verified discoveries will be
+    // submitted. `--no-submit` is the local-machine smoke path: run
+    // the GA and local Lean verification without an API daemon or key.
+    let api_cfg = if prover_root.is_some() && !no_submit {
         match ApiSubmitConfig::from_env() {
             Ok(cfg) => {
                 println!("▶ API submission target: {}", cfg.api_url);
@@ -173,14 +496,15 @@ async fn main() {
             }
             Err(msg) => {
                 eprintln!("✗ {msg}");
-                eprintln!(
-                    "  Set NASRUDIN_WORKER_KEY=nsk_worker_… to enable submission, or"
-                );
+                eprintln!("  Set NASRUDIN_WORKER_KEY=nsk_worker_… to enable submission, or");
                 eprintln!("  drop the --verify flag for a dry run.");
                 std::process::exit(2);
             }
         }
     } else {
+        if prover_root.is_some() && no_submit {
+            println!("▶ Local verification only (--no-submit): API submission disabled");
+        }
         None
     };
     println!();
@@ -240,8 +564,7 @@ async fn main() {
                                 tracing::debug!(status, "heartbeat ok");
                             }
                             Ok((status, body)) => {
-                                consecutive_failures =
-                                    consecutive_failures.saturating_add(1);
+                                consecutive_failures = consecutive_failures.saturating_add(1);
                                 tracing::warn!(
                                     status,
                                     body = %body,
@@ -250,8 +573,7 @@ async fn main() {
                                 );
                             }
                             Err(e) => {
-                                consecutive_failures =
-                                    consecutive_failures.saturating_add(1);
+                                consecutive_failures = consecutive_failures.saturating_add(1);
                                 tracing::warn!(
                                     error = %e,
                                     failures = consecutive_failures,
@@ -316,7 +638,8 @@ async fn main() {
                 use nasrudin_rocks::CorpusBackend;
                 let initial_count = corpus.count().unwrap_or(0);
                 if initial_count == 0 {
-                    let api_url_for_hydrate = std::env::var("NASRUDIN_API_URL").ok()
+                    let api_url_for_hydrate = std::env::var("NASRUDIN_API_URL")
+                        .ok()
                         .or_else(|| api_cfg.as_ref().map(|c| c.api_url.clone()))
                         .unwrap_or_else(|| DEFAULT_API_URL.to_string());
                     let worker_key = api_cfg
@@ -341,9 +664,7 @@ async fn main() {
                         }
                     }
                 } else {
-                    println!(
-                        "▶ Worker cold-tier corpus already populated: {initial_count} axioms"
-                    );
+                    println!("▶ Worker cold-tier corpus already populated: {initial_count} axioms");
                 }
                 let count_after = corpus.count().unwrap_or(0);
                 if count_after > 0 {
@@ -355,12 +676,61 @@ async fn main() {
                 }
             }
             Err(e) => {
-                eprintln!("    ! failed to open worker RocksDB at {}: {e}", rocks_path.display());
+                eprintln!(
+                    "    ! failed to open worker RocksDB at {}: {e}",
+                    rocks_path.display()
+                );
                 eprintln!("      Falling back to hot-only AxiomStore for this session.");
                 AxiomStore::new()
             }
         }
     };
+    println!();
+
+    let load_catalog = std::env::var("NASRUDIN_WORKER_LOAD_CATALOG")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true);
+    if load_catalog {
+        match resolve_local_catalog_path(prover_root.as_deref()) {
+            Some(path) => {
+                let forbidden: std::collections::HashSet<String> =
+                    nasrudin_derive::no_cheat_audit::forbidden_canonical_statements()
+                        .into_iter()
+                        .map(|(_, canonical)| canonical)
+                        .collect();
+                match store.load_from_catalog_filtered(&path, |axiom| {
+                    let direct = axiom.statement.to_canonical();
+                    let peeled =
+                        nasrudin_derive::axiom_store::eq_canonical_under_pi(&axiom.statement);
+                    nasrudin_derive::axiom_store::is_propositional(&axiom.statement)
+                        && !forbidden.contains(&direct)
+                        && peeled
+                            .as_ref()
+                            .map(|canonical| !forbidden.contains(canonical))
+                            .unwrap_or(true)
+                }) {
+                    Ok((loaded, skipped)) => println!(
+                        "▶ Dynamic PhysLean catalog load: +{loaded} hot-tier axioms, {skipped} skipped from {}",
+                        path.display()
+                    ),
+                    Err(e) => eprintln!(
+                        "  ! dynamic PhysLean catalog load failed from {}: {e}",
+                        path.display()
+                    ),
+                }
+            }
+            None => {
+                println!("▶ Dynamic PhysLean catalog load skipped: no local catalog.json found")
+            }
+        }
+    } else {
+        println!("▶ Dynamic PhysLean catalog load DISABLED (NASRUDIN_WORKER_LOAD_CATALOG=0)");
+    }
     println!();
 
     // Always load the classical-mechanics postulate set: every domain's
@@ -380,6 +750,15 @@ async fn main() {
             // post-derivation results leaked in.
             "photon_energy_momentum_relation"
         }
+        "qm" => {
+            store.load_quantum_mechanics_postulates();
+            // The first local QM smoke target is Planck-Einstein.
+            // The current known-good chain uses the upstream EM photon
+            // energy relation as its algebraic substrate while the
+            // QM postulate set supplies the broader domain context.
+            store.load_electromagnetism_upstream();
+            ""
+        }
         // "Patient compute" mode: load every domain's postulates and
         // pull the full Mathlib corpus from /api/seed. No target. The
         // GA explores the full axiom + theorem space; if E=mc² (or
@@ -391,13 +770,14 @@ async fn main() {
         "pure-math" | "mixed" | "all" => {
             store.load_special_relativity_upstream();
             store.load_electromagnetism_upstream();
+            store.load_quantum_mechanics_postulates();
             // forbidden-axiom-by-name is moot here since we register
             // multiple domains; the canonical audit (audit_or_panic)
             // is the load-bearing check below.
             ""
         }
         other => {
-            eprintln!("✗ unknown domain `{other}` (try `sr`, `em`, or `pure-math`)");
+            eprintln!("✗ unknown domain `{other}` (try `sr`, `em`, `qm`, or `pure-math`)");
             std::process::exit(2);
         }
     };
@@ -417,7 +797,10 @@ async fn main() {
         println!("    • {name}");
     }
     if total > preview.len() {
-        println!("    … ({} more, full set in cold-tier RocksDB)", total - preview.len());
+        println!(
+            "    … ({} more, full set in cold-tier RocksDB)",
+            total - preview.len()
+        );
     }
     println!();
 
@@ -442,12 +825,14 @@ async fn main() {
     // becomes a synthetic axiom keyed `theorem_<hex>` that the GA can
     // pick up via RuleStep::IntroduceAxiom — workers compound off each
     // other instead of redoing each others' searches from scratch.
-    if let Some(api_url) = std::env::var("NASRUDIN_API_URL").ok().or_else(||
-        api_cfg.as_ref().map(|c| c.api_url.clone()))
+    if let Some(api_url) = std::env::var("NASRUDIN_API_URL")
+        .ok()
+        .or_else(|| api_cfg.as_ref().map(|c| c.api_url.clone()))
     {
         let domain_param = match domain.as_str() {
             "sr" => "SpecialRelativity",
             "em" => "Electromagnetism",
+            "qm" => "QuantumMechanics",
             // pure-math/mixed/all: empty filter → /api/seed returns
             // axioms from every domain, so the worker's GA can compose
             // SR + EM + classical + Mathlib lemmas in a single chain.
@@ -467,15 +852,10 @@ async fn main() {
                 // theorem registered as `peer_<hash>` whose statement
                 // happens to be E=mc².
                 if !forbidden_axiom.is_empty() && store.get(forbidden_axiom).is_some() {
-                    eprintln!(
-                        "✗ FAIL: peer-fed `{forbidden_axiom}` after seed-sync. Refusing."
-                    );
+                    eprintln!("✗ FAIL: peer-fed `{forbidden_axiom}` after seed-sync. Refusing.");
                     std::process::exit(2);
                 }
-                nasrudin_derive::no_cheat_audit::audit_or_panic(
-                    &store,
-                    "worker post-seed-sync",
-                );
+                nasrudin_derive::no_cheat_audit::audit_or_panic(&store, "worker post-seed-sync");
             }
             Err(e) => {
                 eprintln!(
@@ -496,6 +876,7 @@ async fn main() {
         .or_else(|| std::env::var("NASRUDIN_TARGET").ok())
         .unwrap_or_else(|| match domain.as_str() {
             "sr" => "sr_rest_energy".into(),
+            "qm" => "qm_planck_einstein".into(),
             _ => String::new(),
         });
     let target_spec = if target_name.is_empty() {
@@ -503,11 +884,18 @@ async fn main() {
     } else {
         match nasrudin_ga::target::TargetSpec::lookup(&target_name) {
             Some(spec) => {
-                println!("▶ Target: {} (ladder of {} rungs)", spec.name, spec.ladder.len());
+                println!(
+                    "▶ Target: {} (ladder of {} rungs)",
+                    spec.name,
+                    spec.ladder.len()
+                );
                 Some(spec)
             }
             None => {
-                eprintln!("✗ Unknown target spec `{target_name}`. Available: sr_rest_energy");
+                eprintln!(
+                    "✗ Unknown target spec `{target_name}`. Available: {}",
+                    nasrudin_ga::target::TargetSpec::all_names().join(", ")
+                );
                 std::process::exit(2);
             }
         }
@@ -523,11 +911,16 @@ async fn main() {
         if let Some(url) = api_url {
             match fetch_rejected_canonicals(&url).await {
                 Ok(set) => {
-                    println!("▶ Negative-result memo: {} pre-rejected canonicals will be skipped", set.len());
+                    println!(
+                        "▶ Negative-result memo: {} pre-rejected canonicals will be skipped",
+                        set.len()
+                    );
                     std::sync::Arc::new(set)
                 }
                 Err(e) => {
-                    eprintln!("  ! rejected-hashes fetch failed: {e}; running without negative memo");
+                    eprintln!(
+                        "  ! rejected-hashes fetch failed: {e}; running without negative memo"
+                    );
                     std::sync::Arc::new(std::collections::HashSet::new())
                 }
             }
@@ -552,7 +945,12 @@ async fn main() {
     // Default ON; disable with `NASRUDIN_NOVELTY_VS_CATALOG=0` for
     // research / regression runs that need a clean slate.
     let novelty_vs_catalog: bool = std::env::var("NASRUDIN_NOVELTY_VS_CATALOG")
-        .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
         .unwrap_or(true);
 
     let catalog_canonicals: Vec<Vec<u8>> = if !novelty_vs_catalog {
@@ -568,9 +966,9 @@ async fn main() {
             .ok()
             .map(PathBuf::from)
             .or_else(|| {
-                prover_root.as_ref().map(|p| {
-                    p.join("../physlean-extract/output/catalog.json")
-                })
+                prover_root
+                    .as_ref()
+                    .map(|p| p.join("../physlean-extract/output/catalog.json"))
             })
             .or_else(|| {
                 let local = PathBuf::from("physlean-extract/output/catalog.json");
@@ -579,7 +977,8 @@ async fn main() {
 
         match catalog_path {
             Some(path) if path.exists() => {
-                match nasrudin_derive::axiom_store::AxiomStore::collect_catalog_eq_canonicals(&path) {
+                match nasrudin_derive::axiom_store::AxiomStore::collect_catalog_eq_canonicals(&path)
+                {
                     Ok(hashes) => {
                         println!(
                             "▶ Novelty-vs-catalog: {} Eq-rooted PhysLean entries collected from {}",
@@ -627,8 +1026,8 @@ async fn main() {
             None
         } else {
             let n = std::cmp::max(total_unique_estimate * 4, 4096);
-            let mut b = bloomfilter::Bloom::new_for_fp_rate(n, 0.001)
-                .expect("bloom params are valid");
+            let mut b =
+                bloomfilter::Bloom::new_for_fp_rate(n, 0.001).expect("bloom params are valid");
             // Catalog hashes first, then cluster-rejected. Duplicates
             // are harmless — `set` is idempotent on the bloom — so we
             // don't bother deduping into a HashSet just to count.
@@ -654,18 +1053,23 @@ async fn main() {
     // is the right call.
     let dimension_hard_reject: bool = !args.iter().any(|a| a == "--soft-dimension")
         && std::env::var("NASRUDIN_DIMENSION_HARD_REJECT")
-            .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+            .map(|v| {
+                !matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                )
+            })
             .unwrap_or(true);
     let primary_domain = match domain.as_str() {
         "sr" => nasrudin_core::Domain::SpecialRelativity,
         "em" => nasrudin_core::Domain::Electromagnetism,
+        "qm" => nasrudin_core::Domain::QuantumMechanics,
         // Pure-math / mixed: no canonical var→dim table; gate becomes
         // a no-op because every var infers to None.
         _ => nasrudin_core::Domain::PureMath,
     };
-    let dimension_var_dims = std::sync::Arc::new(
-        nasrudin_derive::domain_variable_dimensions(&primary_domain),
-    );
+    let dimension_var_dims =
+        std::sync::Arc::new(nasrudin_derive::domain_variable_dimensions(&primary_domain));
     if dimension_hard_reject {
         println!(
             "▶ Dimension hard-reject ON ({} known vars; pass --soft-dimension to disable)",
@@ -778,8 +1182,7 @@ async fn main() {
     // Capture the target name before the spec is moved into config —
     // we still need it to decide whether to install the M1 permanent
     // elite below.
-    let target_name_for_elite: Option<&'static str> =
-        target_spec.as_ref().map(|t| t.name);
+    let target_name_for_elite: Option<&'static str> = target_spec.as_ref().map(|t| t.name);
     let config = DiscoveryConfig {
         population_size: pop,
         generations: gens,
@@ -791,7 +1194,11 @@ async fn main() {
         // pipeline entirely. Server's reverify drain handles
         // verification via chain replay (microseconds) and the
         // lake-promotion drain handles kernel confirmation lazily.
-        prover_root: if no_local_lake { None } else { prover_root.clone() },
+        prover_root: if no_local_lake {
+            None
+        } else {
+            prover_root.clone()
+        },
         max_lake_verifications: if no_local_lake {
             0
         } else if prover_root.is_some() {
@@ -866,13 +1273,18 @@ async fn main() {
     //
     // chunks=1 reverts to single-shot behaviour; default is 4.
     let chunks: usize = arg_value(&args, "--chunks")
-        .or_else(|| std::env::var("NASRUDIN_CHUNKS").ok().and_then(|s| s.parse().ok()))
+        .or_else(|| {
+            std::env::var("NASRUDIN_CHUNKS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+        })
         .unwrap_or(4);
     let gens_per_chunk = (gens / chunks).max(1);
     let api_url_for_resync = std::env::var("NASRUDIN_API_URL").ok();
     let domain_param_for_resync = match domain.as_str() {
         "sr" => "SpecialRelativity",
         "em" => "Electromagnetism",
+        "qm" => "QuantumMechanics",
         _ => "",
     };
 
@@ -902,13 +1314,11 @@ async fn main() {
     // and accumulates samples; the bandit reward is the γ-discounted
     // return over that horizon. Replaces the single-shot reward path
     // with a multi-chunk credit assignment more robust to noise.
-    let mut directive_traces: Vec<nasrudin_ga::clustering::DirectiveTrace> =
-        Vec::new();
+    let mut directive_traces: Vec<nasrudin_ga::clustering::DirectiveTrace> = Vec::new();
     // Rolling window of the last 50 centroid hashes seen at apply
     // time. Used to compute an intrinsic-motivation novelty bonus
     // for directives that target rarely-visited cluster lineages.
-    let mut hash_history =
-        nasrudin_ga::clustering::CentroidHashHistory::with_capacity(50);
+    let mut hash_history = nasrudin_ga::clustering::CentroidHashHistory::with_capacity(50);
 
     // Phase E: when research-mode is on, build the HTTP client once.
     let research_client = if research_mode {
@@ -968,8 +1378,29 @@ async fn main() {
         c.max_chain_len = max_chain_len;
         c
     };
-    let paid_slice_store: std::sync::Arc<AxiomStore> =
-        std::sync::Arc::new(store.clone());
+    let paid_slice_store: std::sync::Arc<AxiomStore> = std::sync::Arc::new(store.clone());
+    let worker_rl_state_path = worker_rl_state_path();
+    let mut worker_rl_state = load_worker_rl_state(&worker_rl_state_path);
+    let worker_rl_scope_key = worker_rl_scope_key(&domain, target_name_for_elite);
+    let mut worker_rl_scope_state = worker_rl_state
+        .scopes
+        .get(&worker_rl_scope_key)
+        .cloned()
+        .unwrap_or_default();
+    decay_worker_rl_scope_state(
+        &mut worker_rl_scope_state,
+        now_unix_secs(),
+        rl_half_life_hours(),
+    );
+    decay_worker_rl_scope_for_corpus_drift(&mut worker_rl_scope_state, store.len());
+    let learned_ops: u32 = worker_rl_scope_state.mutation_operator.pulls.iter().sum();
+    let qd_cells = worker_rl_scope_state.qd_archive.cells.len();
+    if learned_ops > 0 || qd_cells > 0 {
+        println!(
+            "▶ Loaded local worker RL state: scope={worker_rl_scope_key}, {learned_ops} operator observations, {qd_cells} QD cells from {}",
+            worker_rl_state_path.display()
+        );
+    }
 
     for chunk_i in 0..chunks {
         // ── Paid Researcher claim (highest priority) ─────────────────────
@@ -1000,10 +1431,7 @@ async fn main() {
                     )
                     .await
                     {
-                        eprintln!(
-                            "  ! paid slice for {} failed: {e}; releasing",
-                            job.job_id
-                        );
+                        eprintln!("  ! paid slice for {} failed: {e}; releasing", job.job_id);
                         let _ = client.release(job.job_id).await;
                     }
                     continue;
@@ -1012,9 +1440,7 @@ async fn main() {
                     tracing::debug!("paid-jobs claim: queue empty / floor protected");
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "paid-jobs claim failed: {e}; falling through"
-                    );
+                    tracing::warn!("paid-jobs claim failed: {e}; falling through");
                 }
             }
         }
@@ -1059,17 +1485,21 @@ async fn main() {
                     tracing::debug!("research-mode claim: queue empty");
                 }
                 Err(e) => {
-                    tracing::warn!("research-mode claim failed: {e}; falling through to background");
+                    tracing::warn!(
+                        "research-mode claim failed: {e}; falling through to background"
+                    );
                 }
             }
         }
-
 
         // Periodic embed-index refresh. Cheap when index is current
         // (one HTTP HEAD-equivalent call per chunk). Off by default;
         // flip on with NASRUDIN_EMBED_AUTOPULL=1.
         if let Ok(autopull) = std::env::var("NASRUDIN_EMBED_AUTOPULL")
-            && matches!(autopull.trim().to_lowercase().as_str(), "1" | "true" | "yes")
+            && matches!(
+                autopull.trim().to_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
         {
             let api = std::env::var("NASRUDIN_API_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into());
@@ -1113,7 +1543,10 @@ async fn main() {
             if let Ok(set) = fetch_rejected_canonicals(api_url).await {
                 let delta = set.len().saturating_sub(current_rejected.len());
                 if delta > 0 {
-                    println!("▶ chunk {} rejected-set: +{delta} new pre-rejected canonicals", chunk_i + 1);
+                    println!(
+                        "▶ chunk {} rejected-set: +{delta} new pre-rejected canonicals",
+                        chunk_i + 1
+                    );
                 }
                 current_rejected = std::sync::Arc::new(set);
             }
@@ -1139,11 +1572,23 @@ async fn main() {
             "thermo" => "thermodynamics",
             other => other,
         };
+        let mut active_strategy_genome: Option<(String, f64)> = None;
         if let Some(ref s) = last_steering {
-            if nasrudin_ga::steering_knobs::apply_steering_knobs_for_domain(
+            let strategy_weight = if let Some(fp) =
+                nasrudin_ga::steering_knobs::strategy_genome_fingerprint(s, domain_key)
+            {
+                let weight =
+                    strategy_genome_select_weight(worker_rl_scope_state.strategy_genomes.get(&fp));
+                active_strategy_genome = Some((fp, weight));
+                weight
+            } else {
+                1.0
+            };
+            if nasrudin_ga::steering_knobs::apply_steering_knobs_for_domain_with_strategy_weight(
                 &mut chunk_config,
                 s,
                 domain_key,
+                strategy_weight,
             ) {
                 tracing::debug!(
                     rate = chunk_config.mutation_rate,
@@ -1154,6 +1599,7 @@ async fn main() {
                         .map(|p| p.len())
                         .unwrap_or(0),
                     domain = domain_key,
+                    strategy_weight,
                     "chunk config patched from steering"
                 );
             }
@@ -1173,7 +1619,12 @@ async fn main() {
         // chunk proceeds with no LLM elites. Logging fires only on
         // the success path so noisy chunks don't spam.
         let use_llm_chains = std::env::var("NASRUDIN_USE_LLM_CHAINS")
-            .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+            .map(|v| {
+                !matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                )
+            })
             .unwrap_or(false);
         if use_llm_chains {
             if let (Some(steering_val), Some(target_name)) =
@@ -1244,22 +1695,14 @@ async fn main() {
                 .unwrap_or_default();
             let mut compute_mult: f32 = 1.0;
             for d in compute_dirs.iter() {
-                let scope_dom = d
-                    .get("island_domain")
-                    .and_then(|v| v.as_str());
+                let scope_dom = d.get("island_domain").and_then(|v| v.as_str());
                 if let Some(dom) = scope_dom {
                     if dom != canonical_domain_for_compute {
                         continue;
                     }
                 }
-                let strength = d
-                    .get("strength")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0)
-                    as f32;
-                let strength_bucket = (strength.clamp(0.0, 1.0) * 5.0)
-                    .floor()
-                    .min(4.0) as u8;
+                let strength = d.get("strength").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                let strength_bucket = (strength.clamp(0.0, 1.0) * 5.0).floor().min(4.0) as u8;
                 let arms = compute_arms_for_slot(
                     steering_val,
                     canonical_domain_for_compute,
@@ -1286,8 +1729,7 @@ async fn main() {
             // generation budget. Bounds match the GA's defaults.
             let scaled_pop =
                 (chunk_config.population_size as f32 * compute_mult).clamp(32.0, 512.0);
-            let scaled_gens =
-                (chunk_config.generations as f32 * compute_mult).clamp(8.0, 2000.0);
+            let scaled_gens = (chunk_config.generations as f32 * compute_mult).clamp(8.0, 2000.0);
             chunk_config.population_size = scaled_pop as usize;
             chunk_config.generations = scaled_gens as usize;
         }
@@ -1315,205 +1757,228 @@ async fn main() {
         // immediate post-evolution effect on each directive's
         // matched cluster lineage).
         let mut new_trace_indices: Vec<usize> = Vec::new();
-        let mut seed_summaries: Vec<nasrudin_ga::clustering::ClusterSummary> =
-            Vec::new();
+        let mut seed_summaries: Vec<nasrudin_ga::clustering::ClusterSummary> = Vec::new();
 
         // Build the report's bookkeeping placeholder once so we can
         // either run the legacy `run_discovery` path or the
         // pre-seeded `run_discovery_from_population` path with
         // matching `total_candidates` accounting.
-        let mut initial_report =
-            nasrudin_ga::chain_engine::DiscoveryReport::default();
-        let report = if let Some(steering_val) = last_steering.as_ref()
-            .filter(|_| api_cfg.is_some())
-        {
-            // Externally seed so we can cluster + tag cluster_id
-            // before the offspring loop runs.
-            let mut seed_pop = nasrudin_ga::chain_engine::seed_population(
-                &store,
-                &chunk_config,
-                &mut rng,
-                &mut initial_report,
-            );
-            // K from the bandit's cluster_config; clamp [2, 12].
-            let k_for_island = steering_val
-                .get("cluster_config")
-                .and_then(|cc| cc.get("k_per_island"))
-                .and_then(|m| m.get(canonical_domain))
-                .and_then(|v| v.as_u64())
-                .map(|v| v.clamp(2, 12) as u32)
-                .unwrap_or(6);
-            // Build cluster features from the seed population.
-            let chunk_seed = (chunk_i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            let chains_with_fitness: Vec<(_, [f32; 4], Vec<String>)> = seed_pop
-                .iter()
-                .map(|ind| {
-                    let names = nasrudin_ga::clustering::extract_axiom_names(
-                        &ind.chain,
-                    );
-                    let f = &ind.fitness;
-                    let length_signal = (1.0
-                        - (ind.chain.0.len() as f64 / 16.0).min(1.0))
-                    .clamp(0.0, 1.0);
-                    let comps = [
-                        f.novelty.clamp(0.0, 1.0) as f32,
-                        f.dimensional.clamp(0.0, 1.0) as f32,
-                        length_signal as f32,
-                        f.target_shape.max(f.ladder_progress).clamp(0.0, 1.0)
-                            as f32,
-                    ];
-                    (ind.chain.clone(), comps, names)
-                })
-                .collect();
-            let (s_summaries, s_assignment) =
-                nasrudin_ga::clustering::cluster_and_summarise(
+        let mut initial_report = nasrudin_ga::chain_engine::DiscoveryReport::default();
+        initial_report.mutation_operator_stats = worker_rl_scope_state.mutation_operator.clone();
+        initial_report.qd_archive_stats = worker_rl_scope_state.qd_archive.clone();
+        let report =
+            if let Some(steering_val) = last_steering.as_ref().filter(|_| api_cfg.is_some()) {
+                // Externally seed so we can cluster + tag cluster_id
+                // before the offspring loop runs.
+                let mut seed_pop = nasrudin_ga::chain_engine::seed_population(
+                    &store,
+                    &chunk_config,
+                    &mut rng,
+                    &mut initial_report,
+                );
+                // K from the bandit's cluster_config; clamp [2, 12].
+                let k_for_island = steering_val
+                    .get("cluster_config")
+                    .and_then(|cc| cc.get("k_per_island"))
+                    .and_then(|m| m.get(canonical_domain))
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v.clamp(2, 12) as u32)
+                    .unwrap_or(6);
+                // Build cluster features from the seed population.
+                let chunk_seed = (chunk_i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                let chains_with_fitness: Vec<(_, [f32; 4], Vec<String>)> = seed_pop
+                    .iter()
+                    .map(|ind| {
+                        let names = nasrudin_ga::clustering::extract_axiom_names(&ind.chain);
+                        let f = &ind.fitness;
+                        let length_signal =
+                            (1.0 - (ind.chain.0.len() as f64 / 16.0).min(1.0)).clamp(0.0, 1.0);
+                        let comps = [
+                            f.novelty.clamp(0.0, 1.0) as f32,
+                            f.dimensional.clamp(0.0, 1.0) as f32,
+                            length_signal as f32,
+                            f.target_shape.max(f.ladder_progress).clamp(0.0, 1.0) as f32,
+                        ];
+                        (ind.chain.clone(), comps, names)
+                    })
+                    .collect();
+                let (s_summaries, s_assignment) = nasrudin_ga::clustering::cluster_and_summarise(
                     &chains_with_fitness,
                     k_for_island,
                     canonical_domain,
                     chunk_seed,
                 );
-            // Tag each individual with its seed cluster_id so child
-            // lineage carries the cluster through crossover.
-            for (i, ind) in seed_pop.iter_mut().enumerate() {
-                ind.cluster_id =
-                    *s_assignment.assignments.get(i).unwrap_or(&0);
-            }
-            chunk_config.cluster_assignments = s_assignment.assignments.clone();
-            seed_summaries = s_summaries;
+                // Tag each individual with its seed cluster_id so child
+                // lineage carries the cluster through crossover.
+                for (i, ind) in seed_pop.iter_mut().enumerate() {
+                    ind.cluster_id = *s_assignment.assignments.get(i).unwrap_or(&0);
+                }
+                chunk_config.cluster_assignments = s_assignment.assignments.clone();
+                seed_summaries = s_summaries;
 
-            // Match LLM directives against seed clusters by hash.
-            // Populate cluster_multipliers and aggregate v1.5 layer.
-            let mut aggregate_mut_mult: f64 = 1.0;
-            let mut aggregate_elite_mult: f64 = 1.0;
-            let directives = steering_val
-                .get("config")
-                .and_then(|c| c.get("cluster_directives"))
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let centroids: Vec<(u32, u64)> = seed_summaries
-                .iter()
-                .map(|s| (s.cluster_id, s.centroid_skeleton_hash))
-                .collect();
-            for d in directives.iter() {
-                let dom = d
-                    .get("island_domain")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if dom != canonical_domain {
-                    continue;
-                }
-                let hash = d
-                    .get("centroid_skeleton_hash")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                let action = d
-                    .get("action")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let strength = d
-                    .get("strength")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0)
-                    as f32;
-                let strength_bucket =
-                    (strength.clamp(0.0, 1.0) * 5.0).floor().min(4.0) as u8;
-                let Some(cid) =
-                    nasrudin_ga::clustering::match_directive_to_cluster(
-                        hash,
-                        &centroids,
-                        0.10,
-                    )
-                else {
-                    continue;
-                };
-                let arms = directive_arms_for_slot(
-                    steering_val,
-                    canonical_domain,
-                    &action,
-                    strength_bucket,
-                );
-                let multiplier_choice =
-                    pick_multiplier_choice(&arms, strength);
-                let mult_value =
-                    lookup_action_multiplier(&action, multiplier_choice);
-                let m = chunk_config
-                    .cluster_multipliers
-                    .entry(cid)
-                    .or_default();
-                match action.as_str() {
-                    "boost" => {
-                        m.mutation_rate_mult = mult_value;
-                        if (mult_value as f64) > aggregate_mut_mult {
-                            aggregate_mut_mult = mult_value as f64;
-                        }
-                    }
-                    "exploit" => {
-                        m.elitism_mult = mult_value;
-                        if (mult_value as f64) > aggregate_elite_mult {
-                            aggregate_elite_mult = mult_value as f64;
-                        }
-                    }
-                    "diversify" => m.diversify_fraction = mult_value,
-                    "kill" => m.kill_fraction = mult_value,
-                    _ => continue,
-                }
-                let mean_fitness_at_apply = seed_summaries
+                // Match LLM directives against seed clusters by hash.
+                // Populate cluster_multipliers and aggregate v1.5 layer.
+                let mut aggregate_mut_mult: f64 = 1.0;
+                let mut aggregate_elite_mult: f64 = 1.0;
+                let directives = steering_val
+                    .get("config")
+                    .and_then(|c| c.get("cluster_directives"))
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let centroids: Vec<(u32, u64)> = seed_summaries
                     .iter()
-                    .find(|s| s.cluster_id == cid)
-                    .map(|s| s.mean_fitness)
-                    .unwrap_or(0.0);
-                let mut trace = nasrudin_ga::clustering::DirectiveTrace::new(
-                    hash,
-                    action.clone(),
-                    strength_bucket,
-                    multiplier_choice,
-                    mean_fitness_at_apply,
-                );
-                // Curiosity / novelty bonus: rare hashes in the
-                // recent window get a small extra reward, capped at
-                // INTRINSIC_BONUS_CAP so the bandit can't be
-                // hijacked by always-novel arms with zero extrinsic
-                // value. Apply BEFORE recording the hash so a
-                // freshly-seen hash gets full novelty credit.
-                trace.novelty_bonus = hash_history.novelty_bonus(hash);
-                hash_history.observe(hash);
-                directive_traces.push(trace);
-                new_trace_indices.push(directive_traces.len() - 1);
-                tracing::info!(
-                    cluster_id = cid,
-                    action = %action,
-                    strength_bucket,
-                    multiplier_choice,
-                    mult_value,
-                    "applied cluster directive (per-individual, trace started)"
-                );
-            }
-            // v1.5 chunk-wide aggregate: even individuals in
-            // unmatched clusters feel some shift, so the bandit's
-            // reward signal isn't washed out by clusters that didn't
-            // get a directive.
-            chunk_config.mutation_rate =
-                (chunk_config.mutation_rate * aggregate_mut_mult)
-                    .clamp(0.05, 0.30);
-            chunk_config.elitism_fraction =
-                (chunk_config.elitism_fraction as f64 * aggregate_elite_mult)
+                    .map(|s| (s.cluster_id, s.centroid_skeleton_hash))
+                    .collect();
+                for d in directives.iter() {
+                    let dom = d
+                        .get("island_domain")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if dom != canonical_domain {
+                        continue;
+                    }
+                    let hash = d
+                        .get("centroid_skeleton_hash")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let action = d
+                        .get("action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let strength = d.get("strength").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    let strength_bucket = (strength.clamp(0.0, 1.0) * 5.0).floor().min(4.0) as u8;
+                    let Some(cid) =
+                        nasrudin_ga::clustering::match_directive_to_cluster(hash, &centroids, 0.10)
+                    else {
+                        continue;
+                    };
+                    let arms = directive_arms_for_slot(
+                        steering_val,
+                        canonical_domain,
+                        &action,
+                        strength_bucket,
+                    );
+                    let multiplier_choice = pick_multiplier_choice(&arms, strength);
+                    let mult_value = lookup_action_multiplier(&action, multiplier_choice);
+                    let m = chunk_config.cluster_multipliers.entry(cid).or_default();
+                    match action.as_str() {
+                        "boost" => {
+                            m.mutation_rate_mult = mult_value;
+                            if (mult_value as f64) > aggregate_mut_mult {
+                                aggregate_mut_mult = mult_value as f64;
+                            }
+                        }
+                        "exploit" => {
+                            m.elitism_mult = mult_value;
+                            if (mult_value as f64) > aggregate_elite_mult {
+                                aggregate_elite_mult = mult_value as f64;
+                            }
+                        }
+                        "diversify" => m.diversify_fraction = mult_value,
+                        "kill" => m.kill_fraction = mult_value,
+                        _ => continue,
+                    }
+                    let mean_fitness_at_apply = seed_summaries
+                        .iter()
+                        .find(|s| s.cluster_id == cid)
+                        .map(|s| s.mean_fitness)
+                        .unwrap_or(0.0);
+                    let mut trace = nasrudin_ga::clustering::DirectiveTrace::new(
+                        hash,
+                        action.clone(),
+                        strength_bucket,
+                        multiplier_choice,
+                        mean_fitness_at_apply,
+                    );
+                    // Curiosity / novelty bonus: rare hashes in the
+                    // recent window get a small extra reward, capped at
+                    // INTRINSIC_BONUS_CAP so the bandit can't be
+                    // hijacked by always-novel arms with zero extrinsic
+                    // value. Apply BEFORE recording the hash so a
+                    // freshly-seen hash gets full novelty credit.
+                    trace.novelty_bonus = hash_history.novelty_bonus(hash);
+                    hash_history.observe(hash);
+                    directive_traces.push(trace);
+                    new_trace_indices.push(directive_traces.len() - 1);
+                    tracing::info!(
+                        cluster_id = cid,
+                        action = %action,
+                        strength_bucket,
+                        multiplier_choice,
+                        mult_value,
+                        "applied cluster directive (per-individual, trace started)"
+                    );
+                }
+                // v1.5 chunk-wide aggregate: even individuals in
+                // unmatched clusters feel some shift, so the bandit's
+                // reward signal isn't washed out by clusters that didn't
+                // get a directive.
+                chunk_config.mutation_rate =
+                    (chunk_config.mutation_rate * aggregate_mut_mult).clamp(0.05, 0.30);
+                chunk_config.elitism_fraction = (chunk_config.elitism_fraction as f64
+                    * aggregate_elite_mult)
                     .clamp(0.0, 0.2) as f32;
 
-            nasrudin_ga::chain_engine::run_discovery_from_population(
-                &store,
-                &chunk_config,
-                seed_pop,
-                &mut rng,
-                initial_report,
-            )
-        } else {
-            // Offline / no steering yet: use the legacy seed-then-
-            // evolve path; cluster_assignments stays empty so the
-            // GA falls back to global mutation rate.
-            run_discovery(&store, &chunk_config, &mut rng)
-        };
+                nasrudin_ga::chain_engine::run_discovery_from_population(
+                    &store,
+                    &chunk_config,
+                    seed_pop,
+                    &mut rng,
+                    initial_report,
+                )
+            } else {
+                // Offline / no steering yet: use the legacy seed-then-
+                // evolve path; cluster_assignments stays empty so the
+                // GA falls back to global mutation rate.
+                let mut seed_pop = nasrudin_ga::chain_engine::seed_population(
+                    &store,
+                    &chunk_config,
+                    &mut rng,
+                    &mut initial_report,
+                );
+                for ind in &mut seed_pop {
+                    ind.cluster_id = 0;
+                }
+                nasrudin_ga::chain_engine::run_discovery_from_population(
+                    &store,
+                    &chunk_config,
+                    seed_pop,
+                    &mut rng,
+                    initial_report,
+                )
+            };
+        if let Some((fp, weight)) = active_strategy_genome {
+            let reward = strategy_genome_reward(&report);
+            let stats = worker_rl_scope_state
+                .strategy_genomes
+                .entry(fp)
+                .or_default();
+            strategy_genome_update(stats, weight, reward);
+            tracing::debug!(
+                pulls = stats.pulls,
+                mean_reward = stats.total_reward / stats.pulls.max(1) as f64,
+                weight_mean = stats.weight_mean,
+                weight_sigma = stats.weight_sigma,
+                reward,
+                "updated strategy genome evaluator stats"
+            );
+        }
+        worker_rl_scope_state.mutation_operator = report.mutation_operator_stats.clone();
+        worker_rl_scope_state.qd_archive = report.qd_archive_stats.clone();
+        worker_rl_scope_state.updated_at_unix_secs = now_unix_secs();
+        worker_rl_scope_state.corpus_len = store.len();
+        worker_rl_state
+            .scopes
+            .insert(worker_rl_scope_key.clone(), worker_rl_scope_state.clone());
+        if let Err(e) = save_worker_rl_state(&worker_rl_state_path, &worker_rl_state) {
+            tracing::warn!(
+                error = %e,
+                path = %worker_rl_state_path.display(),
+                "failed to persist worker RL state"
+            );
+        }
 
         // Cluster the chunk's final population and POST per-cluster
         // ClusterSummaries to the API. Re-cluster the final population
@@ -1541,13 +2006,12 @@ async fn main() {
                 .iter()
                 .map(|(c, f, n, _)| (c.clone(), *f, n.clone()))
                 .collect();
-            let (summaries, _assignment) =
-                nasrudin_ga::clustering::cluster_and_summarise(
-                    &final_3tuple,
-                    k_for_island,
-                    canonical_domain,
-                    chunk_seed,
-                );
+            let (summaries, _assignment) = nasrudin_ga::clustering::cluster_and_summarise(
+                &final_3tuple,
+                k_for_island,
+                canonical_domain,
+                chunk_seed,
+            );
             tracing::debug!(
                 chunk = chunk_i,
                 k = k_for_island,
@@ -1629,15 +2093,9 @@ async fn main() {
                                 .find(|s| s.cluster_id == cid)
                                 .map(|s| s.mean_fitness)
                                 .unwrap_or(
-                                    *trace
-                                        .samples
-                                        .last()
-                                        .unwrap_or(&trace.mean_fitness_at_apply),
+                                    *trace.samples.last().unwrap_or(&trace.mean_fitness_at_apply),
                                 ),
-                            None => *trace
-                                .samples
-                                .last()
-                                .unwrap_or(&trace.mean_fitness_at_apply),
+                            None => *trace.samples.last().unwrap_or(&trace.mean_fitness_at_apply),
                         }
                     };
                     trace.samples.push(sample);
@@ -1661,11 +2119,8 @@ async fn main() {
                     false
                 });
                 if !feedback_batch.is_empty() {
-                    if let Err(e) = post_directive_feedback(
-                        api_cfg_for_cluster,
-                        &feedback_batch,
-                    )
-                    .await
+                    if let Err(e) =
+                        post_directive_feedback(api_cfg_for_cluster, &feedback_batch).await
                     {
                         tracing::debug!(error=%e,
                             "directive_feedback post failed (non-blocking)");
@@ -1695,9 +2150,7 @@ async fn main() {
                 // a strong chunk; saturate above. Tunable.
                 let reward = (yield_per_pop / 0.05).clamp(0.0, 1.0);
                 let mut feedback_batch: Vec<serde_json::Value> = Vec::new();
-                for (dom, bucket, choice, _pop_at_apply) in
-                    pending_compute_pulls.iter()
-                {
+                for (dom, bucket, choice, _pop_at_apply) in pending_compute_pulls.iter() {
                     feedback_batch.push(serde_json::json!({
                         "island_domain": dom,
                         "strength_bucket": bucket,
@@ -1705,9 +2158,7 @@ async fn main() {
                         "reward": reward,
                     }));
                 }
-                if let Err(e) =
-                    post_compute_feedback(api_cfg_for_cluster, &feedback_batch).await
-                {
+                if let Err(e) = post_compute_feedback(api_cfg_for_cluster, &feedback_batch).await {
                     tracing::debug!(error=%e,
                         "compute_feedback post failed (non-blocking)");
                 } else {
@@ -1755,9 +2206,7 @@ async fn main() {
             if let (Some(cfg), Some(_)) = (api_cfg.as_ref(), prover_root.as_ref()) {
                 let worker_verified = !no_local_lake;
                 for d in &report.verified {
-                    if let Err(e) =
-                        submit_discovery(cfg, &domain, d, worker_verified).await
-                    {
+                    if let Err(e) = submit_discovery(cfg, &domain, d, worker_verified).await {
                         eprintln!("  ! chunk-submit failed: {e}");
                     }
                 }
@@ -1786,6 +2235,8 @@ async fn main() {
         verified: combined_verified,
         top_fitness_canonical: None,
         final_population: vec![],
+        mutation_operator_stats: worker_rl_scope_state.mutation_operator,
+        qd_archive_stats: worker_rl_scope_state.qd_archive,
     };
 
     println!("▶ Run complete.");
@@ -1824,12 +2275,21 @@ async fn main() {
             }
             println!("    Lean module: {}", d.module_path);
             // Detect the rest-energy theorem.
-            if d.canonical.contains("(= v:E (* v:m (^ c:SpeedOfLight n:2)))")
+            if d.canonical
+                .contains("(= v:E (* v:m (^ c:SpeedOfLight n:2)))")
                 || d.canonical.contains("E = m * c^2")
-                || d.canonical.contains("(= v:E (* (^ c:SpeedOfLight n:2) v:m))")
+                || d.canonical
+                    .contains("(= v:E (* (^ c:SpeedOfLight n:2) v:m))")
             {
                 println!();
                 println!("  ★ E = m·c² SPONTANEOUSLY DERIVED AND VERIFIED ★");
+            }
+            if d.canonical.contains("(= v:Eph (* v:hbar v:omega))")
+                || d.canonical.contains("(= v:Eph (* v:omega v:hbar))")
+                || d.canonical.contains("Eph = hbar * omega")
+            {
+                println!();
+                println!("  ★ QUANTUM PLANCK-EINSTEIN RELATION DERIVED AND VERIFIED ★");
             }
         }
 
@@ -1838,7 +2298,11 @@ async fn main() {
         //    going forward (Phase 9 acceptance criterion #14).
         if let (Some(cfg), Some(prover)) = (api_cfg.as_ref(), prover_root.as_ref()) {
             println!();
-            println!("▶ Submitting {} discoveries to {}", report.verified.len(), cfg.api_url);
+            println!(
+                "▶ Submitting {} discoveries to {}",
+                report.verified.len(),
+                cfg.api_url
+            );
             let domain_str = domain.clone();
             let worker_verified = !no_local_lake;
             for d in &report.verified {
@@ -1896,7 +2360,7 @@ async fn run_seed_driven_chunk(
     novelty_bloom: Option<std::sync::Arc<bloomfilter::Bloom<[u8]>>>,
     rng: &mut impl rand::Rng,
 ) -> anyhow::Result<()> {
-    use nasrudin_ga::chain_engine::{run_discovery, DiscoveryConfig};
+    use nasrudin_ga::chain_engine::{DiscoveryConfig, run_discovery};
     use nasrudin_ga::research_client::*;
 
     // 1. Parse the seed.
@@ -2011,11 +2475,16 @@ async fn run_seed_driven_chunk(
         "em" => nasrudin_core::Domain::Electromagnetism,
         _ => nasrudin_core::Domain::PureMath,
     };
-    let research_dim_var_dims = std::sync::Arc::new(
-        nasrudin_derive::domain_variable_dimensions(&research_domain),
-    );
+    let research_dim_var_dims = std::sync::Arc::new(nasrudin_derive::domain_variable_dimensions(
+        &research_domain,
+    ));
     let research_dim_hard_reject = std::env::var("NASRUDIN_DIMENSION_HARD_REJECT")
-        .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
         .unwrap_or(true);
 
     while started.elapsed().as_secs() < wall_seconds && total_attempted < max_candidates {
@@ -2117,7 +2586,11 @@ async fn run_seed_driven_chunk(
         }
     }
 
-    let outcome = if submitted_any { "Verified" } else { "NoResult" };
+    let outcome = if submitted_any {
+        "Verified"
+    } else {
+        "NoResult"
+    };
     let reason = format!(
         "candidates_attempted={total_attempted} verified={total_verified} elapsed_s={}",
         started.elapsed().as_secs()
@@ -2185,7 +2658,12 @@ fn arg_value<T: std::str::FromStr>(args: &[String], flag: &str) -> Option<T> {
 /// add their mappings here.
 fn m1_seed_elite_for(target_name: Option<&str>) -> Option<Chain> {
     let enabled = std::env::var("NASRUDIN_M1_SEED_ELITE")
-        .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
         .unwrap_or(true);
     if !enabled {
         return None;
@@ -2215,10 +2693,10 @@ impl ApiSubmitConfig {
         if worker_key.trim().is_empty() {
             return Err("NASRUDIN_WORKER_KEY is empty".to_string());
         }
-        let api_url = std::env::var("NASRUDIN_API_URL")
-            .unwrap_or_else(|_| DEFAULT_API_URL.to_string());
-        let worker_id = std::env::var("NASRUDIN_WORKER_ID")
-            .unwrap_or_else(|_| DEFAULT_WORKER_ID.to_string());
+        let api_url =
+            std::env::var("NASRUDIN_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+        let worker_id =
+            std::env::var("NASRUDIN_WORKER_ID").unwrap_or_else(|_| DEFAULT_WORKER_ID.to_string());
         Ok(Self {
             api_url,
             worker_key,
@@ -2272,10 +2750,7 @@ async fn post_cluster_report(
     // the same logical worker collapse to the same row regardless of
     // restart, and we never need server-side worker provisioning just
     // for cluster reports.
-    let worker_uuid = uuid::Uuid::new_v5(
-        &uuid::Uuid::NAMESPACE_DNS,
-        cfg.worker_id.as_bytes(),
-    );
+    let worker_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, cfg.worker_id.as_bytes());
     let body = serde_json::json!({
         "worker_id": worker_uuid,
         "chunk_index": chunk_index,
@@ -2319,8 +2794,7 @@ fn directive_arms_for_slot(
     for slot in snapshot {
         if slot.get("island_domain").and_then(|v| v.as_str()) == Some(island_domain)
             && slot.get("action").and_then(|v| v.as_str()) == Some(action)
-            && slot.get("strength_bucket").and_then(|v| v.as_i64())
-                == Some(strength_bucket as i64)
+            && slot.get("strength_bucket").and_then(|v| v.as_i64()) == Some(strength_bucket as i64)
         {
             let arms = slot
                 .get("arms")
@@ -2370,8 +2844,7 @@ fn pick_multiplier_choice(arms: &[(u8, i64, f64, Option<f64>)], strength: f32) -
     // Blend weight: 0.0 below LINUCB_FULL_WEIGHT_AT*0.5, ramps to
     // 1.0 at LINUCB_FULL_WEIGHT_AT. Keeps UCB1 dominant while
     // LinUCB warms up; flips to contextual once it's reliable.
-    let blend = ((total as f64 - 50.0) / (LINUCB_FULL_WEIGHT_AT - 50.0))
-        .clamp(0.0, 1.0);
+    let blend = ((total as f64 - 50.0) / (LINUCB_FULL_WEIGHT_AT - 50.0)).clamp(0.0, 1.0);
     let mut best_choice = arms[0].0;
     let mut best_score = f64::NEG_INFINITY;
     for &(c, p, t, linucb) in arms {
@@ -2428,8 +2901,7 @@ fn compute_arms_for_slot(
     };
     for slot in snapshot {
         if slot.get("island_domain").and_then(|v| v.as_str()) == Some(island_domain)
-            && slot.get("strength_bucket").and_then(|v| v.as_i64())
-                == Some(strength_bucket as i64)
+            && slot.get("strength_bucket").and_then(|v| v.as_i64()) == Some(strength_bucket as i64)
         {
             return slot
                 .get("arms")
@@ -2604,13 +3076,58 @@ fn remove_module_file(prover_root: &Path, module_path: &str) -> std::io::Result<
 /// steering_payload)`. `steering_payload` is the full JSON value of
 /// `body["steering"]` if the server included it, else `None`. The
 /// caller passes it to `apply_steering_knobs` to bias the next chunk.
+/// True if an axiom NAME is a PhysLean/Mathlib catalog identifier
+/// (formalization scaffolding) rather than one of the curated physics
+/// postulates. The curated physics axioms — `work_def`, `newton_second`,
+/// `minkowski_invariant_def`, `four_momentum_time_component`,
+/// `kinetic_energy_def`, `invariant_mass_postulate`, … — never contain any
+/// of these namespace tokens, whereas the imported catalog lemmas always
+/// do. This is the NAME gate for opaque-placeholder axioms whose statement
+/// is a bare var the symbol gate can't flag (note: `minkowskimatrix` is
+/// listed, NOT `minkowski`, so the real `minkowski_invariant_def` survives).
+fn is_plumbing_axiom_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    const PLUMBING_TOKENS: &[&str] = &[
+        "lorentz",
+        "spacetime",
+        "space_",
+        "tensorspecies",
+        "fermion",
+        "clifford",
+        "dfunlike",
+        "minkowskimatrix",
+        "euclidean",
+        "schwartz",
+        "veccons",
+        "diracform",
+        "contrco",
+        "contrmetric",
+        "contrmod",
+        "isorthochronous",
+        "toselfadjoint",
+        "frompairt",
+        "borelspace",
+        "measuretheory",
+        "γ",
+        "ℝequiv",
+        "ℂmodule",
+        "complexcontrbasis",
+        "complexcobasis",
+        "ofrat",
+        "permt",
+    ];
+    PLUMBING_TOKENS.iter().any(|t| n.contains(t))
+}
+
 async fn fetch_and_extend_store(
     api_url: &str,
     domain: &str,
     store: &mut nasrudin_derive::AxiomStore,
 ) -> anyhow::Result<(usize, usize, Option<serde_json::Value>)> {
     use nasrudin_core::Expr;
-    use nasrudin_derive::{Axiom, Chain, DerivationContext, RuleStep, strategies::DerivationStrategy};
+    use nasrudin_derive::{
+        Axiom, Chain, DerivationContext, RuleStep, strategies::DerivationStrategy,
+    };
 
     let path = if domain.is_empty() {
         "/api/seed?top=200".to_string()
@@ -2627,16 +3144,62 @@ async fn fetch_and_extend_store(
     }
     let body: serde_json::Value = serde_json::from_slice(&body_bytes)?;
 
+    // Physics-only seeding (lever #1, default ON). Set
+    // NASRUDIN_WORKER_PHYSICS_ONLY=0 to restore the old behavior of seeding
+    // from the raw catalog (useful only for debugging).
+    let physics_only = std::env::var("NASRUDIN_WORKER_PHYSICS_ONLY")
+        .map(|v| {
+            !matches!(
+                v.trim().to_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true);
+    let mut plumbing_skipped = 0usize;
+
     let mut axioms_added = 0usize;
     if let Some(arr) = body.get("axioms").and_then(|v| v.as_array()) {
         for entry in arr {
-            let Some(name) = entry.get("name").and_then(|v| v.as_str()) else { continue };
-            if store.get(name).is_some() { continue; }
-            let Some(stmt_str) = entry.get("statement").and_then(|v| v.as_str()) else { continue };
-            let Ok(stmt) = serde_json::from_str::<Expr>(stmt_str) else { continue };
+            let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if store.get(name).is_some() {
+                continue;
+            }
+            // Lever #1 (name gate): many PhysLean catalog axioms are stored
+            // as OPAQUE PLACEHOLDERS whose statement is a bare variable (the
+            // sanitized lemma name, no dot), so the symbol check below can't
+            // see they're plumbing. Their NAMES, however, always carry a
+            // PhysLean namespace token (`lorentz…`, `spacetime…`,
+            // `tensorspecies…`, etc.) that the ~16 curated physics axioms
+            // (`work_def`, `newton_second`, `minkowski_invariant_def`,
+            // `four_momentum_time_component`, …) never contain. Gate on the
+            // name first so opaque scaffolding can't seed a chain.
+            if physics_only && is_plumbing_axiom_name(name) {
+                plumbing_skipped += 1;
+                continue;
+            }
+            let Some(stmt_str) = entry.get("statement").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(stmt) = serde_json::from_str::<Expr>(stmt_str) else {
+                continue;
+            };
+            // Lever #1 (symbol gate): keep formalization plumbing OUT of the
+            // sampleable pool. Imported tensor-category scaffolding uses
+            // dotted internal names (`complexLorentzTensor.leftMetric`,
+            // `DFunLike.coe`). If the GA can sample those as seed axioms it
+            // farms trivially-true restatements — or, worse, loads mutually
+            // contradictory ones and "proves" nonsense via ex-falso.
+            if physics_only && nasrudin_ga::chain_engine::contains_plumbing_symbol(&stmt) {
+                plumbing_skipped += 1;
+                continue;
+            }
             let domain_str = entry.get("domain").and_then(|v| v.as_str()).unwrap_or("");
             let parsed_domain = match domain_str {
-                "SpecialRelativity" | "special_relativity" => nasrudin_core::Domain::SpecialRelativity,
+                "SpecialRelativity" | "special_relativity" => {
+                    nasrudin_core::Domain::SpecialRelativity
+                }
                 "Electromagnetism" | "electromagnetism" => nasrudin_core::Domain::Electromagnetism,
                 _ => nasrudin_core::Domain::PureMath,
             };
@@ -2653,23 +3216,46 @@ async fn fetch_and_extend_store(
     let mut theorems_added = 0usize;
     if let Some(arr) = body.get("seed_theorems").and_then(|v| v.as_array()) {
         for t in arr {
-            let chain_val = match t.get("chain_json") { Some(c) => c, None => continue };
-            if chain_val.is_null() { continue; }
+            let chain_val = match t.get("chain_json") {
+                Some(c) => c,
+                None => continue,
+            };
+            if chain_val.is_null() {
+                continue;
+            }
             let Ok(steps): Result<Vec<RuleStep>, _> = serde_json::from_value(chain_val.clone())
-                else { continue };
-            if steps.is_empty() { continue; }
+            else {
+                continue;
+            };
+            if steps.is_empty() {
+                continue;
+            }
             let chain = Chain(steps);
             let mut ctx = DerivationContext::new();
-            let Ok(final_expr) = chain.execute(store, &mut ctx) else { continue };
+            let Ok(final_expr) = chain.execute(store, &mut ctx) else {
+                continue;
+            };
+            // Same plumbing guard as the axiom path: don't fold peer
+            // theorems stated in tensor-category internals into the
+            // sampleable pool.
+            if physics_only && nasrudin_ga::chain_engine::contains_plumbing_symbol(&final_expr) {
+                plumbing_skipped += 1;
+                continue;
+            }
 
             // Name keyed on canonical-statement bytes so re-pulls don't
             // duplicate. Falls back to the row id hex for robustness.
             let name = if let Some(canon) = t.get("canonical_statement").and_then(|v| v.as_str()) {
-                format!("peer_{:016x}", xxhash_rust::xxh64::xxh64(canon.as_bytes(), 0))
+                format!(
+                    "peer_{:016x}",
+                    xxhash_rust::xxh64::xxh64(canon.as_bytes(), 0)
+                )
             } else {
                 continue;
             };
-            if store.get(&name).is_some() { continue; }
+            if store.get(&name).is_some() {
+                continue;
+            }
 
             let domain_str = t.get("domain").and_then(|v| v.as_str()).unwrap_or("");
             let parsed_domain = match domain_str {
@@ -2687,6 +3273,12 @@ async fn fetch_and_extend_store(
         }
     }
 
+    if physics_only && plumbing_skipped > 0 {
+        println!(
+            "    ⊘ physics-only seeding: skipped {plumbing_skipped} formalization-plumbing entries (kept {axioms_added} axioms + {theorems_added} peer theorems)"
+        );
+    }
+
     // Cluster steering. The server folds the live `SteeringConfig`
     // into every `/api/seed` response alongside an etag; we log
     // visibility info here and bubble the payload up to the chunk
@@ -2694,10 +3286,7 @@ async fn fetch_and_extend_store(
     // DiscoveryConfig.
     let steering_payload = body.get("steering").cloned();
     if let Some(ref steering) = steering_payload {
-        let etag = steering
-            .get("etag")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
+        let etag = steering.get("etag").and_then(|v| v.as_str()).unwrap_or("?");
         let scope = steering
             .get("config")
             .and_then(|c| c.get("scope"))
@@ -2811,11 +3400,7 @@ mod embed_autopull {
         let tmp = with_tmp_suffix(local_path);
         std::fs::write(&tmp, &bytes)?;
         std::fs::rename(&tmp, local_path)?;
-        tracing::info!(
-            "embed: wrote {} bytes to {:?}",
-            bytes.len(),
-            local_path
-        );
+        tracing::info!("embed: wrote {} bytes to {:?}", bytes.len(), local_path);
         rebuild_sidecar(local_path)?;
         Ok(true)
     }
@@ -2830,8 +3415,8 @@ mod embed_autopull {
         use instant_distance::Builder as HnswBuilder;
         use nasrudin_core::TheoremId;
         use nasrudin_embed::format::{HEADER_SIZE, RECORD_SIZE};
-        use nasrudin_embed::index::{sidecar_path, CosinePoint};
-        use nasrudin_embed::{IndexHeader, EMBED_DIM};
+        use nasrudin_embed::index::{CosinePoint, sidecar_path};
+        use nasrudin_embed::{EMBED_DIM, IndexHeader};
 
         let bytes = std::fs::read(main)?;
         let header_bytes = &bytes[..HEADER_SIZE];
@@ -2856,5 +3441,310 @@ mod embed_autopull {
         let sidecar = sidecar_path(main);
         std::fs::write(&sidecar, &bytes)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod mutation_rl_state_tests {
+    use super::*;
+
+    #[test]
+    fn worker_rl_state_round_trip_to_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("worker_rl_state.json");
+        let mut state = WorkerRlState::default();
+        let mut scope = WorkerRlScopeState::default();
+        scope.corpus_len = 123;
+        scope.mutation_operator.pulls[5] = 7;
+        scope.mutation_operator.total_reward[5] = 4.25;
+        scope
+            .qd_archive
+            .cells
+            .push(nasrudin_ga::chain_engine::QdArchiveCellStat {
+                chain_len_bin: 2,
+                axiom_count_bin: 1,
+                target_progress_bin: 4,
+                best_score: 3.5,
+            });
+        state
+            .scopes
+            .insert("domain=sr|target=sr_rest_energy".into(), scope);
+
+        save_worker_rl_state(&path, &state).unwrap();
+        let loaded = load_worker_rl_state(&path);
+        let loaded_scope = loaded
+            .scopes
+            .get("domain=sr|target=sr_rest_energy")
+            .unwrap();
+
+        assert_eq!(loaded.version, 2);
+        assert_eq!(loaded_scope.corpus_len, 123);
+        assert_eq!(loaded_scope.mutation_operator.pulls[5], 7);
+        assert!((loaded_scope.mutation_operator.total_reward[5] - 4.25).abs() < 1e-12);
+        assert_eq!(loaded_scope.qd_archive.cells.len(), 1);
+        assert!((loaded_scope.qd_archive.cells[0].best_score - 3.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn legacy_mutation_operator_state_loads_as_worker_rl_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mutation_operator_rl.json");
+        let mut stats = nasrudin_ga::chain_engine::MutationOperatorStats::default();
+        stats.pulls[1] = 2;
+        std::fs::write(&path, serde_json::to_vec(&stats).unwrap()).unwrap();
+
+        let loaded = load_worker_rl_state(&path);
+        let legacy = loaded.scopes.get("legacy-global").unwrap();
+
+        assert_eq!(legacy.mutation_operator.pulls[1], 2);
+        assert!(legacy.qd_archive.cells.is_empty());
+    }
+
+    #[test]
+    fn legacy_combined_state_loads_into_legacy_global_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("worker_rl_state_v1.json");
+        let raw = serde_json::json!({
+            "version": 1,
+            "mutation_operator": {
+                "pulls": [0, 3, 0, 0, 0, 0],
+                "total_reward": [0.0, 1.5, 0.0, 0.0, 0.0, 0.0]
+            },
+            "qd_archive": {
+                "cells": [{
+                    "chain_len_bin": 1,
+                    "axiom_count_bin": 2,
+                    "target_progress_bin": 3,
+                    "best_score": 4.0
+                }]
+            }
+        });
+        std::fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+        let loaded = load_worker_rl_state(&path);
+        let legacy = loaded.scopes.get("legacy-global").unwrap();
+
+        assert_eq!(legacy.mutation_operator.pulls[1], 3);
+        assert_eq!(legacy.qd_archive.cells.len(), 1);
+    }
+
+    #[test]
+    fn worker_rl_scope_key_separates_domains_and_targets() {
+        assert_ne!(
+            worker_rl_scope_key("sr", Some("sr_rest_energy")),
+            worker_rl_scope_key("qm", Some("sr_rest_energy"))
+        );
+        assert_ne!(
+            worker_rl_scope_key("sr", Some("sr_rest_energy")),
+            worker_rl_scope_key("sr", None)
+        );
+    }
+
+    #[test]
+    fn worker_rl_scope_decay_halves_old_rewards_after_one_half_life() {
+        let mut scope = WorkerRlScopeState {
+            updated_at_unix_secs: 1_000,
+            corpus_len: 0,
+            mutation_operator: nasrudin_ga::chain_engine::MutationOperatorStats {
+                pulls: [10, 0, 0, 0, 0, 0],
+                total_reward: [6.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+            qd_archive: nasrudin_ga::chain_engine::QdArchiveStats {
+                cells: vec![nasrudin_ga::chain_engine::QdArchiveCellStat {
+                    chain_len_bin: 1,
+                    axiom_count_bin: 1,
+                    target_progress_bin: 1,
+                    best_score: 8.0,
+                }],
+            },
+            strategy_genomes: std::collections::BTreeMap::from([(
+                "genome-a".to_string(),
+                StrategyGenomeStats {
+                    pulls: 10,
+                    total_reward: 6.0,
+                    ..Default::default()
+                },
+            )]),
+        };
+
+        decay_worker_rl_scope_state(&mut scope, 1_000 + 3600, Some(1.0));
+
+        assert_eq!(scope.mutation_operator.pulls[0], 5);
+        assert!((scope.mutation_operator.total_reward[0] - 3.0).abs() < 1e-12);
+        assert!((scope.qd_archive.cells[0].best_score - 4.0).abs() < 1e-12);
+        let genome = scope.strategy_genomes.get("genome-a").unwrap();
+        assert_eq!(genome.pulls, 5);
+        assert!((genome.total_reward - 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn worker_rl_scope_decay_can_be_disabled() {
+        let mut scope = WorkerRlScopeState {
+            updated_at_unix_secs: 1_000,
+            corpus_len: 0,
+            mutation_operator: nasrudin_ga::chain_engine::MutationOperatorStats {
+                pulls: [10, 0, 0, 0, 0, 0],
+                total_reward: [6.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+            qd_archive: nasrudin_ga::chain_engine::QdArchiveStats::default(),
+            strategy_genomes: std::collections::BTreeMap::from([(
+                "genome-a".to_string(),
+                StrategyGenomeStats {
+                    pulls: 10,
+                    total_reward: 6.0,
+                    ..Default::default()
+                },
+            )]),
+        };
+
+        decay_worker_rl_scope_state(&mut scope, 1_000 + 3600, None);
+
+        assert_eq!(scope.mutation_operator.pulls[0], 10);
+        assert!((scope.mutation_operator.total_reward[0] - 6.0).abs() < 1e-12);
+        assert_eq!(scope.strategy_genomes["genome-a"].pulls, 10);
+    }
+
+    #[test]
+    fn worker_rl_scope_corpus_drift_discounts_old_state() {
+        let mut scope = WorkerRlScopeState {
+            updated_at_unix_secs: 1_000,
+            corpus_len: 100,
+            mutation_operator: nasrudin_ga::chain_engine::MutationOperatorStats {
+                pulls: [10, 0, 0, 0, 0, 0],
+                total_reward: [6.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+            qd_archive: nasrudin_ga::chain_engine::QdArchiveStats {
+                cells: vec![nasrudin_ga::chain_engine::QdArchiveCellStat {
+                    chain_len_bin: 1,
+                    axiom_count_bin: 1,
+                    target_progress_bin: 1,
+                    best_score: 8.0,
+                }],
+            },
+            strategy_genomes: std::collections::BTreeMap::from([(
+                "genome-a".to_string(),
+                StrategyGenomeStats {
+                    pulls: 10,
+                    total_reward: 6.0,
+                    ..Default::default()
+                },
+            )]),
+        };
+
+        decay_worker_rl_scope_for_corpus_drift(&mut scope, 200);
+
+        assert!(scope.mutation_operator.pulls[0] < 10);
+        assert!(scope.mutation_operator.total_reward[0] < 6.0);
+        assert!(scope.qd_archive.cells[0].best_score < 8.0);
+        if let Some(genome) = scope.strategy_genomes.get("genome-a") {
+            assert!(genome.pulls < 10);
+            assert!(genome.total_reward < 6.0);
+        }
+    }
+
+    #[test]
+    fn worker_rl_scope_same_corpus_does_not_decay() {
+        let mut scope = WorkerRlScopeState {
+            updated_at_unix_secs: 1_000,
+            corpus_len: 100,
+            mutation_operator: nasrudin_ga::chain_engine::MutationOperatorStats {
+                pulls: [10, 0, 0, 0, 0, 0],
+                total_reward: [6.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+            qd_archive: nasrudin_ga::chain_engine::QdArchiveStats::default(),
+            strategy_genomes: std::collections::BTreeMap::from([(
+                "genome-a".to_string(),
+                StrategyGenomeStats {
+                    pulls: 10,
+                    total_reward: 6.0,
+                    ..Default::default()
+                },
+            )]),
+        };
+
+        decay_worker_rl_scope_for_corpus_drift(&mut scope, 100);
+
+        assert_eq!(scope.mutation_operator.pulls[0], 10);
+        assert!((scope.mutation_operator.total_reward[0] - 6.0).abs() < 1e-12);
+        assert_eq!(scope.strategy_genomes["genome-a"].pulls, 10);
+    }
+
+    #[test]
+    fn strategy_genome_weight_uses_mean_reward() {
+        assert_eq!(strategy_genome_weight(None), 1.0);
+        assert!(
+            (strategy_genome_weight(Some(&StrategyGenomeStats {
+                pulls: 4,
+                total_reward: 3.0,
+                ..Default::default()
+            })) - 1.25)
+                .abs()
+                < 1e-12
+        );
+    }
+
+    #[test]
+    fn strategy_genome_select_weight_uses_local_es_state() {
+        let stats = StrategyGenomeStats {
+            pulls: 4,
+            total_reward: 2.0,
+            weight_mean: 1.2,
+            weight_sigma: 0.2,
+            ..Default::default()
+        };
+
+        assert!((strategy_genome_select_weight(Some(&stats)) - 1.33).abs() < 1e-12);
+    }
+
+    #[test]
+    fn strategy_genome_update_moves_mean_toward_successful_perturbation() {
+        let mut stats = StrategyGenomeStats {
+            pulls: 4,
+            total_reward: 2.0,
+            weight_mean: 1.0,
+            weight_sigma: 0.25,
+            ..Default::default()
+        };
+
+        strategy_genome_update(&mut stats, 1.25, 0.9);
+
+        assert_eq!(stats.pulls, 5);
+        assert!(stats.weight_mean > 1.0);
+        assert!(stats.weight_sigma < 0.25);
+        assert_eq!(stats.last_weight, 1.25);
+        assert_eq!(stats.last_reward, 0.9);
+        assert_eq!(stats.best_reward, 0.9);
+    }
+
+    #[test]
+    fn strategy_genome_reward_prefers_verified_and_lake_passes() {
+        let report = nasrudin_ga::chain_engine::DiscoveryReport {
+            total_candidates: 100,
+            unique_executable: 10,
+            lake_attempts: 4,
+            lake_passed: 3,
+            verified: vec![nasrudin_ga::chain_engine::VerifiedDiscovery {
+                chain: Chain(vec![]),
+                final_expr: nasrudin_core::Expr::Var("x".into()),
+                canonical: "x".into(),
+                lean_source: String::new(),
+                module_path: String::new(),
+                generation: 0,
+            }],
+            ..Default::default()
+        };
+
+        assert!((strategy_genome_reward(&report) - 0.86).abs() < 1e-12);
+    }
+
+    #[test]
+    fn corrupt_worker_rl_state_falls_back_to_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("worker_rl_state.json");
+        std::fs::write(&path, b"not-json").unwrap();
+
+        let loaded = load_worker_rl_state(&path);
+
+        assert!(loaded.scopes.is_empty());
     }
 }

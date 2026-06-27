@@ -1,5 +1,10 @@
 //! Worker registration + heartbeat + public list.
-use axum::{Json, extract::{Query, State}, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -240,22 +245,17 @@ pub async fn list(
     let want_paginated = query.limit.is_some() || query.cursor.is_some();
 
     // Use paginated query if cursor or limit is provided
-    let (rows, next_cursor) = match nasrudin_pg::query::workers::list_paginated(
-        &db,
-        limit,
-        query.cursor,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("{e}") })),
-            )
-                .into_response();
-        }
-    };
+    let (rows, next_cursor) =
+        match nasrudin_pg::query::workers::list_paginated(&db, limit, query.cursor).await {
+            Ok(r) => r,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("{e}") })),
+                )
+                    .into_response();
+            }
+        };
 
     let owners = nasrudin_pg::query::me_workers::owner_map(&db)
         .await

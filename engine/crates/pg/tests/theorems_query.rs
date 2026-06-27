@@ -19,8 +19,7 @@ use tokio::sync::{Mutex, MutexGuard};
 // entire test body, making the suite safe under default `cargo test`.
 static DB_LOCK: Mutex<()> = Mutex::const_new(());
 
-async fn fresh_db()
--> Option<(sea_orm::DatabaseConnection, MutexGuard<'static, ()>)> {
+async fn fresh_db() -> Option<(sea_orm::DatabaseConnection, MutexGuard<'static, ()>)> {
     let guard = DB_LOCK.lock().await;
     let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
         "postgres://physics:physics_dev@127.0.0.1:5432/physics_generator_test".into()
@@ -185,9 +184,18 @@ async fn list_with_cursor_returns_in_order_and_paginates() {
     assert!(!page1.total_capped);
 
     // Order: most recently verified first (verified_at DESC).
-    assert_eq!(page1.items[0].canonical_statement, "theorem_4: E_4 = m_4*c^2");
-    assert_eq!(page1.items[1].canonical_statement, "theorem_3: E_3 = m_3*c^2");
-    assert_eq!(page1.items[2].canonical_statement, "theorem_2: E_2 = m_2*c^2");
+    assert_eq!(
+        page1.items[0].canonical_statement,
+        "theorem_4: E_4 = m_4*c^2"
+    );
+    assert_eq!(
+        page1.items[1].canonical_statement,
+        "theorem_3: E_3 = m_3*c^2"
+    );
+    assert_eq!(
+        page1.items[2].canonical_statement,
+        "theorem_2: E_2 = m_2*c^2"
+    );
 
     let page2 = nasrudin_pg::query::theorems::list_verified(
         &db,
@@ -200,6 +208,12 @@ async fn list_with_cursor_returns_in_order_and_paginates() {
     .unwrap();
     assert_eq!(page2.items.len(), 2);
     assert!(page2.next_cursor.is_none(), "no more pages");
-    assert_eq!(page2.items[0].canonical_statement, "theorem_1: E_1 = m_1*c^2");
-    assert_eq!(page2.items[1].canonical_statement, "theorem_0: E_0 = m_0*c^2");
+    assert_eq!(
+        page2.items[0].canonical_statement,
+        "theorem_1: E_1 = m_1*c^2"
+    );
+    assert_eq!(
+        page2.items[1].canonical_statement,
+        "theorem_0: E_0 = m_0*c^2"
+    );
 }

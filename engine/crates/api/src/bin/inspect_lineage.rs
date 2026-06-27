@@ -66,7 +66,11 @@ fn main() -> Result<()> {
     println!("Max ancestors on a single theorem: {max_a}");
     if let Some((id, canon)) = sample_id {
         let deps = db.list_dependents(&id)?;
-        println!("Densest theorem ({}…): {deps_n} dependents", &hex::encode(id)[..8], deps_n = deps.len());
+        println!(
+            "Densest theorem ({}…): {deps_n} dependents",
+            &hex::encode(id)[..8],
+            deps_n = deps.len()
+        );
         let preview: String = canon.chars().take(80).collect();
         println!("  canonical: {preview}");
     }

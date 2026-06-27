@@ -12,18 +12,15 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
-    http::{header, HeaderMap, StatusCode},
-    response::IntoResponse,
     Json,
+    extract::State,
+    http::{HeaderMap, StatusCode, header},
+    response::IntoResponse,
 };
 
 use crate::state::AppState;
 
-pub async fn steering(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+pub async fn steering(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     let snap = state.steering.load();
     let etag = format!("\"{:016x}\"", snap.etag);
     if let Some(c) = headers

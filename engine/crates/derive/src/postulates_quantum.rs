@@ -132,63 +132,54 @@ pub fn quantum_mechanics_postulates() -> Vec<Axiom> {
             name: "qm_position_operator".into(),
             domain: Domain::QuantumMechanics,
             statement: eq(app(x_op(), psi()), mul(x(), psi())),
-            description:
-                "Position operator: x̂·ψ(x) = x·ψ(x). The position operator acts as \
+            description: "Position operator: x̂·ψ(x) = x·ψ(x). The position operator acts as \
                  multiplication by the coordinate (Sakurai §1.6)."
-                    .into(),
+                .into(),
         },
         // p̂·ψ = -iℏ ∂ψ/∂x  — momentum operator in position representation
         Axiom {
             name: "qm_momentum_operator".into(),
             domain: Domain::QuantumMechanics,
             statement: eq(app(p_op(), psi()), neg(mul(i_hbar(), dpsi_dx()))),
-            description:
-                "Momentum operator in position representation: p̂·ψ = -iℏ ∂ψ/∂x \
+            description: "Momentum operator in position representation: p̂·ψ = -iℏ ∂ψ/∂x \
                  (Sakurai §1.7, Cohen-Tannoudji II.D)."
-                    .into(),
+                .into(),
         },
         // [x̂,p̂] = iℏ  i.e. x̂·p̂ - p̂·x̂ = i·ℏ — canonical commutator
         Axiom {
             name: "qm_canonical_commutator".into(),
             domain: Domain::QuantumMechanics,
-            statement: eq(
-                sub(mul(x_op(), p_op()), mul(p_op(), x_op())),
-                i_hbar(),
-            ),
-            description:
-                "Canonical commutation relation: [x̂,p̂] = iℏ (Heisenberg / Born-Jordan, \
+            statement: eq(sub(mul(x_op(), p_op()), mul(p_op(), x_op())), i_hbar()),
+            description: "Canonical commutation relation: [x̂,p̂] = iℏ (Heisenberg / Born-Jordan, \
                  Sakurai §1.6). Source of the Heisenberg uncertainty principle."
-                    .into(),
+                .into(),
         },
         // iℏ ∂ψ/∂t = Ĥψ — time-dependent Schrödinger equation
         Axiom {
             name: "qm_schrodinger_evolution".into(),
             domain: Domain::QuantumMechanics,
             statement: eq(mul(i_hbar(), dpsi_dt()), app(h_op(), psi())),
-            description:
-                "Time-dependent Schrödinger equation: iℏ ∂ψ/∂t = Ĥψ. Generator of \
+            description: "Time-dependent Schrödinger equation: iℏ ∂ψ/∂t = Ĥψ. Generator of \
                  unitary time evolution (Sakurai §2.1)."
-                    .into(),
+                .into(),
         },
         // Ĥ_free = p̂² / (2m) — free-particle Hamiltonian
         Axiom {
             name: "qm_free_hamiltonian".into(),
             domain: Domain::QuantumMechanics,
             statement: eq(h_free(), div(pow(p_op(), lit(2)), mul(lit(2), m()))),
-            description:
-                "Free-particle Hamiltonian: Ĥ = p̂²/(2m). Substituted into Schrödinger \
+            description: "Free-particle Hamiltonian: Ĥ = p̂²/(2m). Substituted into Schrödinger \
                  evolution gives the dispersion E = p²/(2m)."
-                    .into(),
+                .into(),
         },
         // Â·ψ = a·ψ — generic eigenvalue equation for an observable
         Axiom {
             name: "qm_eigenvalue_equation".into(),
             domain: Domain::QuantumMechanics,
             statement: eq(app(a_op(), psi()), mul(a(), psi())),
-            description:
-                "Eigenvalue equation: Â·ψ = a·ψ. Measurement of observable Â on \
+            description: "Eigenvalue equation: Â·ψ = a·ψ. Measurement of observable Â on \
                  eigenstate ψ yields eigenvalue a (Sakurai §1.4 postulate)."
-                    .into(),
+                .into(),
         },
         // Â† = Â — observables are self-adjoint (Hermitian)
         // Encoded as Conjugate(Transpose(A)) = A.
@@ -196,40 +187,36 @@ pub fn quantum_mechanics_postulates() -> Vec<Axiom> {
             name: "qm_observable_self_adjoint".into(),
             domain: Domain::QuantumMechanics,
             statement: eq(conj(transpose(a_op())), a_op()),
-            description:
-                "Observables are self-adjoint: Â† = Â (i.e. (Â^T)* = Â). Guarantees \
+            description: "Observables are self-adjoint: Â† = Â (i.e. (Â^T)* = Â). Guarantees \
                  real eigenvalues and orthogonal eigenstates (Sakurai §1.3)."
-                    .into(),
+                .into(),
         },
         // Û†·Û = Î — unitary evolution
         Axiom {
             name: "qm_unitary_evolution".into(),
             domain: Domain::QuantumMechanics,
             statement: eq(mul(conj(transpose(u_op())), u_op()), i_op()),
-            description:
-                "Time-evolution operator Û is unitary: Û†·Û = Î. Equivalent to \
+            description: "Time-evolution operator Û is unitary: Û†·Û = Î. Equivalent to \
                  Schrödinger evolution being norm-preserving (Sakurai §2.1)."
-                    .into(),
+                .into(),
         },
         // c = ⟨φ|ψ⟩ — amplitude as inner product
         Axiom {
             name: "qm_born_rule_amplitude".into(),
             domain: Domain::QuantumMechanics,
             statement: eq(c_var(), dot(phi(), psi())),
-            description:
-                "Probability amplitude: c = ⟨φ|ψ⟩, the inner product of the post- \
+            description: "Probability amplitude: c = ⟨φ|ψ⟩, the inner product of the post- \
                  measurement eigenstate φ with the system state ψ."
-                    .into(),
+                .into(),
         },
         // P = |c|² — Born rule (squared amplitude is probability)
         Axiom {
             name: "qm_born_rule_probability".into(),
             domain: Domain::QuantumMechanics,
             statement: eq(big_p(), pow(abs(c_var()), lit(2))),
-            description:
-                "Born rule: P = |c|². Probability of obtaining a measurement outcome \
+            description: "Born rule: P = |c|². Probability of obtaining a measurement outcome \
                  is the squared modulus of the amplitude (Sakurai §1.4)."
-                    .into(),
+                .into(),
         },
         // ∫ |ψ|² dx = 1 — normalization (over the real line)
         Axiom {
@@ -244,20 +231,18 @@ pub fn quantum_mechanics_postulates() -> Vec<Axiom> {
                 },
                 lit(1),
             ),
-            description:
-                "Wavefunction normalization: ∫_{-∞}^{∞} |ψ(x)|² dx = 1. \
+            description: "Wavefunction normalization: ∫_{-∞}^{∞} |ψ(x)|² dx = 1. \
                  Total probability is unity (Sakurai §1.6)."
-                    .into(),
+                .into(),
         },
         // ℏ > 0 — Planck's constant is positive
         Axiom {
             name: "qm_hbar_positive".into(),
             domain: Domain::QuantumMechanics,
             statement: gt(hbar(), lit(0)),
-            description:
-                "Reduced Planck's constant ℏ > 0. Sign convention; required for \
+            description: "Reduced Planck's constant ℏ > 0. Sign convention; required for \
                  several inequality steps in QM derivations."
-                    .into(),
+                .into(),
         },
     ]
 }
@@ -374,10 +359,7 @@ mod tests {
     fn normalization_uses_integral_of_abs_squared() {
         // ∫ |ψ|² dx = 1 — confirm Integral with body Pow(Abs(psi), 2).
         let posts = quantum_mechanics_postulates();
-        let n = posts
-            .iter()
-            .find(|a| a.name == "qm_normalization")
-            .unwrap();
+        let n = posts.iter().find(|a| a.name == "qm_normalization").unwrap();
         match &n.statement {
             Expr::BinOp(BinOp::Eq, lhs, _) => match lhs.as_ref() {
                 Expr::Integral { var, .. } => assert_eq!(var.as_str(), "x"),

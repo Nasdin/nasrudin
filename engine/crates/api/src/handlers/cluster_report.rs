@@ -5,7 +5,7 @@
 //! populate the LLM prompt. Authentication reuses the worker bearer
 //! token middleware (same as `/api/ingest`).
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -51,10 +51,7 @@ pub async fn handler(
     let mut stored = 0u32;
     for island in body.island_reports {
         for s in island.summaries {
-            let cluster_id = s
-                .get("cluster_id")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as i16;
+            let cluster_id = s.get("cluster_id").and_then(|v| v.as_u64()).unwrap_or(0) as i16;
             match nasrudin_pg::query::cluster_reports::insert_summary(
                 pg,
                 body.worker_id,

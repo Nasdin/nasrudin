@@ -14,16 +14,15 @@
 //!   * `POST /api/admin/theorems/backfill_names` walks the long tail
 //!     of pre-existing Verified rows whose `display_name` is still NULL.
 //!
-//! Both paths bound concurrency through `AppState.naming_semaphore` (3
-//! in flight at a time — we don't want a backfill burst stealing all
-//! the Gradient bandwidth from the steerer).
+//! Both paths are opt-in via `LLM_NAMING_ENABLED=1` and bound
+//! concurrency through `AppState.naming_semaphore` (3 in flight at a
+//! time). The default deployment leaves this disabled so Gradient spend
+//! is reserved for high-level steering.
 
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use nasrudin_llm::{
-    CompletionRequest, GradientProvider, LlmError, LlmProvider, ResponseFormat,
-};
+use nasrudin_llm::{CompletionRequest, GradientProvider, LlmError, LlmProvider, ResponseFormat};
 
 const SYSTEM_PROMPT: &str = include_str!("theorem_naming_system_prompt.txt");
 
@@ -59,7 +58,8 @@ pub struct NamingClient {
 }
 
 impl NamingClient {
-    /// Build the production client. Uses `GRADIENT_API_KEY` +
+    /// Build the production client. The API boot path only calls this
+    /// when `LLM_NAMING_ENABLED=1`; it uses `GRADIENT_API_KEY` +
     /// `STEERER_MODEL` (default `kimi-k2.6`, matching the steerer).
     pub fn from_env() -> Result<Self, LlmError> {
         let provider = GradientProvider::from_env()?;
@@ -128,8 +128,8 @@ struct RawNamed {
 
 fn parse_and_validate(raw: &str) -> Result<NamedTheorem, NamingError> {
     let trimmed = strip_code_fence(raw.trim());
-    let parsed: RawNamed = serde_json::from_str(trimmed)
-        .map_err(|e| NamingError::Parse(e.to_string()))?;
+    let parsed: RawNamed =
+        serde_json::from_str(trimmed).map_err(|e| NamingError::Parse(e.to_string()))?;
     let name = sanitize_and_cap(&parsed.name, MAX_NAME_LEN);
     let description = sanitize_and_cap(&parsed.description, MAX_DESCRIPTION_LEN);
     if name.is_empty() {
@@ -277,7 +277,9 @@ mod tests {
     }
 
     fn client_with_reply(reply: &str) -> NamingClient {
-        NamingClient::with_llm(Box::new(CannedLlm { reply: reply.into() }))
+        NamingClient::with_llm(Box::new(CannedLlm {
+            reply: reply.into(),
+        }))
     }
 
     #[tokio::test]
@@ -295,9 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn strips_markdown_fence() {
-        let c = client_with_reply(
-            "```json\n{\"name\":\"X\",\"description\":\"Y.\"}\n```",
-        );
+        let c = client_with_reply("```json\n{\"name\":\"X\",\"description\":\"Y.\"}\n```");
         let n = c.name_theorem("c", "l", &[], "d").await.unwrap();
         assert_eq!(n.display_name, "X");
         assert_eq!(n.description, "Y.");

@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use axum::{
+    Json,
     body::Body,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 use tokio_util::io::ReaderStream;
@@ -48,14 +48,16 @@ pub async fn checksum(State(state): State<Arc<AppState>>) -> Response {
                 .into_response();
         }
     };
-    let header = state.embed.as_ref().map(|i| i.header()).unwrap_or(
-        nasrudin_embed::IndexHeader {
+    let header = state
+        .embed
+        .as_ref()
+        .map(|i| i.header())
+        .unwrap_or(nasrudin_embed::IndexHeader {
             version: nasrudin_embed::INDEX_VERSION,
             dim: nasrudin_embed::EMBED_DIM,
             count: 0,
             built_at_millis: 0,
-        },
-    );
+        });
     Json(ChecksumResponse {
         hex: cs.hex,
         bytes: cs.bytes,

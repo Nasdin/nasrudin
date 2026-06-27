@@ -1,6 +1,6 @@
 //! K-means++ over `ClusterFeatures` with deterministic seeding.
 
-use crate::clustering::features::{signature_distance, ClusterFeatures, MINHASH_SIG_LEN};
+use crate::clustering::features::{ClusterFeatures, MINHASH_SIG_LEN, signature_distance};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
@@ -25,11 +25,7 @@ pub struct Centroid {
 ///
 /// `k` is clamped to `[1, population.len()]`. Empty population →
 /// empty assignment with one sentinel centroid.
-pub fn cluster_individuals(
-    population: &[ClusterFeatures],
-    k: u32,
-    seed: u64,
-) -> ClusterAssignment {
+pub fn cluster_individuals(population: &[ClusterFeatures], k: u32, seed: u64) -> ClusterAssignment {
     if population.is_empty() {
         return ClusterAssignment {
             assignments: vec![],

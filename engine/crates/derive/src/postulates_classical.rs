@@ -121,8 +121,7 @@ pub fn classical_mechanics_postulates() -> Vec<Axiom> {
             domain: Domain::ClassicalMechanics,
             statement: eq(w(), mul(f(), d())),
             description:
-                "Work for a constant force on a straight-line path: W = F·d (Goldstein §1.4)"
-                    .into(),
+                "Work for a constant force on a straight-line path: W = F·d (Goldstein §1.4)".into(),
         },
         Axiom {
             name: "power_def".into(),
@@ -168,10 +167,7 @@ mod tests {
         // catches duplicate registrations.
         use std::collections::HashSet;
         let posts = classical_mechanics_postulates();
-        let canons: HashSet<String> = posts
-            .iter()
-            .map(|a| a.statement.to_canonical())
-            .collect();
+        let canons: HashSet<String> = posts.iter().map(|a| a.statement.to_canonical()).collect();
         assert_eq!(canons.len(), posts.len());
     }
 

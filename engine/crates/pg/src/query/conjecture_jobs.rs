@@ -110,11 +110,7 @@ pub async fn set_chosen_seed(
     Ok(())
 }
 
-pub async fn mark_failed(
-    db: &DatabaseConnection,
-    id: Uuid,
-    reason: &str,
-) -> Result<(), DbErr> {
+pub async fn mark_failed(db: &DatabaseConnection, id: Uuid, reason: &str) -> Result<(), DbErr> {
     let model = conjecture_jobs::Entity::find_by_id(id)
         .one(db)
         .await?
@@ -320,10 +316,7 @@ pub async fn append_paper_chunk(
 
 /// Phase F: read the persisted paper draft for a job. `Ok(None)` when
 /// the row exists but no draft has been generated yet.
-pub async fn get_paper_draft(
-    db: &DatabaseConnection,
-    id: Uuid,
-) -> Result<Option<String>, DbErr> {
+pub async fn get_paper_draft(db: &DatabaseConnection, id: Uuid) -> Result<Option<String>, DbErr> {
     let model = conjecture_jobs::Entity::find_by_id(id).one(db).await?;
     Ok(model.and_then(|m| m.paper_draft))
 }
@@ -621,10 +614,9 @@ pub async fn cancel_paid_with_refund(
                 END AS refund_credits"#,
         [job_id.into()],
     );
-    let row = txn.query_one_raw(cancel_stmt).await?
-        .ok_or_else(|| DbErr::Custom(
-            "cancel_paid_with_refund: row vanished between FOR UPDATE and UPDATE".into()
-        ))?;
+    let row = txn.query_one_raw(cancel_stmt).await?.ok_or_else(|| {
+        DbErr::Custom("cancel_paid_with_refund: row vanished between FOR UPDATE and UPDATE".into())
+    })?;
     let refund: i32 = row.try_get_by_index(0)?;
 
     // Step 3: apply refund (no-op when refund == 0).
@@ -691,10 +683,7 @@ pub async fn mark_paid_proved(
 }
 
 /// Count rows in any of the given states.
-pub async fn count_in_states(
-    db: &DatabaseConnection,
-    states: &[&str],
-) -> Result<u64, DbErr> {
+pub async fn count_in_states(db: &DatabaseConnection, states: &[&str]) -> Result<u64, DbErr> {
     use sea_orm::*;
     let owned: Vec<String> = states.iter().map(|s| (*s).to_owned()).collect();
     conjecture_jobs::Entity::find()

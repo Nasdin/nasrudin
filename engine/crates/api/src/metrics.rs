@@ -65,7 +65,10 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if let Ok(stats) = state.db.get_stats() {
         out.push_str("# HELP nasrudin_theorems_total Total theorem rows in RocksDB.\n");
         out.push_str("# TYPE nasrudin_theorems_total counter\n");
-        out.push_str(&format!("nasrudin_theorems_total {}\n", stats.total_theorems));
+        out.push_str(&format!(
+            "nasrudin_theorems_total {}\n",
+            stats.total_theorems
+        ));
 
         out.push_str(
             "# HELP nasrudin_theorems_verified Total theorems with status=Verified (any tactic).\n",
@@ -85,7 +88,9 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             stats.total_rejected
         ));
 
-        out.push_str("# HELP nasrudin_theorems_pending Theorems with status=Pending (haven't replayed).\n");
+        out.push_str(
+            "# HELP nasrudin_theorems_pending Theorems with status=Pending (haven't replayed).\n",
+        );
         out.push_str("# TYPE nasrudin_theorems_pending gauge\n");
         out.push_str(&format!(
             "nasrudin_theorems_pending {}\n",
@@ -98,7 +103,10 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
         out.push_str("# HELP nasrudin_max_generation Highest GA generation seen.\n");
         out.push_str("# TYPE nasrudin_max_generation gauge\n");
-        out.push_str(&format!("nasrudin_max_generation {}\n", stats.max_generation));
+        out.push_str(&format!(
+            "nasrudin_max_generation {}\n",
+            stats.max_generation
+        ));
     }
 
     // ── 3-state verification split (P-Task 1 + P-Task 12) ──────────
@@ -132,9 +140,7 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         "# HELP nasrudin_theorems_worker_claim Theorems with status=Verified{tactic=worker_claim} (worker locally lake-built; server lake pending).\n",
     );
     out.push_str("# TYPE nasrudin_theorems_worker_claim gauge\n");
-    out.push_str(&format!(
-        "nasrudin_theorems_worker_claim {worker_claim}\n"
-    ));
+    out.push_str(&format!("nasrudin_theorems_worker_claim {worker_claim}\n"));
 
     out.push_str(
         "# HELP nasrudin_theorems_lake_verified Theorems with status=Verified{tactic=lake_build} (kernel-confirmed by server).\n",
@@ -155,9 +161,7 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         "# HELP nasrudin_steerer_mode Current steerer scope (B = paid jobs running, knobs locked; C = full authority).\n",
     );
     out.push_str("# TYPE nasrudin_steerer_mode gauge\n");
-    out.push_str(&format!(
-        "nasrudin_steerer_mode{{scope=\"{scope}\"}} 1\n"
-    ));
+    out.push_str(&format!("nasrudin_steerer_mode{{scope=\"{scope}\"}} 1\n"));
 
     if let Some(ref pg) = state.pg {
         if let Ok(active) = nasrudin_pg::query::conjecture_jobs::count_in_states(
@@ -175,7 +179,9 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         if let Ok(queued) =
             nasrudin_pg::query::conjecture_jobs::count_in_states(pg, &["queued"]).await
         {
-            out.push_str("# HELP nasrudin_paid_jobs_queued Paid Researcher jobs waiting to be claimed.\n");
+            out.push_str(
+                "# HELP nasrudin_paid_jobs_queued Paid Researcher jobs waiting to be claimed.\n",
+            );
             out.push_str("# TYPE nasrudin_paid_jobs_queued gauge\n");
             out.push_str(&format!("nasrudin_paid_jobs_queued {queued}\n"));
         }

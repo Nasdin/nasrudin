@@ -22,9 +22,9 @@ use std::sync::Arc;
 use stripe::Client;
 use stripe_billing::billing_portal_session::CreateBillingPortalSession;
 use stripe_checkout::checkout_session::{
-    CreateCheckoutSession, CreateCheckoutSessionAutomaticTax,
-    CreateCheckoutSessionCustomerUpdate, CreateCheckoutSessionCustomerUpdateAddress,
-    CreateCheckoutSessionLineItems, CreateCheckoutSessionSubscriptionData,
+    CreateCheckoutSession, CreateCheckoutSessionAutomaticTax, CreateCheckoutSessionCustomerUpdate,
+    CreateCheckoutSessionCustomerUpdateAddress, CreateCheckoutSessionLineItems,
+    CreateCheckoutSessionSubscriptionData,
 };
 use stripe_core::customer::CreateCustomer;
 use stripe_shared::{
@@ -82,8 +82,7 @@ impl BillingClient {
             price_sponsor_25: std::env::var("STRIPE_PRICE_SPONSOR_25").unwrap_or_default(),
             price_sponsor_100: std::env::var("STRIPE_PRICE_SPONSOR_100").unwrap_or_default(),
             price_sponsor_open: std::env::var("STRIPE_PRICE_SPONSOR_OPEN").unwrap_or_default(),
-            sponsor_payment_link: std::env::var("STRIPE_SPONSOR_PAYMENT_LINK")
-                .unwrap_or_default(),
+            sponsor_payment_link: std::env::var("STRIPE_SPONSOR_PAYMENT_LINK").unwrap_or_default(),
             checkout_success_url: std::env::var("STRIPE_CHECKOUT_SUCCESS_URL")?,
             checkout_cancel_url: std::env::var("STRIPE_CHECKOUT_CANCEL_URL")?,
             portal_return_url: std::env::var("STRIPE_CUSTOMER_PORTAL_RETURN_URL")?,

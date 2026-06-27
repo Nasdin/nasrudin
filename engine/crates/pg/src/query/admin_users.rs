@@ -2,7 +2,7 @@
 //! panel uses, plus a cheap `list_paginated` for the user table view.
 
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, Condition, DatabaseBackend, DatabaseConnection, DbErr,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr,
     EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
 };
 use uuid::Uuid;

@@ -98,11 +98,7 @@ impl MigrationTrait for Migration {
             .await
             .ok();
         manager
-            .drop_table(
-                Table::drop()
-                    .table(ClusterSteering::Table)
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(ClusterSteering::Table).to_owned())
             .await
     }
 }

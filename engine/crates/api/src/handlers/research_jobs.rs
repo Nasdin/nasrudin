@@ -14,17 +14,17 @@ use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    response::sse::{Event, KeepAlive, Sse},
     response::IntoResponse,
-    Json,
+    response::sse::{Event, KeepAlive, Sse},
 };
 use futures::Stream;
 use serde::Deserialize;
 use serde_json::Value;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
 use nasrudin_ga::chain_ga::{MUTATION_OPS, PHYSICS_ATOM_NAMES};
@@ -80,9 +80,10 @@ pub async fn steering_options() -> impl IntoResponse {
 /// (broadcast channels return Err when there are no receivers — the
 /// user simply hasn't opened the SSE yet).
 pub fn emit_job_event(state: &AppState, job_id: Uuid, ev: JobEvent) {
-    let entry = state.job_events.entry(job_id).or_insert_with(|| {
-        tokio::sync::broadcast::channel(64).0
-    });
+    let entry = state
+        .job_events
+        .entry(job_id)
+        .or_insert_with(|| tokio::sync::broadcast::channel(64).0);
     let _ = entry.value().send(ev);
 }
 
@@ -158,7 +159,10 @@ pub fn validate_and_canonicalize_steering(v: &Value) -> Result<Value, String> {
             canon_knobs.insert("rate".into(), serde_json::json!(r.clamp(0.05, 0.30)));
         }
         if let Some(p) = k.get("population_size").and_then(Value::as_u64) {
-            canon_knobs.insert("population_size".into(), serde_json::json!(p.clamp(32, 512)));
+            canon_knobs.insert(
+                "population_size".into(),
+                serde_json::json!(p.clamp(32, 512)),
+            );
         }
         if let Some(b) = k.get("suffix_bias").and_then(Value::as_f64) {
             if !b.is_finite() {
@@ -170,7 +174,10 @@ pub fn validate_and_canonicalize_steering(v: &Value) -> Result<Value, String> {
             if !e.is_finite() {
                 return Err("steering.mutation_knobs.elitism_fraction must be finite".into());
             }
-            canon_knobs.insert("elitism_fraction".into(), serde_json::json!(e.clamp(0.0, 0.2)));
+            canon_knobs.insert(
+                "elitism_fraction".into(),
+                serde_json::json!(e.clamp(0.0, 0.2)),
+            );
         }
         if !canon_knobs.is_empty() {
             out.insert("mutation_knobs".into(), Value::Object(canon_knobs));
@@ -202,9 +209,9 @@ pub fn validate_and_canonicalize_steering(v: &Value) -> Result<Value, String> {
             .ok_or_else(|| "steering.atom_pool must be an object keyed by domain".to_string())?;
         let mut canon_pool = serde_json::Map::new();
         for (domain, entries) in p {
-            let arr = entries.as_array().ok_or_else(|| {
-                format!("atom_pool.{domain} must be an array of {{name,weight}}")
-            })?;
+            let arr = entries
+                .as_array()
+                .ok_or_else(|| format!("atom_pool.{domain} must be an array of {{name,weight}}"))?;
             let mut canon_arr = Vec::with_capacity(arr.len());
             for entry in arr {
                 let name = entry
@@ -368,8 +375,7 @@ pub async fn create(
     // higher-quality outcome appropriately. Mirrors the rush surcharge
     // pattern so the surface is consistent.
     let steering_surcharge: i32 = if canonical_steering.is_some() { 1 } else { 0 };
-    let total_cost: i32 =
-        body.credits_budget + if body.rush { 1 } else { 0 } + steering_surcharge;
+    let total_cost: i32 = body.credits_budget + if body.rush { 1 } else { 0 } + steering_surcharge;
     let quota: i32 = 96 * body.credits_budget;
     let priority: i32 = 5 + if body.rush { 1 } else { 0 };
 
@@ -395,13 +401,12 @@ pub async fn create(
         Ok(Some(r)) => r,
         Ok(None) => {
             // Read fresh remaining for the 402 body, then rollback.
-            let remaining = nasrudin_pg::query::users::try_decrement_research_credits_n(
-                &txn, user_id, 0,
-            )
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(0);
+            let remaining =
+                nasrudin_pg::query::users::try_decrement_research_credits_n(&txn, user_id, 0)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0);
             let _ = txn.rollback().await;
             return (
                 StatusCode::PAYMENT_REQUIRED,
@@ -508,10 +513,7 @@ pub async fn create(
 }
 
 /// `GET /api/research/jobs` — newest-first list of the user's jobs.
-pub async fn list(
-    State(state): State<Arc<AppState>>,
-    auth: AuthOrApiKey,
-) -> impl IntoResponse {
+pub async fn list(State(state): State<Arc<AppState>>, auth: AuthOrApiKey) -> impl IntoResponse {
     let pg = match &state.pg {
         Some(p) => p,
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
@@ -540,9 +542,7 @@ pub async fn detail(
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
     match nasrudin_pg::query::conjecture_jobs::get_by_id(pg, id).await {
-        Ok(Some(j)) if j.owner_id == auth.user.id => {
-            (StatusCode::OK, Json(j)).into_response()
-        }
+        Ok(Some(j)) if j.owner_id == auth.user.id => (StatusCode::OK, Json(j)).into_response(),
         Ok(Some(_)) => (StatusCode::FORBIDDEN, "not_owner").into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "not_found").into_response(),
         Err(e) => (
@@ -568,9 +568,10 @@ pub async fn events(
     if job.owner_id != auth.user.id {
         return Err(StatusCode::FORBIDDEN);
     }
-    let entry = state.job_events.entry(id).or_insert_with(|| {
-        tokio::sync::broadcast::channel(64).0
-    });
+    let entry = state
+        .job_events
+        .entry(id)
+        .or_insert_with(|| tokio::sync::broadcast::channel(64).0);
     let rx = entry.value().subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|r| {
         let ev = r.ok()?;
@@ -593,22 +594,19 @@ pub async fn cancel(
         None => return (StatusCode::SERVICE_UNAVAILABLE, "pg_unavailable").into_response(),
     };
 
-    let outcome = match nasrudin_pg::query::conjecture_jobs::cancel_paid_with_refund(
-        pg,
-        id,
-        auth.user.id,
-    )
-    .await
-    {
-        Ok(o) => o,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response();
-        }
-    };
+    let outcome =
+        match nasrudin_pg::query::conjecture_jobs::cancel_paid_with_refund(pg, id, auth.user.id)
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                )
+                    .into_response();
+            }
+        };
 
     if !outcome.row_was_cancelled {
         // Either the row was already terminal, doesn't exist, or the

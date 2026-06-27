@@ -57,35 +57,29 @@ pub fn statistical_mechanics_postulates() -> Vec<Axiom> {
             name: "statmech_boltzmann_entropy".into(),
             domain: Domain::StatisticalMechanics,
             statement: eq(s(), mul(kb(), ln_op(omega()))),
-            description:
-                "Boltzmann's relation: S = k_B ln(Ω). Connects microscopic state \
+            description: "Boltzmann's relation: S = k_B ln(Ω). Connects microscopic state \
                  count to thermodynamic entropy (Reif §3.3)."
-                    .into(),
+                .into(),
         },
         // Beta definition: β = 1/(k_B T).
         Axiom {
             name: "statmech_beta_def".into(),
             domain: Domain::StatisticalMechanics,
             statement: eq(beta(), div(lit(1), mul(kb(), t()))),
-            description:
-                "Thermodynamic beta: β = 1/(k_B T). Conjugate variable to energy \
+            description: "Thermodynamic beta: β = 1/(k_B T). Conjugate variable to energy \
                  in the canonical ensemble (Reif §6.2)."
-                    .into(),
+                .into(),
         },
         // Gibbs distribution: p_i = exp(-β E_i) / Z. Probability of
         // microstate i in the canonical ensemble.
         Axiom {
             name: "statmech_gibbs_distribution".into(),
             domain: Domain::StatisticalMechanics,
-            statement: eq(
-                p_i(),
-                div(exp_op(neg_op(mul(beta(), e_i()))), z()),
-            ),
-            description:
-                "Canonical (Gibbs) distribution: p_i = exp(-β E_i) / Z. \
+            statement: eq(p_i(), div(exp_op(neg_op(mul(beta(), e_i()))), z())),
+            description: "Canonical (Gibbs) distribution: p_i = exp(-β E_i) / Z. \
                  Probability of finding the system in microstate i at \
                  temperature 1/(k_B β) (Reif §6.5)."
-                    .into(),
+                .into(),
         },
         // Partition function as sum: Z = Σ exp(-β E_i). Encoded over
         // variable i.
@@ -101,20 +95,18 @@ pub fn statistical_mechanics_postulates() -> Vec<Axiom> {
                     upper: Box::new(Expr::Var("N".into())),
                 },
             ),
-            description:
-                "Canonical partition function: Z = Σ_i exp(-β E_i), summed over \
+            description: "Canonical partition function: Z = Σ_i exp(-β E_i), summed over \
                  microstates (Reif §6.6)."
-                    .into(),
+                .into(),
         },
         // Free energy ↔ partition function: F = -k_B T ln Z.
         Axiom {
             name: "statmech_free_energy_partition".into(),
             domain: Domain::StatisticalMechanics,
             statement: eq(f(), neg_op(mul(mul(kb(), t()), ln_op(z())))),
-            description:
-                "Helmholtz free energy from partition function: F = -k_B T ln Z. \
+            description: "Helmholtz free energy from partition function: F = -k_B T ln Z. \
                  Legendre transform of U (Reif §7.4, Pathria §3.5)."
-                    .into(),
+                .into(),
         },
         // Mean energy from partition function: U = -∂(ln Z)/∂β.
         Axiom {
@@ -124,10 +116,9 @@ pub fn statistical_mechanics_postulates() -> Vec<Axiom> {
                 u(),
                 neg_op(Expr::PartialDeriv(Box::new(ln_op(z())), "beta".into())),
             ),
-            description:
-                "Mean energy in canonical ensemble: U = -∂(ln Z)/∂β = -(1/Z)∂Z/∂β. \
+            description: "Mean energy in canonical ensemble: U = -∂(ln Z)/∂β = -(1/Z)∂Z/∂β. \
                  (Reif §6.6)."
-                    .into(),
+                .into(),
         },
         // Equipartition (per quadratic DOF): ⟨½ q²⟩ = ½ k_B T.
         // Encoded as: <E_dof> = (1/2) k_B T where E_dof is a placeholder
@@ -139,11 +130,10 @@ pub fn statistical_mechanics_postulates() -> Vec<Axiom> {
                 Expr::Var("E_dof".into()),
                 mul(Expr::Lit(1, 2), mul(kb(), t())),
             ),
-            description:
-                "Equipartition theorem: each quadratic degree of freedom in a \
+            description: "Equipartition theorem: each quadratic degree of freedom in a \
                  classical Hamiltonian contributes ½ k_B T to the mean energy \
                  (Reif §7.5)."
-                    .into(),
+                .into(),
         },
         // Probabilities sum to 1: Σ p_i = 1.
         Axiom {
@@ -158,10 +148,9 @@ pub fn statistical_mechanics_postulates() -> Vec<Axiom> {
                 },
                 lit(1),
             ),
-            description:
-                "Probability normalization: Σ_i p_i = 1 over all accessible \
+            description: "Probability normalization: Σ_i p_i = 1 over all accessible \
                  microstates."
-                    .into(),
+                .into(),
         },
         // Boltzmann constant positivity (also in thermo; harmless dup).
         Axiom {
@@ -176,10 +165,9 @@ pub fn statistical_mechanics_postulates() -> Vec<Axiom> {
             name: "statmech_omega_positive".into(),
             domain: Domain::StatisticalMechanics,
             statement: gt(omega(), zero()),
-            description:
-                "Number of accessible microstates Ω > 0 for any reachable \
+            description: "Number of accessible microstates Ω > 0 for any reachable \
                  macrostate (else entropy would be undefined)."
-                    .into(),
+                .into(),
         },
         // Beta positive (since T > 0).
         Axiom {

@@ -49,10 +49,7 @@ pub fn constant_dimension(c: &PhysConst) -> Option<Dimension> {
 /// Infer the physical dimension of an expression.
 ///
 /// Returns `None` if the dimension cannot be determined or is inconsistent.
-pub fn infer_dimension(
-    expr: &Expr,
-    var_dims: &HashMap<String, Dimension>,
-) -> Option<Dimension> {
+pub fn infer_dimension(expr: &Expr, var_dims: &HashMap<String, Dimension>) -> Option<Dimension> {
     match expr {
         Expr::Var(name) => var_dims.get(name).copied(),
         Expr::Const(c) => constant_dimension(c),
@@ -202,9 +199,7 @@ pub fn check_equation_dimensions(
         if dl == dr {
             Ok(dl)
         } else {
-            Err(format!(
-                "dimension mismatch: LHS has {dl}, RHS has {dr}"
-            ))
+            Err(format!("dimension mismatch: LHS has {dl}, RHS has {dr}"))
         }
     } else {
         Err("expression is not an equation".to_string())
@@ -228,9 +223,10 @@ pub fn equation_definitely_inconsistent(
     var_dims: &HashMap<String, Dimension>,
 ) -> bool {
     if let Expr::BinOp(BinOp::Eq, lhs, rhs) = expr {
-        if let (Some(dl), Some(dr)) =
-            (infer_dimension(lhs, var_dims), infer_dimension(rhs, var_dims))
-        {
+        if let (Some(dl), Some(dr)) = (
+            infer_dimension(lhs, var_dims),
+            infer_dimension(rhs, var_dims),
+        ) {
             return dl != dr;
         }
     }
