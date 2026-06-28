@@ -14,9 +14,6 @@ def submit_and_poll():
     if "DATABASE_URL" in os.environ and "${POSTGRES_USER}" in os.environ["DATABASE_URL"]:
         os.environ["DATABASE_URL"] = "postgresql://physics:physics_dev@localhost:5432/physics_generator"
 
-    # Disable persistent elaborator during test to allow instant worker boot
-    os.environ["NASRUDIN_NO_PERSISTENT"] = "1"
-
     # 1. Start the entire dev stack cleanly using 'just up' in the background
     print("▶ Starting the entire stack using 'just up'...")
     # Kill any existing processes on ports 3000, 3001, 5005 and any orphan lean/lake compilers
