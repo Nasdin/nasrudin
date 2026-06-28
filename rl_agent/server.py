@@ -2,28 +2,115 @@ import os
 import time
 import threading
 import numpy as np
+import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
 from stable_baselines3 import PPO
-from env import NasrudinEnv
-from database import fetch_historical_transitions
+from env import NasrudinEnv, DreamerEnv
+from world_model import WorldModel, train_world_model
+from database import fetch_historical_transitions, get_db_connection
 
 app = FastAPI(title="Nasrudin SOTA RL Server", version="1.0.0")
 
 # Load the trained model
 MODEL_PATH = "models/nasrudin_ppo"
+WORLD_MODEL_PATH = "models/nasrudin_world_model.pt"
+LAST_TRAINED_CYCLE_PATH = "models/last_trained_cycle.txt"
+
 model = None
+world_model = None
 training_lock = threading.Lock()
 
+def get_latest_completed_cycle_id():
+    """
+    Query the database to get the ID of the most recent completed cluster steering cycle.
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id FROM cluster_steering 
+            WHERE ended_at IS NOT NULL 
+            ORDER BY started_at DESC LIMIT 1
+        """)
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        print(f"Error fetching latest cycle ID: {e}")
+        return None
+
+def get_last_trained_cycle_id():
+    """
+    Read the last trained cycle ID from the local state file.
+    """
+    if os.path.exists(LAST_TRAINED_CYCLE_PATH):
+        try:
+            with open(LAST_TRAINED_CYCLE_PATH, "r") as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"Error reading last trained cycle ID: {e}")
+    return None
+
+def save_last_trained_cycle_id(cycle_id):
+    """
+    Save the last trained cycle ID to the local state file.
+    """
+    try:
+        os.makedirs(os.path.dirname(LAST_TRAINED_CYCLE_PATH), exist_ok=True)
+        with open(LAST_TRAINED_CYCLE_PATH, "w") as f:
+            f.write(str(cycle_id))
+    except Exception as e:
+        print(f"Error saving last trained cycle ID: {e}")
+
+def run_training_step(num_timesteps=2000):
+    """
+    Perform a Dreamer-style Model-Based RL training step:
+      1. Re-train the World Model on the latest database transitions.
+      2. Re-train the PPO agent inside the updated World Model's imagination!
+    """
+    global model, world_model
+    latest_id = get_latest_completed_cycle_id()
+    if latest_id is None:
+        print("No completed cycles found in database. Skipping training.")
+        return False
+        
+    try:
+        # 1. Re-train the World Model
+        transitions = fetch_historical_transitions()
+        if transitions:
+            print(f"Fine-tuning World Model on {len(transitions)} transitions...")
+            train_world_model(world_model, transitions, epochs=20, batch_size=64)
+            
+        # 2. Re-train the PPO agent inside the updated World Model's imagination!
+        print(f"Fine-tuning SOTA PPO model inside imagination for {num_timesteps} timesteps...")
+        model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False)
+        model.save(MODEL_PATH)
+        save_last_trained_cycle_id(latest_id)
+        print(f"Model trained and saved successfully! Last trained cycle ID updated to: {latest_id}")
+        return True
+    except Exception as e:
+        print(f"Error during training step: {e}")
+        return False
+
 def load_or_init_model():
-    global model
+    global model, world_model
+    
+    # Initialize World Model
+    world_model = WorldModel()
+    if os.path.exists(WORLD_MODEL_PATH):
+        print(f"Loading SOTA World Model from {WORLD_MODEL_PATH}...")
+        world_model.load_state_dict(torch.load(WORLD_MODEL_PATH))
+    
+    # Initialize PPO Model
     if os.path.exists(MODEL_PATH + ".zip"):
         print(f"Loading SOTA PPO model from {MODEL_PATH}...")
         model = PPO.load(MODEL_PATH)
     else:
         print("No pre-trained model found. Initializing a fresh PPO model...")
-        env = NasrudinEnv()
+        env = DreamerEnv()
         model = PPO(
             "MlpPolicy", 
             env, 
@@ -45,10 +132,7 @@ def load_or_init_model():
             transitions = fetch_historical_transitions()
             if transitions:
                 print(f"Found {len(transitions)} historical transitions. Pre-training model...")
-                # Run a short training session to adapt the policy to the historical data
-                model.learn(total_timesteps=5000, reset_num_timesteps=False)
-                os.makedirs("models", exist_ok=True)
-                model.save(MODEL_PATH)
+                run_training_step(num_timesteps=5000)
                 print("Offline pre-training completed successfully!")
             else:
                 print("No historical transitions found in database. Skipping pre-training.")
@@ -78,10 +162,13 @@ class TrainRequest(BaseModel):
 def get_status():
     return {
         "model_loaded": model is not None,
+        "world_model_loaded": world_model is not None,
         "model_path": MODEL_PATH,
-        "algorithm": "PPO",
+        "algorithm": "Dreamer-style PPO (Model-Based RL)",
         "observation_space_shape": model.observation_space.shape if model else None,
         "action_space_shape": model.action_space.shape if model else None,
+        "last_trained_cycle_id": get_last_trained_cycle_id(),
+        "latest_completed_cycle_id": get_latest_completed_cycle_id(),
     }
 
 @app.post("/predict", response_model=ActionResponse)
@@ -148,8 +235,7 @@ def train_online(request: TrainRequest):
         
     with training_lock:
         print(f"Received {len(request.transitions)} transitions for online learning...")
-        model.learn(total_timesteps=1000, reset_num_timesteps=False)
-        model.save(MODEL_PATH)
+        run_training_step(num_timesteps=1000)
         
     return {
         "message": "Online learning step completed successfully",
@@ -159,25 +245,44 @@ def train_online(request: TrainRequest):
 
 def automated_training_loop():
     """
-    Background thread that automatically runs every 1 hour to fetch the latest
+    Background thread that automatically runs on a schedule to fetch the latest
     transitions from the database and fine-tune the PPO model.
+    
+    It is fully durable:
+      1. On boot, it immediately checks if there is any new data in the database
+         that was collected while the computer was turned off, and trains on it instantly.
+      2. It then enters the periodic schedule.
     """
     interval = int(os.getenv("RL_TRAIN_INTERVAL_SECONDS", "3600"))
     print(f"Starting automated training loop with interval of {interval} seconds...")
     
+    # 1. Immediate Boot Check (Durability Gate)
+    try:
+        last_trained = get_last_trained_cycle_id()
+        latest_completed = get_latest_completed_cycle_id()
+        
+        if latest_completed is not None and (last_trained is None or str(last_trained) != str(latest_completed)):
+            print(f"Durability Gate: Detected new completed cycles since last training (last_trained={last_trained}, latest={latest_completed}). Training immediately...")
+            with training_lock:
+                run_training_step(num_timesteps=2000)
+        else:
+            print("Durability Gate: No new completed cycles detected on boot. Entering schedule.")
+    except Exception as e:
+        print(f"Error during durability boot check: {e}")
+        
+    # 2. Periodic Schedule
     while True:
         time.sleep(interval)
         try:
-            print("Automated Training: Fetching latest transitions from database...")
-            transitions = fetch_historical_transitions()
-            if transitions:
-                print(f"Automated Training: Found {len(transitions)} transitions. Fine-tuning model...")
+            last_trained = get_last_trained_cycle_id()
+            latest_completed = get_latest_completed_cycle_id()
+            
+            if latest_completed is not None and (last_trained is None or str(last_trained) != str(latest_completed)):
+                print("Automated Training: New completed cycles detected. Fine-tuning model...")
                 with training_lock:
-                    model.learn(total_timesteps=2000, reset_num_timesteps=False)
-                    model.save(MODEL_PATH)
-                print("Automated Training: Model fine-tuned and saved successfully!")
+                    run_training_step(num_timesteps=2000)
             else:
-                print("Automated Training: No new transitions found. Skipping training.")
+                print("Automated Training: No new completed cycles detected. Skipping training.")
         except Exception as e:
             print(f"Error during automated training: {e}")
 
