@@ -432,10 +432,10 @@ pub async fn create(
     let am = nasrudin_pg::entity::conjecture_jobs::ActiveModel {
         id: Set(id),
         owner_id: Set(user_id),
-        state: Set("queued".into()),
+        state: Set("queued_for_llm".into()),
         outcome: Set(None),
-        hunch: Set(body.hunch),
-        domain_hint: Set(body.domain_hint),
+        hunch: Set(body.hunch.clone()),
+        domain_hint: Set(body.domain_hint.clone()),
         provider: Set("internal".into()),
         model: Set("ga".into()),
         suggestions: Set(None),
@@ -483,6 +483,86 @@ pub async fn create(
             .into_response();
     }
 
+    // Spawn background task to autonomously run the LLM Curation / Seeding Phase
+    let state_for_task = state.clone();
+    let id_for_task = id;
+    let hunch_for_task = body.hunch.clone();
+    let domain_hint_for_task = body.domain_hint.clone();
+    
+    tokio::spawn(async move {
+        tracing::info!(job = %id_for_task, "Spawned autonomous LLM steering task for research job");
+        let pg = match &state_for_task.pg {
+            Some(p) => p,
+            None => return,
+        };
+        
+        // 1. Call the global system LLM phase
+        let suggestions = crate::conjecture::orchestrate::run_system_llm_phase(
+            &state_for_task,
+            &hunch_for_task,
+            domain_hint_for_task.as_deref(),
+        )
+        .await;
+        
+        let mut final_seed = None;
+        let mut final_suggestions = None;
+        
+        match suggestions {
+            Ok(s_list) if !s_list.is_empty() => {
+                tracing::info!(job = %id_for_task, s_count = s_list.len(), "LLM generated steering suggestions");
+                // Take the first suggestion
+                let s = &s_list[0];
+                let seed_json = serde_json::json!({
+                    "axiom_set": s.axiom_set,
+                    "initial_population": s.initial_population,
+                    "mutation_priors": s.mutation_priors,
+                    "target_shape": s.target_shape,
+                    "rationale": s.rationale,
+                });
+                
+                final_seed = Some(seed_json);
+                final_suggestions = Some(serde_json::to_value(&s_list).unwrap_or(serde_json::Value::Null));
+            }
+            Ok(_) => {
+                tracing::warn!(job = %id_for_task, "LLM returned empty suggestions");
+            }
+            Err(e) => {
+                tracing::error!(job = %id_for_task, error = %e, "LLM steering failed");
+            }
+        }
+        
+        // 2. Update the job in PostgreSQL and activate it by transitioning state to "queued"
+        use nasrudin_pg::entity::conjecture_jobs::ActiveModel;
+        use nasrudin_pg::sea_orm::*;
+        
+        let mut am = ActiveModel {
+            id: Set(id_for_task),
+            state: Set("queued".into()), // Transition to queued so worker can claim it!
+            ..Default::default()
+        };
+        
+        if let Some(seed) = final_seed {
+            am.seed = Set(Some(seed));
+        }
+        if let Some(sug) = final_suggestions {
+            am.suggestions = Set(Some(sug));
+        }
+        
+        if let Err(e) = am.update(pg).await {
+            tracing::error!(job = %id_for_task, error = %e, "Failed to activate steered job in DB");
+        } else {
+            tracing::info!(job = %id_for_task, "Job successfully steered and activated ('queued')");
+            // Emit JobEvent so SSE subscribers see the state transition from queued_for_llm to queued!
+            crate::handlers::research_jobs::emit_job_event(
+                &state_for_task,
+                id_for_task,
+                JobEvent::JobState {
+                    state: "queued".into(),
+                },
+            );
+        }
+    });
+
     tracing::info!(
         user = %user_id,
         job = %id,
@@ -498,7 +578,7 @@ pub async fn create(
         StatusCode::CREATED,
         Json(serde_json::json!({
             "job_id": id,
-            "state": "queued",
+            "state": "queued_for_llm",
             "credits_spent": total_cost,
             "credits_remaining": new_remaining,
             "steering_applied": canonical_steering,

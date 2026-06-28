@@ -146,3 +146,57 @@ fn axiom_catalog(state: &Arc<AppState>) -> Vec<AxiomEntry> {
         })
         .collect()
 }
+
+pub async fn run_system_llm_phase(
+    state: &Arc<AppState>,
+    hunch: &str,
+    domain_hint: Option<&str>,
+) -> Result<Vec<LlmSuggestion>, OrchestrateError> {
+    let api_key = std::env::var("GRADIENT_API_KEY")
+        .map_err(|_| OrchestrateError::NoProviderKey("gradient".into()))?;
+        
+    let model = std::env::var("GRADIENT_GLM_MODEL_FALLBACK")
+        .unwrap_or_else(|_| "glm-5.2".into());
+
+    let neighbours = nearest_neighbours(state, hunch, 10);
+    let axioms = axiom_catalog(state);
+    let user_prompt = prompt::build_user_prompt(hunch, domain_hint, &neighbours, &axioms);
+
+    let req = CompletionRequest {
+        model,
+        system_prompt: prompt::SYSTEM_PROMPT.to_string(),
+        user_prompt,
+        max_tokens: 4096,
+        temperature: 0.4,
+        stop_sequences: vec![],
+        response_format: ResponseFormat::Json {
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "suggestions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "axiom_set": {"type": "array", "items": {"type": "string"}},
+                                "initial_population": {"type": "array", "items": {"type": "string"}},
+                                "mutation_priors": {"type": "object", "additionalProperties": {"type": "number"}},
+                                "target_shape": {"type": "string"},
+                                "rationale": {"type": "string"}
+                            },
+                            "required": ["axiom_set", "initial_population", "mutation_priors", "rationale"]
+                        }
+                    }
+                },
+                "required": ["suggestions"]
+            }),
+        },
+    };
+
+    let response = Registry::complete("gradient", Some(api_key), req).await?;
+
+    let parsed: ParsedResponse = serde_json::from_str(&response.text)
+        .map_err(|e| OrchestrateError::InvalidLlmJson(format!("{e}: {}", response.text)))?;
+
+    Ok(parsed.suggestions)
+}
