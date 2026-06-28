@@ -4106,10 +4106,17 @@ async fn run_seed_driven_chunk(
         Some(suggestion.mutation_priors.clone())
     };
 
-    let target_spec = suggestion
-        .target_shape
-        .as_ref()
-        .and_then(|name| nasrudin_ga::target::TargetSpec::lookup(name));
+    let target_name = match domain {
+        "sr" => "sr_rest_energy",
+        "cm" => "newton_second",
+        "em" => "em_gauss_law",
+        "qm" => "qm_schrodinger",
+        "thermo" => "thermo_boltzmann_entropy",
+        "gr" => "gr_einstein_field_equation",
+        _ => "sr_rest_energy",
+    };
+
+    let target_spec = nasrudin_ga::target::TargetSpec::lookup(target_name);
 
     let chunk_seconds: u64 = 30; // bounded heartbeat cadence
     let chunk_gens: usize = 25; // small enough that one chunk runs in ~chunk_seconds
