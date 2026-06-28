@@ -131,10 +131,10 @@ def submit_and_poll():
     print(f"  ✓ Job successfully submitted! Job ID: {job_id}")
     print(f"  Credits spent: {job_data['credits_spent']}, Remaining: {job_data['credits_remaining']}")
 
-    # 4. Poll the job status for up to 5 minutes
+    # 4. Poll the job status for up to 16 minutes
     print("\n▶ Polling job status (waiting for worker to claim and prove)...")
     proved = False
-    for attempt in range(1, 61):
+    for attempt in range(1, 201):
         time.sleep(5)
         try:
             res = requests.get(
