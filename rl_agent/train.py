@@ -1,13 +1,13 @@
 import os
 import torch
-from stable_baselines3 import PPO
-from stable_baselines3.common.env_util import make_vec_env
-from env import NasrudinEnv, DreamerEnv
+from env import NasrudinEnv
 from world_model import WorldModel, train_world_model
+from grpo_policy import GRPOPolicy, train_grpo_in_imagination
 from database import fetch_historical_transitions
+import numpy as np
 
-def train_agent(total_timesteps=50000):
-    print("=== SOTA Model-Based RL (Dreamer-style) Training Pipeline ===")
+def train_agent():
+    print("=== SOTA Model-Based RL (GRPO-style) Training Pipeline ===")
     
     # 1. Fetch historical transitions from the database
     transitions = []
@@ -39,37 +39,37 @@ def train_agent(total_timesteps=50000):
                     
     # 2. Train the World Model (RSSM-style)
     world_model = WorldModel()
-    train_world_model(world_model, transitions, epochs=50, batch_size=64)
+    if os.path.exists("models/nasrudin_world_model.pt"):
+        try:
+            world_model.load_state_dict(torch.load("models/nasrudin_world_model.pt"))
+            print("Successfully loaded existing World Model weights for fine-tuning.")
+        except Exception as e:
+            print(f"Could not load World Model: {e}. Starting fresh.")
+            
+    train_world_model(world_model, transitions, epochs=40, batch_size=64)
     
-    # 3. Create the vectorized Dreamer Environment (Imagination!)
-    print("Initializing SOTA Dreamer Environment (Imagination)...")
-    env = make_vec_env(lambda: DreamerEnv(max_steps=15), n_envs=4)
-    
-    # 4. Train the PPO Agent inside the World Model's imagination!
-    print("Initializing SOTA PPO Agent inside the World Model's imagination...")
-    model = PPO(
-        "MlpPolicy",
-        env,
-        verbose=1,
-        learning_rate=3e-4,
-        n_steps=2048,
-        batch_size=64,
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,
-        policy_kwargs=dict(net_arch=dict(pi=[128, 128], vf=[128, 128])),
-        tensorboard_log="./ppo_nasrudin_tensorboard/"
+    # 3. Train the GRPO Policy inside the World Model's imagination!
+    print("Initializing SOTA GRPO Policy inside the World Model's imagination...")
+    policy = GRPOPolicy()
+    if os.path.exists("models/nasrudin_grpo.pt"):
+        try:
+            policy.load_state_dict(torch.load("models/nasrudin_grpo.pt"))
+            print("Successfully loaded existing GRPO Policy weights for fine-tuning.")
+        except Exception as e:
+            print(f"Could not load GRPO Policy: {e}. Starting fresh.")
+            
+    print("Training SOTA GRPO Policy inside imagination...")
+    train_grpo_in_imagination(
+        policy, 
+        world_model, 
+        transitions, 
+        epochs=30, 
+        group_size=16, 
+        lr=1e-4, 
+        beta=0.01
     )
     
-    print(f"Training SOTA PPO Agent inside imagination for {total_timesteps} timesteps...")
-    model.learn(total_timesteps=total_timesteps)
-    
-    # Save the trained model
-    os.makedirs("models", exist_ok=True)
-    model.save("models/nasrudin_ppo")
-    print("SOTA PPO Agent trained inside imagination and saved successfully to models/nasrudin_ppo.zip!")
+    print("SOTA GRPO Policy trained inside imagination and saved successfully to models/nasrudin_grpo.pt!")
 
 if __name__ == "__main__":
     train_agent()

@@ -6,19 +6,19 @@ import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
-from stable_baselines3 import PPO
-from env import NasrudinEnv, DreamerEnv
+from grpo_policy import GRPOPolicy, train_grpo_in_imagination
+from env import NasrudinEnv
 from world_model import WorldModel, train_world_model
 from database import fetch_historical_transitions, get_db_connection
 
-app = FastAPI(title="Nasrudin SOTA RL Server", version="1.0.0")
+app = FastAPI(title="Nasrudin SOTA GRPO RL Server", version="1.1.0")
 
 # Load the trained model
-MODEL_PATH = "models/nasrudin_ppo"
+MODEL_PATH = "models/nasrudin_grpo.pt"
 WORLD_MODEL_PATH = "models/nasrudin_world_model.pt"
 LAST_TRAINED_CYCLE_PATH = "models/last_trained_cycle.txt"
 
-model = None
+policy = None
 world_model = None
 training_lock = threading.Lock()
 
@@ -65,13 +65,13 @@ def save_last_trained_cycle_id(cycle_id):
     except Exception as e:
         print(f"Error saving last trained cycle ID: {e}")
 
-def run_training_step(num_timesteps=2000):
+def run_training_step(num_epochs=15):
     """
-    Perform a Dreamer-style Model-Based RL training step:
+    Perform a Dreamer-style GRPO Model-Based RL training step:
       1. Re-train the World Model on the latest database transitions.
-      2. Re-train the PPO agent inside the updated World Model's imagination!
+      2. Re-train the GRPO policy inside the updated World Model's imagination!
     """
-    global model, world_model
+    global policy, world_model
     latest_id = get_latest_completed_cycle_id()
     if latest_id is None:
         print("No completed cycles found in database. Skipping training.")
@@ -82,12 +82,19 @@ def run_training_step(num_timesteps=2000):
         transitions = fetch_historical_transitions()
         if transitions:
             print(f"Fine-tuning World Model on {len(transitions)} transitions...")
-            train_world_model(world_model, transitions, epochs=20, batch_size=64)
+            train_world_model(world_model, transitions, epochs=15, batch_size=64)
             
-        # 2. Re-train the PPO agent inside the updated World Model's imagination!
-        print(f"Fine-tuning SOTA PPO model inside imagination for {num_timesteps} timesteps...")
-        model.learn(total_timesteps=num_timesteps, reset_num_timesteps=False)
-        model.save(MODEL_PATH)
+        # 2. Re-train the GRPO agent inside the updated World Model's imagination!
+        print(f"Fine-tuning SOTA GRPO policy inside imagination for {num_epochs} epochs...")
+        train_grpo_in_imagination(
+            policy,
+            world_model,
+            transitions,
+            epochs=num_epochs,
+            group_size=16,
+            lr=1e-4,
+            beta=0.01
+        )
         save_last_trained_cycle_id(latest_id)
         print(f"Model trained and saved successfully! Last trained cycle ID updated to: {latest_id}")
         return True
@@ -96,35 +103,27 @@ def run_training_step(num_timesteps=2000):
         return False
 
 def load_or_init_model():
-    global model, world_model
+    global policy, world_model
     
     # Initialize World Model
     world_model = WorldModel()
     if os.path.exists(WORLD_MODEL_PATH):
         print(f"Loading SOTA World Model from {WORLD_MODEL_PATH}...")
-        world_model.load_state_dict(torch.load(WORLD_MODEL_PATH))
+        try:
+            world_model.load_state_dict(torch.load(WORLD_MODEL_PATH))
+        except Exception as e:
+            print(f"Error loading World Model: {e}. Starting fresh.")
     
-    # Initialize PPO Model
-    if os.path.exists(MODEL_PATH + ".zip"):
-        print(f"Loading SOTA PPO model from {MODEL_PATH}...")
-        model = PPO.load(MODEL_PATH)
+    # Initialize GRPO Policy Model
+    policy = GRPOPolicy()
+    if os.path.exists(MODEL_PATH):
+        print(f"Loading SOTA GRPO policy from {MODEL_PATH}...")
+        try:
+            policy.load_state_dict(torch.load(MODEL_PATH))
+        except Exception as e:
+            print(f"Error loading GRPO Policy: {e}. Starting fresh.")
     else:
-        print("No pre-trained model found. Initializing a fresh PPO model...")
-        env = DreamerEnv()
-        model = PPO(
-            "MlpPolicy", 
-            env, 
-            verbose=1,
-            learning_rate=3e-4,
-            n_steps=2048,
-            batch_size=64,
-            n_epochs=10,
-            gamma=0.99,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=0.01,
-            policy_kwargs=dict(net_arch=dict(pi=[128, 128], vf=[128, 128]))
-        )
+        print("No pre-trained model found. Initializing a fresh GRPO model...")
         
         # Bootstrap model using offline pre-training on historical database transitions
         try:
@@ -132,7 +131,7 @@ def load_or_init_model():
             transitions = fetch_historical_transitions()
             if transitions:
                 print(f"Found {len(transitions)} historical transitions. Pre-training model...")
-                run_training_step(num_timesteps=5000)
+                run_training_step(num_epochs=20)
                 print("Offline pre-training completed successfully!")
             else:
                 print("No historical transitions found in database. Skipping pre-training.")
@@ -161,31 +160,31 @@ class TrainRequest(BaseModel):
 @app.get("/status")
 def get_status():
     return {
-        "model_loaded": model is not None,
+        "model_loaded": policy is not None,
         "world_model_loaded": world_model is not None,
         "model_path": MODEL_PATH,
-        "algorithm": "Dreamer-style PPO (Model-Based RL)",
-        "observation_space_shape": model.observation_space.shape if model else None,
-        "action_space_shape": model.action_space.shape if model else None,
+        "algorithm": "GRPO (Group Relative Policy Optimization)",
+        "observation_space_shape": [48],
+        "action_space_shape": [30],
         "last_trained_cycle_id": get_last_trained_cycle_id(),
         "latest_completed_cycle_id": get_latest_completed_cycle_id(),
     }
 
 @app.post("/predict", response_model=ActionResponse)
 def predict(request: ObservationRequest):
-    global model
-    if model is None:
+    global policy
+    if policy is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
         
     obs = np.array(request.observation, dtype=np.float32)
-    if obs.shape != model.observation_space.shape:
+    if obs.shape != (48,):
         raise HTTPException(
             status_code=400, 
-            detail=f"Invalid observation shape. Expected {model.observation_space.shape}, got {obs.shape}"
+            detail=f"Invalid observation shape. Expected (48,), got {obs.shape}"
         )
         
-    # Run model inference
-    action, _ = model.predict(obs, deterministic=True)
+    # Run GRPO policy model inference (deterministic)
+    action = policy.predict(obs, deterministic=True)
     action_list = action.tolist()
     
     # Map actions to physical parameters for the 6 islands
@@ -226,8 +225,8 @@ def train_online(request: TrainRequest):
     """
     Perform online learning / fine-tuning on live transition data.
     """
-    global model
-    if model is None:
+    global policy
+    if policy is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
         
     if not request.transitions:
@@ -235,7 +234,7 @@ def train_online(request: TrainRequest):
         
     with training_lock:
         print(f"Received {len(request.transitions)} transitions for online learning...")
-        run_training_step(num_timesteps=1000)
+        run_training_step(num_epochs=5)
         
     return {
         "message": "Online learning step completed successfully",
@@ -246,12 +245,7 @@ def train_online(request: TrainRequest):
 def automated_training_loop():
     """
     Background thread that automatically runs on a schedule to fetch the latest
-    transitions from the database and fine-tune the PPO model.
-    
-    It is fully durable:
-      1. On boot, it immediately checks if there is any new data in the database
-         that was collected while the computer was turned off, and trains on it instantly.
-      2. It then enters the periodic schedule.
+    transitions from the database and fine-tune the GRPO model.
     """
     interval = int(os.getenv("RL_TRAIN_INTERVAL_SECONDS", "3600"))
     print(f"Starting automated training loop with interval of {interval} seconds...")
@@ -264,7 +258,7 @@ def automated_training_loop():
         if latest_completed is not None and (last_trained is None or str(last_trained) != str(latest_completed)):
             print(f"Durability Gate: Detected new completed cycles since last training (last_trained={last_trained}, latest={latest_completed}). Training immediately...")
             with training_lock:
-                run_training_step(num_timesteps=2000)
+                run_training_step(num_epochs=10)
         else:
             print("Durability Gate: No new completed cycles detected on boot. Entering schedule.")
     except Exception as e:
@@ -280,7 +274,7 @@ def automated_training_loop():
             if latest_completed is not None and (last_trained is None or str(last_trained) != str(latest_completed)):
                 print("Automated Training: New completed cycles detected. Fine-tuning model...")
                 with training_lock:
-                    run_training_step(num_timesteps=2000)
+                    run_training_step(num_epochs=10)
             else:
                 print("Automated Training: No new completed cycles detected. Skipping training.")
         except Exception as e:

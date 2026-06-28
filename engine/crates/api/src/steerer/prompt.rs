@@ -230,7 +230,7 @@ const COMPACT_MAX_DEPTH: usize = 3;
 const COMPACT_MAX_OBJECT_KEYS: usize = 32;
 const COMPACT_MAX_ARRAY_ITEMS: usize = 8;
 const COMPACT_MAX_STRING_CHARS: usize = 180;
-const COMPACT_MAX_SUMMARY_BYTES: usize = 1_500;
+const COMPACT_MAX_SUMMARY_BYTES: usize = 600;
 
 fn compact_cluster_summary_for_llm(value: &serde_json::Value) -> serde_json::Value {
     let compacted = compact_value_for_llm(value, 0);

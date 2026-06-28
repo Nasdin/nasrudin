@@ -82,10 +82,11 @@ up:
     done
     (cd engine && PATH="$HOME/.elan/bin:$PATH" \
       NASRUDIN_API_URL="http://localhost:${API_PORT}" \
+      NASRUDIN_WORKER_KEY="${NASRUDIN_WORKER_KEY}" \
       NASRUDIN_WORKER_ID="local-dev-worker" \
       NASRUDIN_NO_PAID_JOBS="${NASRUDIN_NO_PAID_JOBS}" \
       NASRUDIN_AUTO_TARGETS="${NASRUDIN_AUTO_TARGETS}" \
-      ./target/release/worker --domain "${NASRUDIN_WORKER_DOMAIN}" --target auto --verify ../prover 2>&1 \
+      ./target/release/worker --domain "${NASRUDIN_WORKER_DOMAIN}" --target auto --verify ../prover --max-lake 1 2>&1 \
       | sed -u 's/^/[worker] /') &
     wait
 
@@ -669,6 +670,10 @@ run-rl:
 # Test the SOTA RL FastAPI server locally
 test-rl:
     python3 rl_agent/test_server.py
+
+# Run the functional end-to-end test of the entire stack (Researcher -> LLM -> RL -> GA)
+test-functional:
+    python3 rl_agent/functional_test.py
 
 # Full setup for a fresh VM: cache → build → run
 vm-setup: cache-physlean cache-prover build-extract build-engine build-prover

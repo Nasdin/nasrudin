@@ -37,7 +37,7 @@ use crate::steerer::schema::{SteeringConfig, SteeringValidationError, default_co
 const HISTORY_N: u64 = 10;
 const DEMAND_WINDOW: std::time::Duration = std::time::Duration::from_secs(3600);
 const BANDIT_REWARD_WINDOW_SECS: i64 = 600;
-const CLUSTER_SUMMARIES_PER_ISLAND_FOR_LLM: u64 = 4;
+const CLUSTER_SUMMARIES_PER_ISLAND_FOR_LLM: u64 = 2;
 const MIN_STEERER_COMPLETION_TOKENS: u32 = 512;
 
 #[derive(Debug, Error)]

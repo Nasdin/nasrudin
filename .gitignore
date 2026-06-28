@@ -65,3 +65,6 @@ backups/
 audit-*.png
 # Root-level session screenshots (Claude/QA scratch — don't track)
 /*.png
+
+# Gemini Computer Use Extension
+gemini-computer-use-extension/

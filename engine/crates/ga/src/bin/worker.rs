@@ -4012,6 +4012,15 @@ async fn run_seed_driven_chunk(
         }
     };
 
+    let research_domain = match domain {
+        "sr" => nasrudin_core::Domain::SpecialRelativity,
+        "em" => nasrudin_core::Domain::Electromagnetism,
+        "qm" => nasrudin_core::Domain::QuantumMechanics,
+        "thermo" => nasrudin_core::Domain::Thermodynamics,
+        "cm" => nasrudin_core::Domain::ClassicalMechanics,
+        _ => nasrudin_core::Domain::PureMath,
+    };
+
     // 2. Filter the AxiomStore to the LLM-supplied subset.
     //
     // The LLM names 10–100 axioms per conjecture; first-touch on each is a
@@ -4020,22 +4029,31 @@ async fn run_seed_driven_chunk(
     // suggestion costs O(1) disk seek instead of O(100).
     let mut filtered = AxiomStore::new();
     filtered.load_classical_mechanics_postulates();
-    let names: Vec<&str> = suggestion.axiom_set.iter().map(|s| s.as_str()).collect();
-    let resolved = full_store.get_many(&names);
-    let mut missing = Vec::<String>::new();
-    for (name, axiom_opt) in suggestion.axiom_set.iter().zip(resolved.into_iter()) {
-        match axiom_opt {
-            Some(a) => filtered.register(a),
-            None => missing.push(name.clone()),
+    
+    if suggestion.axiom_set.is_empty() {
+        println!("    ▶ No LLM seed axiom_set provided; loading all postulates from full_store for domain={}", domain);
+        let domain_axioms = full_store.by_domain(&research_domain);
+        for axiom in domain_axioms {
+            filtered.register(axiom);
         }
-    }
-    if !missing.is_empty() {
-        eprintln!(
-            "  ! conjecture {} references {} unknown axiom(s); ignored: {:?}",
-            job.job_id,
-            missing.len(),
-            missing,
-        );
+    } else {
+        let names: Vec<&str> = suggestion.axiom_set.iter().map(|s| s.as_str()).collect();
+        let resolved = full_store.get_many(&names);
+        let mut missing = Vec::<String>::new();
+        for (name, axiom_opt) in suggestion.axiom_set.iter().zip(resolved.into_iter()) {
+            match axiom_opt {
+                Some(a) => filtered.register(a),
+                None => missing.push(name.clone()),
+            }
+        }
+        if !missing.is_empty() {
+            eprintln!(
+                "  ! conjecture {} references {} unknown axiom(s); ignored: {:?}",
+                job.job_id,
+                missing.len(),
+                missing,
+            );
+        }
     }
 
     // 2a. Layer the LLM's initial_population as synthetic seed axioms so
@@ -4100,11 +4118,6 @@ async fn run_seed_driven_chunk(
     // env-var check (workers run with one global config). Build a
     // domain-aware var-dim table from the conjecture's nominal domain
     // (string passed in from the parent run).
-    let research_domain = match domain {
-        "sr" => nasrudin_core::Domain::SpecialRelativity,
-        "em" => nasrudin_core::Domain::Electromagnetism,
-        _ => nasrudin_core::Domain::PureMath,
-    };
     let research_dim_var_dims = std::sync::Arc::new(nasrudin_derive::domain_variable_dimensions(
         &research_domain,
     ));
