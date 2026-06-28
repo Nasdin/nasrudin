@@ -193,7 +193,9 @@ pub async fn run_system_llm_phase(
         },
     };
 
-    let response = Registry::complete("gradient", Some(api_key), req).await?;
+    let provider = nasrudin_llm::GradientProvider::new(api_key);
+    use nasrudin_llm::LlmProvider;
+    let response = provider.complete(req).await?;
 
     let parsed: ParsedResponse = serde_json::from_str(&response.text)
         .map_err(|e| OrchestrateError::InvalidLlmJson(format!("{e}: {}", response.text)))?;
