@@ -4106,6 +4106,11 @@ async fn run_seed_driven_chunk(
         Some(suggestion.mutation_priors.clone())
     };
 
+    let target_spec = suggestion
+        .target_shape
+        .as_ref()
+        .and_then(|name| nasrudin_ga::target::TargetSpec::lookup(name));
+
     let chunk_seconds: u64 = 30; // bounded heartbeat cadence
     let chunk_gens: usize = 25; // small enough that one chunk runs in ~chunk_seconds
 
@@ -4140,7 +4145,7 @@ async fn run_seed_driven_chunk(
             max_chain_len,
             prover_root: prover_root.map(|p| p.to_path_buf()),
             max_lake_verifications: if prover_root.is_some() { max_lake } else { 0 },
-            target: None,
+            target: target_spec.clone(),
             rejected_canonicals: rejected_canonicals.clone(),
             cache_ctx: None,
             novelty_bloom: novelty_bloom.clone(),
