@@ -648,6 +648,18 @@ update-physlean version:
 run:
     cd engine && PROVER_ROOT=../prover cargo run --release --bin physics-api
 
+# Train the SOTA PPO RL agent on the custom Gymnasium environment
+train-rl:
+    python3 rl_agent/train.py
+
+# Start the SOTA RL FastAPI server on port 5005
+run-rl:
+    python3 rl_agent/server.py
+
+# Test the SOTA RL FastAPI server locally
+test-rl:
+    python3 rl_agent/test_server.py
+
 # Full setup for a fresh VM: cache → build → run
 vm-setup: cache-physlean cache-prover build-extract build-engine build-prover
 

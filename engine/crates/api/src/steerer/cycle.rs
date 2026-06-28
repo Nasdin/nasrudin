@@ -176,6 +176,15 @@ async fn run_one_cycle_inner(
         bandit_state.insert(domain.into(), serde_json::Value::Array(arms_json));
     }
 
+    // Query SOTA RL server for optimal parameters
+    let rl_predictions = query_sota_rl(db).await;
+    if let Some(ref rl_res) = rl_predictions {
+        tracing::info!("SOTA RL: successfully queried PPO model for optimal parameters");
+        for param in &rl_res.mapped_parameters {
+            next_k_per_island.insert(param.domain.clone(), param.target_k);
+        }
+    }
+
     // Push the new cluster_config snapshot before the prompt is built
     // so workers polling /api/seed see the new K immediately. Seed
     // cache is invalidated below alongside the steering update.
@@ -532,6 +541,29 @@ async fn run_one_cycle_inner(
     } else {
         (steering_from_state_cache(state, scope)?, None, None, false)
     };
+    let mut config = config;
+
+    // Inject SOTA RL predictions into config.extension
+    if let Some(ref rl_res) = rl_predictions {
+        let mut domain_policies = serde_json::Map::new();
+        for param in &rl_res.mapped_parameters {
+            let policy = serde_json::json!({
+                "compute_scale": param.compute_scale,
+                "mutation_rate_mult": param.mutation_mult,
+                "suffix_bias_delta": param.suffix_bias,
+                "elitism_delta": param.elitism_delta,
+            });
+            domain_policies.insert(param.domain.clone(), policy);
+        }
+        
+        let strategy_genome = serde_json::json!({
+            "strategy_genome_v1": {
+                "domain_policies": domain_policies
+            }
+        });
+        
+        config.extension = strategy_genome;
+    }
 
     // 7. Persist + push to ArcSwap.
     let config_json = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
@@ -1177,6 +1209,85 @@ fn budgeted_call_max_total_tokens(
         ));
     }
     Ok(remaining)
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct RlMappedParameter {
+    pub domain: String,
+    pub target_k: u32,
+    pub compute_scale: f32,
+    pub mutation_mult: f32,
+    pub suffix_bias: f32,
+    pub elitism_delta: f32,
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct RlPredictResponse {
+    pub action: Vec<f32>,
+    pub mapped_parameters: Vec<RlMappedParameter>,
+}
+
+pub async fn build_rl_observation(db: &DatabaseConnection) -> Vec<f32> {
+    let mut obs = Vec::with_capacity(48);
+    for &domain in bandit::ISLAND_DOMAINS {
+        let reports = nasrudin_pg::query::cluster_reports::recent_for_island(db, domain, 4)
+            .await
+            .unwrap_or_default();
+        
+        if reports.is_empty() {
+            obs.extend_from_slice(&[0.5, 0.1, 0.1, 0.5, 0.2, 0.0, 0.0, 0.0]);
+        } else {
+            let count = reports.len() as f32;
+            let mut sum_k = 0.0;
+            let mut sum_mean_fit = 0.0;
+            let mut sum_max_fit = 0.0;
+            let mut sum_sil = 0.0;
+            let mut sum_nov = 0.0;
+            let mut sum_stag = 0.0;
+            let mut sum_ver = 0.0;
+            let mut sum_lake = 0.0;
+            
+            for r in &reports {
+                sum_k += r.k_used as f32;
+                if let Some(obj) = r.summary.as_object() {
+                    sum_mean_fit += obj.get("mean_fitness").and_then(|v| v.as_f64()).unwrap_or(0.1) as f32;
+                    sum_max_fit += obj.get("max_fitness").and_then(|v| v.as_f64()).unwrap_or(0.1) as f32;
+                    sum_sil += obj.get("silhouette").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    sum_nov += obj.get("novelty_trend").and_then(|v| v.as_f64()).unwrap_or(0.2) as f32;
+                    sum_stag += obj.get("stagnation_chunks").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    sum_ver += obj.get("verified_count").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    sum_lake += obj.get("lake_passed").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                }
+            }
+            
+            obs.push((sum_k / count) / 12.0);
+            obs.push(sum_mean_fit / count);
+            obs.push(sum_max_fit / count);
+            obs.push(((sum_sil / count) + 1.0) / 2.0);
+            obs.push(sum_nov / count);
+            obs.push((sum_stag / count) / 10.0);
+            obs.push(sum_ver / count);
+            obs.push(sum_lake / count);
+        }
+    }
+    obs
+}
+
+pub async fn query_sota_rl(db: &DatabaseConnection) -> Option<RlPredictResponse> {
+    let obs = build_rl_observation(db).await;
+    let client = reqwest::Client::new();
+    let res = client
+        .post("http://127.0.0.1:5005/predict")
+        .json(&serde_json::json!({ "observation": obs }))
+        .send()
+        .await
+        .ok()?;
+    
+    if res.status().is_success() {
+        res.json::<RlPredictResponse>().await.ok()
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
