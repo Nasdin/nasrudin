@@ -55,8 +55,18 @@ up:
     export NASRUDIN_WORKER_KEY="$key"
     echo "[up] building worker binary..."
     (cd engine && cargo build --release --quiet -p nasrudin-ga --bin worker)
-    echo "[up] launching api + frontend + worker (Ctrl+C to stop all)"
+    echo "[up] launching SOTA RL server + api + frontend + worker (Ctrl+C to stop all)"
     trap 'kill 0 2>/dev/null || true; docker compose stop postgres >/dev/null 2>&1 || true; exit 0' INT TERM
+    # Launch SOTA RL server
+    (python3 -u rl_agent/server.py 2>&1 | sed -u 's/^/[rl] /') &
+    echo "[up] waiting for SOTA RL server on :5005..."
+    for i in $(seq 1 30); do
+      if curl -fsS "http://localhost:5005/status" >/dev/null 2>&1; then
+        echo "[up] SOTA RL server is healthy"
+        break
+      fi
+      sleep 1
+    done
     (cd engine && PROVER_ROOT=../prover RUST_LOG="${RUST_LOG:-info}" cargo run --release --bin physics-api 2>&1 | sed -u 's/^/[api] /') &
     (cd nasrudin-frontend && pnpm dev 2>&1 | sed -u 's/^/[web] /') &
     # Worker hydrates its corpus from /api/seed at boot — wait for the
