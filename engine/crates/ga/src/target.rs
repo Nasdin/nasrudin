@@ -83,6 +83,7 @@ impl TargetSpec {
                 Some(qm_harmonic_oscillator_levels())
             }
             "qm_planck_einstein" => Some(qm_planck_einstein()),
+            "qm_quantum_speed_limit" => Some(qm_quantum_speed_limit()),
             "qm_de_broglie" => Some(qm_de_broglie()),
             // Thermodynamics / statistical mechanics
             "thermo_boltzmann_entropy" | "boltzmann_entropy" => Some(thermo_boltzmann_entropy()),
@@ -109,6 +110,7 @@ impl TargetSpec {
             "qm_free_particle_dispersion",
             "qm_harmonic_oscillator_levels",
             "qm_planck_einstein",
+            "qm_quantum_speed_limit",
             "qm_de_broglie",
             "thermo_boltzmann_entropy",
             "thermo_carnot",
@@ -240,6 +242,26 @@ pub fn qm_harmonic_oscillator_levels() -> TargetSpec {
 }
 
 /// Planck-Einstein relation: E = ℏω.
+/// Quantum Speed Limit (Mandelstam-Tamm bound): tau = (pi * hbar) / (2 * delta_H).
+pub fn qm_quantum_speed_limit() -> TargetSpec {
+    let tau = || Expr::Var("tau".into());
+    let pi_const = || Expr::Const(PhysConst::Pi);
+    let hbar = || Expr::Const(PhysConst::ReducedPlanck);
+    let delta_h = || Expr::Var("delta_H".into());
+    let two = || Expr::Lit(2, 1);
+    let mul = |a: Expr, b: Expr| Expr::BinOp(BinOp::Mul, Box::new(a), Box::new(b));
+    let div = |a: Expr, b: Expr| Expr::BinOp(BinOp::Div, Box::new(a), Box::new(b));
+    let eq = |a: Expr, b: Expr| Expr::BinOp(BinOp::Eq, Box::new(a), Box::new(b));
+
+    let final_target = eq(tau(), div(mul(pi_const(), hbar()), mul(two(), delta_h())));
+
+    TargetSpec {
+        name: "qm_quantum_speed_limit",
+        ladder: vec![final_target.clone()],
+        final_target,
+    }
+}
+
 pub fn qm_planck_einstein() -> TargetSpec {
     let e = || Expr::Var("E".into());
     let hbar = || Expr::Const(PhysConst::ReducedPlanck);

@@ -16,9 +16,9 @@ open PhysicsGenerator
   Step 1: Load axiom: four_momentum_time_component [introduce_axiom]
   Step 2: Load axiom: minkowski_invariant_def [introduce_axiom]
   Step 3: Load axiom: invariant_mass_postulate [introduce_axiom]
-  Step 4: Load axiom: rest_frame_psq_zero [introduce_axiom]
+  Step 4: Load axiom: invariant_mass_postulate [introduce_axiom]
   Step 5: Load axiom: energy_nonneg [introduce_axiom]
-  Step 6: Load axiom: mass_nonneg [introduce_axiom]
+  Step 6: Load axiom: rest_frame_psq_zero [introduce_axiom]
   Step 7: E² = (m·c²)² from upstream axioms [rearrange_equation]
 -/
 
@@ -30,14 +30,14 @@ theorem discover_gen5
     (h_four_momentum_time_component : (c * p0) = E)
     (h_minkowski_invariant_def : Msq = ((p0 ^ 2) - psq))
     (h_invariant_mass_postulate : Msq = ((m ^ 2) * (c ^ 2)))
-    (h_rest_frame_psq_zero : psq = 0)
+    (h_invariant_mass_postulate : Msq = ((m ^ 2) * (c ^ 2)))
     (h_energy_nonneg : E ≥ 0)
-    (h_mass_nonneg : m ≥ 0)
+    (h_rest_frame_psq_zero : psq = 0)
     : (E ^ 2) = ((m * (c ^ 2)) ^ 2) := by
   first
-    | (nlinarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_rest_frame_psq_zero, h_energy_nonneg, h_mass_nonneg])
-    | (linarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_rest_frame_psq_zero, h_energy_nonneg, h_mass_nonneg])
-    | (ring_nf at * <;> nlinarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_rest_frame_psq_zero, h_energy_nonneg, h_mass_nonneg])
+    | (nlinarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_invariant_mass_postulate, h_energy_nonneg, h_rest_frame_psq_zero])
+    | (linarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_invariant_mass_postulate, h_energy_nonneg, h_rest_frame_psq_zero])
+    | (ring_nf at * <;> nlinarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_invariant_mass_postulate, h_energy_nonneg, h_rest_frame_psq_zero])
     | (linear_combination 0)
     | ring
     | norm_num

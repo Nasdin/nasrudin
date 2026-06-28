@@ -16,28 +16,30 @@ open PhysicsGenerator
   Step 1: Load axiom: four_momentum_time_component [introduce_axiom]
   Step 2: Load axiom: minkowski_invariant_def [introduce_axiom]
   Step 3: Load axiom: invariant_mass_postulate [introduce_axiom]
-  Step 4: Load axiom: rest_frame_psq_zero [introduce_axiom]
-  Step 5: Load axiom: energy_nonneg [introduce_axiom]
-  Step 6: Load axiom: mass_nonneg [introduce_axiom]
-  Step 7: E² = (m·c²)² from upstream axioms [rearrange_equation]
+  Step 4: Load axiom: newton_second_dpdt [introduce_axiom]
+  Step 5: Load axiom: rest_frame_psq_zero [introduce_axiom]
+  Step 6: Load axiom: energy_nonneg [introduce_axiom]
+  Step 7: Load axiom: mass_nonneg [introduce_axiom]
+  Step 8: E² = (m·c²)² from upstream axioms [rearrange_equation]
 -/
 
-/-- Auto-derived theorem (chain length 7). -/
+/-- Auto-derived theorem (chain length 8). -/
 theorem discover_gen2
-    (E Msq m p0 psq : ℝ)
+    (E F Msq m p0 psq : ℝ)
     (hE : 0 ≤ E)
     (hm : 0 ≤ m)
     (h_four_momentum_time_component : (c * p0) = E)
     (h_minkowski_invariant_def : Msq = ((p0 ^ 2) - psq))
     (h_invariant_mass_postulate : Msq = ((m ^ 2) * (c ^ 2)))
+    (h_newton_second_dpdt : F = sorry /- Deriv(Var("p"), "t") -/)
     (h_rest_frame_psq_zero : psq = 0)
     (h_energy_nonneg : E ≥ 0)
     (h_mass_nonneg : m ≥ 0)
     : (E ^ 2) = ((m * (c ^ 2)) ^ 2) := by
   first
-    | (nlinarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_rest_frame_psq_zero, h_energy_nonneg, h_mass_nonneg])
-    | (linarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_rest_frame_psq_zero, h_energy_nonneg, h_mass_nonneg])
-    | (ring_nf at * <;> nlinarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_rest_frame_psq_zero, h_energy_nonneg, h_mass_nonneg])
+    | (nlinarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_newton_second_dpdt, h_rest_frame_psq_zero, h_energy_nonneg, h_mass_nonneg])
+    | (linarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_newton_second_dpdt, h_rest_frame_psq_zero, h_energy_nonneg, h_mass_nonneg])
+    | (ring_nf at * <;> nlinarith [hE, hm, h_four_momentum_time_component, h_minkowski_invariant_def, h_invariant_mass_postulate, h_newton_second_dpdt, h_rest_frame_psq_zero, h_energy_nonneg, h_mass_nonneg])
     | (linear_combination 0)
     | ring
     | norm_num
