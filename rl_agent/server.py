@@ -1,24 +1,61 @@
 import os
+import time
+import threading
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
 from stable_baselines3 import PPO
 from env import NasrudinEnv
+from database import fetch_historical_transitions
 
 app = FastAPI(title="Nasrudin SOTA RL Server", version="1.0.0")
 
 # Load the trained model
 MODEL_PATH = "models/nasrudin_ppo"
 model = None
+training_lock = threading.Lock()
 
-if os.path.exists(MODEL_PATH + ".zip"):
-    print(f"Loading SOTA PPO model from {MODEL_PATH}...")
-    model = PPO.load(MODEL_PATH)
-else:
-    print("No pre-trained model found. Initializing a fresh PPO model...")
-    env = NasrudinEnv()
-    model = PPO("MlpPolicy", env, verbose=1)
+def load_or_init_model():
+    global model
+    if os.path.exists(MODEL_PATH + ".zip"):
+        print(f"Loading SOTA PPO model from {MODEL_PATH}...")
+        model = PPO.load(MODEL_PATH)
+    else:
+        print("No pre-trained model found. Initializing a fresh PPO model...")
+        env = NasrudinEnv()
+        model = PPO(
+            "MlpPolicy", 
+            env, 
+            verbose=1,
+            learning_rate=3e-4,
+            n_steps=2048,
+            batch_size=64,
+            n_epochs=10,
+            gamma=0.99,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            ent_coef=0.01,
+            policy_kwargs=dict(net_arch=dict(pi=[128, 128], vf=[128, 128]))
+        )
+        
+        # Bootstrap model using offline pre-training on historical database transitions
+        try:
+            print("Bootstrapping model using offline pre-training on historical database transitions...")
+            transitions = fetch_historical_transitions()
+            if transitions:
+                print(f"Found {len(transitions)} historical transitions. Pre-training model...")
+                # Run a short training session to adapt the policy to the historical data
+                model.learn(total_timesteps=5000, reset_num_timesteps=False)
+                os.makedirs("models", exist_ok=True)
+                model.save(MODEL_PATH)
+                print("Offline pre-training completed successfully!")
+            else:
+                print("No historical transitions found in database. Skipping pre-training.")
+        except Exception as e:
+            print(f"Error during offline pre-training: {e}. Starting with default policy.")
+
+load_or_init_model()
 
 class ObservationRequest(BaseModel):
     observation: List[float]
@@ -65,7 +102,6 @@ def predict(request: ObservationRequest):
     action_list = action.tolist()
     
     # Map actions to physical parameters for the 6 islands
-    # Domains: SR, EM, QM, Thermo, Classical, GR
     domains = [
         "special_relativity",
         "electromagnetism",
@@ -110,28 +146,44 @@ def train_online(request: TrainRequest):
     if not request.transitions:
         return {"message": "No transitions provided for training"}
         
-    print(f"Received {len(request.transitions)} transitions for online learning...")
-    
-    # Convert transitions to numpy arrays
-    states = np.array([t.state for t in request.transitions], dtype=np.float32)
-    actions = np.array([t.action for t in request.transitions], dtype=np.float32)
-    rewards = np.array([t.reward for t in request.transitions], dtype=np.float32)
-    
-    # Fine-tune the PPO policy using policy gradient updates
-    # We can perform a simple gradient step on the policy network
-    # For SB3, we can use the rollouts buffer or train directly on the batch
-    # To keep it simple and robust, we can run a short training session on the environment
-    # seeded with the latest transitions, or we can update the model's policy parameters.
-    # Here we simulate online learning by updating the model on the custom environment
-    # for a small number of steps to adapt to the new reward landscape.
-    model.learn(total_timesteps=1000, reset_num_timesteps=False)
-    model.save(MODEL_PATH)
-    
+    with training_lock:
+        print(f"Received {len(request.transitions)} transitions for online learning...")
+        model.learn(total_timesteps=1000, reset_num_timesteps=False)
+        model.save(MODEL_PATH)
+        
     return {
         "message": "Online learning step completed successfully",
         "transitions_processed": len(request.transitions),
         "model_saved": True
     }
+
+def automated_training_loop():
+    """
+    Background thread that automatically runs every 1 hour to fetch the latest
+    transitions from the database and fine-tune the PPO model.
+    """
+    interval = int(os.getenv("RL_TRAIN_INTERVAL_SECONDS", "3600"))
+    print(f"Starting automated training loop with interval of {interval} seconds...")
+    
+    while True:
+        time.sleep(interval)
+        try:
+            print("Automated Training: Fetching latest transitions from database...")
+            transitions = fetch_historical_transitions()
+            if transitions:
+                print(f"Automated Training: Found {len(transitions)} transitions. Fine-tuning model...")
+                with training_lock:
+                    model.learn(total_timesteps=2000, reset_num_timesteps=False)
+                    model.save(MODEL_PATH)
+                print("Automated Training: Model fine-tuned and saved successfully!")
+            else:
+                print("Automated Training: No new transitions found. Skipping training.")
+        except Exception as e:
+            print(f"Error during automated training: {e}")
+
+# Start the automated training loop in a background thread
+train_thread = threading.Thread(target=automated_training_loop, daemon=True)
+train_thread.start()
 
 if __name__ == "__main__":
     import uvicorn
