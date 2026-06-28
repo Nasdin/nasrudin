@@ -506,6 +506,7 @@ pub async fn create(
         
         let mut final_seed = None;
         let mut final_suggestions = None;
+        let mut final_domain_hint = None;
         
         match suggestions {
             Ok(s_list) if !s_list.is_empty() => {
@@ -522,6 +523,23 @@ pub async fn create(
                 
                 final_seed = Some(seed_json);
                 final_suggestions = Some(serde_json::to_value(&s_list).unwrap_or(serde_json::Value::Null));
+                
+                // Auto-detect domain from suggested axioms
+                for ax_name in &s.axiom_set {
+                    if let Some(ax) = state_for_task.axiom_store.load().get(ax_name) {
+                        let domain_str = match ax.domain {
+                            nasrudin_core::Domain::SpecialRelativity => "sr",
+                            nasrudin_core::Domain::Electromagnetism => "em",
+                            nasrudin_core::Domain::QuantumMechanics => "qm",
+                            nasrudin_core::Domain::Thermodynamics => "thermo",
+                            nasrudin_core::Domain::ClassicalMechanics => "cm",
+                            _ => "all",
+                        };
+                        final_domain_hint = Some(domain_str.to_string());
+                        tracing::info!(job = %id_for_task, domain = domain_str, "Autonomously detected job domain");
+                        break;
+                    }
+                }
             }
             Ok(_) => {
                 tracing::warn!(job = %id_for_task, "LLM returned empty suggestions");
@@ -546,6 +564,9 @@ pub async fn create(
         }
         if let Some(sug) = final_suggestions {
             am.suggestions = Set(Some(sug));
+        }
+        if let Some(dh) = final_domain_hint {
+            am.domain_hint = Set(Some(dh));
         }
         
         if let Err(e) = am.update(pg).await {
