@@ -333,6 +333,7 @@ pub async fn mark_verified(
         verification_tactic: Set(Some(tactic.into())),
         verification_duration_ms: Set(Some(duration_ms)),
         verified_at: Set(Some(now.into())),
+        rejected_reason: Set(None),
         ..Default::default()
     };
     active.update(db).await.context("mark_verified theorem")?;

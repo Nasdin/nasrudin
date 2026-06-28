@@ -55,7 +55,7 @@
 use lru::LruCache;
 use nasrudin_core::{BinOp, Domain, Expr, PhysConst};
 use nasrudin_rocks::CorpusBackend;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
@@ -159,6 +159,10 @@ pub struct AxiomStore {
     /// fetch instead of an O(N) iter walk over 195 k entries.
     /// Empty when there's no cold tier or the snapshot wasn't built.
     cold_names: Arc<Vec<String>>,
+    /// Names hidden from this store view. Used by target-directed
+    /// discovery so a featured theorem cannot be "rediscovered" by
+    /// directly introducing an axiom with the same answer statement.
+    excluded_names: Arc<HashSet<String>>,
 }
 
 impl Default for AxiomStore {
@@ -179,6 +183,7 @@ impl Clone for AxiomStore {
                 NonZeroUsize::new(COLD_LRU_CAPACITY).expect("nonzero"),
             ))),
             cold_names: self.cold_names.clone(),
+            excluded_names: self.excluded_names.clone(),
         }
     }
 }
@@ -189,6 +194,7 @@ impl std::fmt::Debug for AxiomStore {
             .field("hot_len", &self.hot.len())
             .field("has_cold", &self.cold.is_some())
             .field("cold_names_len", &self.cold_names.len())
+            .field("excluded_names_len", &self.excluded_names.len())
             .finish()
     }
 }
@@ -204,6 +210,7 @@ impl AxiomStore {
                 NonZeroUsize::new(COLD_LRU_CAPACITY).expect("nonzero"),
             ))),
             cold_names: Arc::new(Vec::new()),
+            excluded_names: Arc::new(HashSet::new()),
         }
     }
 
@@ -231,6 +238,49 @@ impl AxiomStore {
                 NonZeroUsize::new(COLD_LRU_CAPACITY).expect("nonzero"),
             ))),
             cold_names,
+            excluded_names: Arc::new(HashSet::new()),
+        }
+    }
+
+    /// Return a view of this store with the given axiom names hidden.
+    ///
+    /// The cold corpus remains physically shared/read-only, but
+    /// lookups, iteration, domain scans, and hot/cold name snapshots
+    /// all behave as if the names do not exist. This is intentionally
+    /// name-based rather than theorem-id-based because GA chains carry
+    /// `IntroduceAxiom { axiom_name }` steps.
+    pub fn excluding_names<I, S>(&self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut excluded = (*self.excluded_names).clone();
+        for name in names {
+            let name = name.into();
+            if !name.trim().is_empty() {
+                excluded.insert(name);
+            }
+        }
+        let hot = self
+            .hot
+            .iter()
+            .filter(|(name, _)| !excluded.contains(*name))
+            .map(|(name, axiom)| (name.clone(), axiom.clone()))
+            .collect();
+        let cold_names = self
+            .cold_names
+            .iter()
+            .filter(|name| !excluded.contains(*name))
+            .cloned()
+            .collect();
+        Self {
+            hot,
+            cold: self.cold.clone(),
+            cache: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(COLD_LRU_CAPACITY).expect("nonzero"),
+            ))),
+            cold_names: Arc::new(cold_names),
+            excluded_names: Arc::new(excluded),
         }
     }
 
@@ -252,6 +302,9 @@ impl AxiomStore {
     /// Resolution order: hot HashMap → LRU cache → cold RocksDB.
     /// Hot wins on conflict.
     pub fn get(&self, name: &str) -> Option<Axiom> {
+        if self.excluded_names.contains(name) {
+            return None;
+        }
         if let Some(a) = self.hot.get(name) {
             return Some(a.clone());
         }
@@ -294,6 +347,9 @@ impl AxiomStore {
         // Pass 1: hot HashMap + LRU cache. Anything found here skips
         // the cold tier entirely.
         for (i, name) in names.iter().enumerate() {
+            if self.excluded_names.contains(*name) {
+                continue;
+            }
             if let Some(a) = self.hot.get(*name) {
                 out[i] = Some(a.clone());
                 continue;
@@ -350,12 +406,14 @@ impl AxiomStore {
             .hot
             .values()
             .filter(|a| &a.domain == domain)
+            .filter(|a| !self.excluded_names.contains(&a.name))
             .cloned()
             .collect();
         if let Some(cold) = &self.cold {
             for r in cold.iter_by_domain(domain) {
                 match r {
-                    Ok((_, a)) => out.push(a),
+                    Ok((_, a)) if !self.excluded_names.contains(&a.name) => out.push(a),
+                    Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "cold by_domain skip"),
                 }
             }
@@ -368,10 +426,15 @@ impl AxiomStore {
     /// no-cheat audit can stream-walk 195 k entries without loading
     /// them all at once.
     pub fn iter(&self) -> Box<dyn Iterator<Item = Axiom> + '_> {
-        let hot_iter = self.hot.values().cloned();
+        let hot_iter = self
+            .hot
+            .values()
+            .filter(|a| !self.excluded_names.contains(&a.name))
+            .cloned();
         if let Some(cold) = &self.cold {
             let cold_iter = cold.iter().filter_map(|r| match r {
-                Ok((_, a)) => Some(a),
+                Ok((_, a)) if !self.excluded_names.contains(&a.name) => Some(a),
+                Ok(_) => None,
                 Err(e) => {
                     tracing::warn!(error = %e, "cold iter skip");
                     None
@@ -414,7 +477,12 @@ impl AxiomStore {
     /// Get every axiom name (hot ∪ cold). Returns owned `Vec<String>`
     /// — the previous `Vec<&str>` shape doesn't survive the cold tier.
     pub fn names(&self) -> Vec<String> {
-        let mut out: Vec<String> = self.hot.keys().cloned().collect();
+        let mut out: Vec<String> = self
+            .hot
+            .keys()
+            .filter(|name| !self.excluded_names.contains(*name))
+            .cloned()
+            .collect();
         out.extend(self.cold_names.iter().cloned());
         out
     }
@@ -441,7 +509,11 @@ impl AxiomStore {
     /// by name. Avoids materializing every axiom value just to
     /// pick one.
     pub fn iter_hot_names(&self) -> Vec<String> {
-        self.hot.keys().cloned().collect()
+        self.hot
+            .keys()
+            .filter(|name| !self.excluded_names.contains(*name))
+            .cloned()
+            .collect()
     }
 
     /// Total registered axioms across both tiers.
@@ -451,11 +523,14 @@ impl AxiomStore {
     /// reading the meta key fails.
     pub fn len(&self) -> usize {
         let hot = self.hot.len();
-        let cold = self
-            .cold
-            .as_ref()
-            .map(|c| c.count().unwrap_or(0) as usize)
-            .unwrap_or(0);
+        let cold = if self.excluded_names.is_empty() {
+            self.cold
+                .as_ref()
+                .map(|c| c.count().unwrap_or(0) as usize)
+                .unwrap_or(0)
+        } else {
+            self.cold_names.len()
+        };
         hot + cold
     }
 
@@ -1211,6 +1286,22 @@ mod tests {
         let names: Vec<&str> = pm.iter().map(|a| a.name.as_str()).collect();
         assert!(names.contains(&"hot_pm_a"));
         assert!(names.contains(&"cold_pm_a"));
+    }
+
+    #[test]
+    fn excluding_names_hides_hot_and_cold_axioms() {
+        let cold = MockCorpus::from_axioms(vec![mk("cold_pm", Domain::PureMath)]);
+        let mut store = AxiomStore::with_corpus(cold);
+        store.register(mk("hot_pm", Domain::PureMath));
+
+        let filtered = store.excluding_names(["hot_pm", "cold_pm"]);
+
+        assert!(filtered.get("hot_pm").is_none());
+        assert!(filtered.get("cold_pm").is_none());
+        assert!(!filtered.names().iter().any(|name| name == "hot_pm"));
+        assert!(!filtered.names().iter().any(|name| name == "cold_pm"));
+        assert!(filtered.cold_names().is_empty());
+        assert_eq!(filtered.by_domain(&Domain::PureMath).len(), 0);
     }
 
     #[test]

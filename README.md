@@ -173,7 +173,7 @@ Override these only when you intentionally want different behavior. By default t
 
 **Cloudflare desktop deployment.** For the cost-minimized deployment, your desktop/laptop is the origin server. The frontend, API, workers, local RocksDB corpus, Lean verifier, RL state, and GA run on your machine; Cloudflare only provides the public edge, TLS, DNS, and tunnel/proxy routing. Use [deploy/cloudflare-local.example.yml](deploy/cloudflare-local.example.yml) as the tunnel template:
 
-- `nasrudin.org` → `http://localhost:5173` (local frontend)
+- `nasrudin.org` → `http://localhost:3000` (local frontend)
 - `api.nasrudin.org` → `http://localhost:3001` (local API/backend)
 
 Keep the services bound to localhost. Cloudflare Tunnel exposes them globally without moving compute to GCP/AWS or opening raw inbound ports on the laptop.
@@ -276,6 +276,14 @@ The budget cap is enforced twice: first by conservative prompt estimation before
 The evidence gate is separate from the hard token ledger. `LLM_STEER_MIN_CLUSTER_REPORTS=1` means "do not call the LLM just because two hours passed; wait until workers have produced new cluster telemetry." Paid active jobs bypass the gate because the steerer may need to rebalance prerequisites for the job domain. Set `LLM_STEER_MIN_CLUSTER_REPORTS=0` only if you intentionally want the older timer-driven behavior.
 
 The steerer also has a local-RL confidence skip enabled by default (`LLM_STEER_SKIP_IF_RL_CONFIDENT=1`). When recent cluster summaries contain compact `rl_policy_evidence` showing both the GA workhorse policy and target-selector policy are no longer low-sample and are clearing the configured conservative-score and Lake-pass thresholds, a due strategy refresh is skipped and the worker keeps running RL/GA-only. Tune `LLM_STEER_RL_CONFIDENT_MIN_REPORTS`, `LLM_STEER_RL_CONFIDENT_MIN_EPISODES`, `LLM_STEER_RL_CONFIDENT_MIN_SCORE`, and `LLM_STEER_RL_CONFIDENT_MIN_LAKE_PASS_RATE` if the laptop is spending too often or waiting too long before asking the LLM for a new high-level move.
+
+Admins can inspect current LLM steering spend without triggering a provider call:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:3001/api/admin/steering/budget
+```
+
+The response reports the configured strategy interval, rolling token window, max tokens, provider-reported tokens used, remaining tokens, latest strategy-attempt metadata, and whether the interval is currently open. Use this endpoint on the local origin before long unattended runs to confirm the steerer is staying under the 10k-token/2h ceiling.
 
 **Auto-target RL policy.** `--target auto` / `NASRUDIN_AUTO_TARGETS=1` uses a nonstationary verifier-aware portfolio controller. Cold targets are tried first; after that, a local meta-controller chooses among target-scoring policies (`verifier_ucb`, `recent_verifier`, `novelty_seeker`, `stall_rescue`) using prior verifier reward, then the selected policy scores targets from lifetime reward, recent reward EMA, recent Lake pass EMA, novelty EMA, UCB exploration, and stall signals. This is the inner "how to search" RL layer; it does not call the LLM. Tune `NASRUDIN_TARGET_RL_EMA_ALPHA` to control how quickly target choice reacts to recent verifier outcomes. Tune `NASRUDIN_TARGET_RL_STALL_THRESHOLD` to control how many consecutive no-proof chunks a target gets before it is reported as stalled and skipped so it cannot block frontier/novelty search forever. Tune `NASRUDIN_TARGET_RL_STALL_RETRY_SECONDS` to control when a stalled featured theorem re-enters priority; corpus-size drift also makes it eligible again because new local discoveries may have changed the proof landscape.
 

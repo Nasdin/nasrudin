@@ -40,6 +40,8 @@ pub struct PolicyStats {
     pub weighted_pulls: f64,
     pub reward_sum: f64,
     pub weighted_reward_sum: f64,
+    #[serde(default)]
+    pub reward_sq_sum: f64,
     pub lake_attempts: usize,
     pub lake_passed: usize,
     pub verified_chunks: usize,
@@ -54,6 +56,10 @@ pub struct RankedPolicy {
     pub stats: PolicyStats,
     pub mean_reward: f64,
     pub weighted_mean_reward: f64,
+    #[serde(default)]
+    pub reward_stddev: f64,
+    #[serde(default)]
+    pub reward_std_error: f64,
     pub ucb_score: f64,
     pub conservative_score: f64,
     pub lake_pass_rate: f64,
@@ -201,6 +207,7 @@ fn update_stats(stats: &mut PolicyStats, episode: &WorkerRlEpisodeRecord, weight
     stats.weighted_pulls += weight;
     stats.reward_sum += episode.reward;
     stats.weighted_reward_sum += episode.reward * weight;
+    stats.reward_sq_sum += episode.reward * episode.reward;
     stats.lake_attempts += episode.lake_attempts;
     stats.lake_passed += episode.lake_passed;
     stats.verified_count += episode.verified_count;
@@ -220,6 +227,13 @@ fn rank_stats(map: BTreeMap<String, PolicyStats>, min_pulls: usize) -> Vec<Ranke
             let mean_reward = stats.reward_sum / stats.pulls.max(1) as f64;
             let weighted_mean_reward =
                 stats.weighted_reward_sum / stats.weighted_pulls.max(f64::EPSILON);
+            let reward_variance = if stats.pulls > 1 {
+                (stats.reward_sq_sum / stats.pulls as f64 - mean_reward * mean_reward).max(0.0)
+            } else {
+                0.25
+            };
+            let reward_stddev = reward_variance.sqrt();
+            let reward_std_error = reward_stddev / (stats.pulls.max(1) as f64).sqrt();
             let exploration = (2.0 * log_total / stats.pulls.max(1) as f64).sqrt();
             let lake_pass_rate = ratio(stats.lake_passed, stats.lake_attempts);
             let low_sample = stats.pulls < min_pulls;
@@ -228,6 +242,8 @@ fn rank_stats(map: BTreeMap<String, PolicyStats>, min_pulls: usize) -> Vec<Ranke
                 stats,
                 mean_reward,
                 weighted_mean_reward,
+                reward_stddev,
+                reward_std_error,
                 ucb_score: weighted_mean_reward + exploration,
                 conservative_score: weighted_mean_reward - exploration,
                 lake_pass_rate,

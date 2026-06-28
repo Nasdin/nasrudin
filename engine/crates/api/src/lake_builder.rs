@@ -80,12 +80,65 @@ impl LakeBuilder {
     pub async fn warmup(&self) -> Result<()> {
         let prover_root = self.prover_template.clone();
         let join = tokio::task::spawn_blocking(move || -> Result<std::process::Output> {
-            std::process::Command::new("lake")
+            let mut output = std::process::Command::new("lake")
                 .arg("build")
                 .arg("PhysicsGenerator")
                 .current_dir(&prover_root)
                 .output()
-                .context("lake warmup spawn")
+                .context("lake warmup spawn")?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !output.status.success()
+                && stderr.contains("ProofWidgets not up-to-date")
+                && stderr.contains("lake exe cache get")
+            {
+                let cache = std::process::Command::new("lake")
+                    .arg("exe")
+                    .arg("cache")
+                    .arg("get")
+                    .current_dir(&prover_root)
+                    .output()
+                    .context("lake cache get spawn")?;
+                if cache.status.success() {
+                    output = std::process::Command::new("lake")
+                        .arg("build")
+                        .arg("PhysicsGenerator")
+                        .current_dir(&prover_root)
+                        .output()
+                        .context("lake warmup retry spawn")?;
+                } else {
+                    tracing::warn!(
+                        "lake cache get non-zero exit ({}): {}",
+                        cache.status,
+                        String::from_utf8_lossy(&cache.stderr)
+                    );
+                }
+                if !output.status.success() {
+                    let proofwidgets = prover_root.join(".lake/packages/proofwidgets");
+                    if proofwidgets.exists() {
+                        let widgets = std::process::Command::new("lake")
+                            .arg("build")
+                            .arg("ProofWidgets")
+                            .current_dir(&proofwidgets)
+                            .output()
+                            .context("proofwidgets warmup spawn")?;
+                        if widgets.status.success() {
+                            output = std::process::Command::new("lake")
+                                .arg("build")
+                                .arg("PhysicsGenerator")
+                                .current_dir(&prover_root)
+                                .output()
+                                .context("lake warmup proofwidgets retry spawn")?;
+                        } else {
+                            tracing::warn!(
+                                "proofwidgets warmup non-zero exit ({}): {}",
+                                widgets.status,
+                                String::from_utf8_lossy(&widgets.stderr)
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(output)
         })
         .await
         .context("spawn_blocking join error")??;
@@ -191,6 +244,25 @@ impl LakeBuilder {
             }
         };
 
+        let mut stdout_task = None;
+        let mut stderr_task = None;
+        if let Some(mut stdout) = child.stdout.take() {
+            stdout_task = Some(tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = Vec::new();
+                let _ = stdout.read_to_end(&mut buf).await;
+                buf
+            }));
+        }
+        if let Some(mut stderr) = child.stderr.take() {
+            stderr_task = Some(tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = Vec::new();
+                let _ = stderr.read_to_end(&mut buf).await;
+                buf
+            }));
+        }
+
         let wait_result = tokio::time::timeout(VERIFY_TIMEOUT, child.wait()).await;
         let duration_ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
 
@@ -210,22 +282,32 @@ impl LakeBuilder {
                 stderr_tail: e.to_string(),
             }),
             Ok(Ok(status)) => {
-                // Read stderr after process exit (for tail / failure path).
-                let mut stderr_buf = Vec::new();
-                if let Some(mut stderr) = child.stderr.take() {
-                    use tokio::io::AsyncReadExt;
-                    let _ = stderr.read_to_end(&mut stderr_buf).await;
-                }
+                let stdout_buf = match stdout_task {
+                    Some(task) => task.await.unwrap_or_default(),
+                    None => Vec::new(),
+                };
+                let stderr_buf = match stderr_task {
+                    Some(task) => task.await.unwrap_or_default(),
+                    None => Vec::new(),
+                };
                 if status.success() {
                     Ok(VerifyOutcome::Verified {
                         tactic: "lake_build".to_string(),
                         duration_ms,
                     })
                 } else {
+                    let stdout_str = String::from_utf8_lossy(&stdout_buf);
                     let stderr_str = String::from_utf8_lossy(&stderr_buf);
+                    let combined = if stdout_str.trim().is_empty() {
+                        stderr_str.to_string()
+                    } else if stderr_str.trim().is_empty() {
+                        stdout_str.to_string()
+                    } else {
+                        format!("{stdout_str}\n{stderr_str}")
+                    };
                     Ok(VerifyOutcome::Rejected {
                         reason: "lake_build_failed".into(),
-                        stderr_tail: tail_lines(&stderr_str, 20),
+                        stderr_tail: tail_lines(&combined, 30),
                     })
                 }
             }

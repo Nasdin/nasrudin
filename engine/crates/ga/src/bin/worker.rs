@@ -140,6 +140,19 @@ struct WorkerRlEpisode {
     verified_count: usize,
     verified_canonicals: Vec<String>,
     reward: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reward_components: Option<DiscoveryRewardComponents>,
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+struct DiscoveryRewardComponents {
+    verified: f64,
+    lake_pass: f64,
+    executable_diversity: f64,
+    target_progress: f64,
+    qd_coverage: f64,
+    efficiency: f64,
+    total: f64,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -661,7 +674,9 @@ fn strategy_genome_update(stats: &mut StrategyGenomeStats, weight: f64, reward: 
     stats.total_reward += stats.last_reward;
 }
 
-fn strategy_genome_reward(report: &nasrudin_ga::chain_engine::DiscoveryReport) -> f64 {
+fn discovery_reward_components(
+    report: &nasrudin_ga::chain_engine::DiscoveryReport,
+) -> DiscoveryRewardComponents {
     let pass_rate = if report.lake_attempts > 0 {
         report.lake_passed as f64 / report.lake_attempts as f64
     } else {
@@ -673,7 +688,42 @@ fn strategy_genome_reward(report: &nasrudin_ga::chain_engine::DiscoveryReport) -
         0.0
     };
     let verified = if report.verified.is_empty() { 0.0 } else { 1.0 };
-    (0.2 * novelty + 0.4 * pass_rate + 0.4 * verified).clamp(0.0, 1.0)
+    let target_progress = if verified > 0.0 {
+        1.0
+    } else {
+        report
+            .final_population
+            .iter()
+            .map(|(_, comps, _, _)| comps[3] as f64)
+            .fold(0.0, f64::max)
+            .clamp(0.0, 1.0)
+    };
+    let qd_coverage = (report.qd_archive_stats.cells.len() as f64 / 64.0).clamp(0.0, 1.0);
+    let efficiency = if report.total_candidates > 0 {
+        (report.verified.len() as f64 / report.total_candidates as f64 * 100.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let total = (0.55 * verified
+        + 0.20 * pass_rate
+        + 0.10 * novelty
+        + 0.10 * target_progress
+        + 0.03 * qd_coverage
+        + 0.02 * efficiency)
+        .clamp(0.0, 1.0);
+    DiscoveryRewardComponents {
+        verified,
+        lake_pass: pass_rate,
+        executable_diversity: novelty,
+        target_progress,
+        qd_coverage,
+        efficiency,
+        total,
+    }
+}
+
+fn strategy_genome_reward(report: &nasrudin_ga::chain_engine::DiscoveryReport) -> f64 {
+    discovery_reward_components(report).total
 }
 
 const FEATURED_TARGETS: &[&str] = &[
@@ -735,6 +785,71 @@ fn target_selector_policy_key(domain: &str, policy: &str) -> String {
     format!("domain={domain}|policy={policy}")
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct PolicyEvalFeatures {
+    center: f64,
+    conservative: f64,
+    uncertainty: f64,
+    lake_pass_rate: f64,
+    low_sample: bool,
+}
+
+fn ranked_policy_features(row: &nasrudin_ga::rl_episode_eval::RankedPolicy) -> PolicyEvalFeatures {
+    let center = if row.low_sample {
+        row.weighted_mean_reward
+    } else {
+        row.conservative_score
+    };
+    PolicyEvalFeatures {
+        center,
+        conservative: row.conservative_score,
+        uncertainty: row.reward_std_error.max(0.0),
+        lake_pass_rate: row.lake_pass_rate.clamp(0.0, 1.0),
+        low_sample: row.low_sample,
+    }
+}
+
+fn deterministic_bootstrap_draw(policy: &str, draw_index: u64) -> f64 {
+    let mut total = 0.0;
+    for salt in 0..3u64 {
+        let key = format!("{policy}:{draw_index}:{salt}");
+        let h = xxhash_rust::xxh64::xxh64(key.as_bytes(), 0);
+        let unit = h as f64 / u64::MAX as f64;
+        total += unit - 0.5;
+    }
+    (total / 1.5).clamp(-1.0, 1.0)
+}
+
+fn bootstrapped_policy_score(
+    policy: &str,
+    total_pulls: u32,
+    pulls: u32,
+    mean: f64,
+    reward_ema: f64,
+    best: f64,
+    eval: Option<PolicyEvalFeatures>,
+    eval_weight: f64,
+) -> f64 {
+    let pulls_f = pulls.max(1) as f64;
+    let eval = eval.unwrap_or(PolicyEvalFeatures {
+        center: reward_ema,
+        conservative: reward_ema,
+        uncertainty: 0.0,
+        lake_pass_rate: 0.0,
+        low_sample: true,
+    });
+    let local_volatility = (best - mean).max(0.0).clamp(0.0, 1.0);
+    let posterior_center = (1.0 - eval_weight) * (0.45 * reward_ema + 0.30 * mean + 0.25 * best)
+        + eval_weight * (0.70 * eval.center + 0.30 * eval.conservative);
+    let uncertainty =
+        (eval.uncertainty + 0.25 * local_volatility + 1.0 / pulls_f.sqrt()).clamp(0.0, 1.5);
+    let diversity_bonus = if eval.low_sample { 0.08 } else { 0.0 } + 0.12 / pulls_f.sqrt();
+    let verifier_bonus = 0.06 * eval.lake_pass_rate;
+    let bootstrap =
+        deterministic_bootstrap_draw(policy, total_pulls as u64 + pulls as u64 * 17 + 1);
+    posterior_center + verifier_bonus + diversity_bonus + bootstrap * 0.45 * uncertainty
+}
+
 fn select_target_selector_policy(
     domain: &str,
     stats: &std::collections::BTreeMap<String, TargetSelectorPolicyStats>,
@@ -755,7 +870,6 @@ fn select_target_selector_policy(
                 .unwrap_or(0)
         })
         .sum();
-    let total = (total_pulls.max(1) as f64).ln();
     TARGET_SELECTOR_POLICIES
         .into_iter()
         .max_by(|a, b| {
@@ -767,10 +881,16 @@ fn select_target_selector_policy(
                     .unwrap_or(0.0);
                 let reward_ema = st.map(|s| s.reward_ema).unwrap_or(mean);
                 let best = st.map(|s| s.best_reward).unwrap_or(0.0);
-                let exploration = (2.0 * total / pulls).sqrt();
-                let eval_prior =
-                    target_selector_eval_prior(policy, eval_snapshot).unwrap_or(reward_ema);
-                0.30 * mean + 0.35 * reward_ema + 0.15 * best + 0.20 * eval_prior + exploration
+                bootstrapped_policy_score(
+                    policy,
+                    total_pulls,
+                    pulls as u32,
+                    mean,
+                    reward_ema,
+                    best,
+                    target_selector_eval_features(policy, eval_snapshot),
+                    0.25,
+                )
             };
             score(a)
                 .partial_cmp(&score(b))
@@ -779,22 +899,16 @@ fn select_target_selector_policy(
         .unwrap_or("verifier_ucb")
 }
 
-fn target_selector_eval_prior(
+fn target_selector_eval_features(
     policy: &str,
     eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
-) -> Option<f64> {
+) -> Option<PolicyEvalFeatures> {
     let snapshot = eval_snapshot?;
     snapshot
         .target_selector_policies
         .iter()
         .find(|row| row.key == policy)
-        .map(|row| {
-            if row.low_sample {
-                row.weighted_mean_reward
-            } else {
-                row.conservative_score
-            }
-        })
+        .map(ranked_policy_features)
 }
 
 fn update_target_selector_policy(stats: &mut TargetSelectorPolicyStats, reward: f64) {
@@ -843,7 +957,6 @@ fn select_ga_workhorse_policy(
                 .unwrap_or(0)
         })
         .sum();
-    let total = (total_pulls.max(1) as f64).ln();
     GA_WORKHORSE_POLICIES
         .into_iter()
         .max_by(|a, b| {
@@ -855,9 +968,16 @@ fn select_ga_workhorse_policy(
                     .unwrap_or(0.0);
                 let reward_ema = st.map(|s| s.reward_ema).unwrap_or(mean);
                 let best = st.map(|s| s.best_reward).unwrap_or(0.0);
-                let exploration = (2.0 * total / pulls).sqrt();
-                let eval_prior = ga_policy_eval_prior(policy, eval_snapshot).unwrap_or(reward_ema);
-                0.25 * mean + 0.40 * reward_ema + 0.15 * best + 0.20 * eval_prior + exploration
+                bootstrapped_policy_score(
+                    policy,
+                    total_pulls,
+                    pulls as u32,
+                    mean,
+                    reward_ema,
+                    best,
+                    ga_policy_eval_features(policy, eval_snapshot),
+                    0.25,
+                )
             };
             score(a)
                 .partial_cmp(&score(b))
@@ -866,22 +986,16 @@ fn select_ga_workhorse_policy(
         .unwrap_or("steady_verify")
 }
 
-fn ga_policy_eval_prior(
+fn ga_policy_eval_features(
     policy: &str,
     eval_snapshot: Option<&nasrudin_ga::rl_episode_eval::EvaluationSnapshot>,
-) -> Option<f64> {
+) -> Option<PolicyEvalFeatures> {
     let snapshot = eval_snapshot?;
     snapshot
         .ga_policies
         .iter()
         .find(|row| row.key == policy)
-        .map(|row| {
-            if row.low_sample {
-                row.weighted_mean_reward
-            } else {
-                row.conservative_score
-            }
-        })
+        .map(ranked_policy_features)
 }
 
 fn rl_policy_evidence_for_cluster_report(
@@ -1514,6 +1628,82 @@ fn target_was_verified(
     })
 }
 
+fn target_answer_axiom_names(
+    store: &AxiomStore,
+    target_name: &str,
+    spec: &nasrudin_ga::target::TargetSpec,
+) -> Vec<String> {
+    let target_canonical = spec.final_target.to_canonical();
+    let mut names = std::collections::BTreeSet::new();
+    for axiom in store.iter() {
+        if axiom.name == target_name
+            || axiom.name == spec.name
+            || axiom.statement.to_canonical() == target_canonical
+            || nasrudin_derive::axiom_store::eq_canonical_under_pi(&axiom.statement)
+                .map(|canonical| canonical == target_canonical)
+                .unwrap_or(false)
+        {
+            names.insert(axiom.name);
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn direct_answer_targets_in_store(
+    store: &AxiomStore,
+    candidates: &[&'static str],
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let targets: Vec<(&str, String)> = candidates
+        .iter()
+        .filter_map(|name| {
+            nasrudin_ga::target::TargetSpec::lookup(name)
+                .map(|spec| (*name, spec.final_target.to_canonical()))
+        })
+        .collect();
+    let mut found: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for axiom in store.iter() {
+        let direct = axiom.statement.to_canonical();
+        let peeled = nasrudin_derive::axiom_store::eq_canonical_under_pi(&axiom.statement);
+        for (target, canonical) in &targets {
+            if axiom.name == *target
+                || direct == *canonical
+                || peeled
+                    .as_ref()
+                    .map(|peeled| peeled == canonical)
+                    .unwrap_or(false)
+            {
+                found
+                    .entry((*target).to_string())
+                    .or_default()
+                    .insert(axiom.name.clone());
+            }
+        }
+    }
+    found
+        .into_iter()
+        .map(|(target, names)| (target, names.into_iter().collect()))
+        .collect()
+}
+
+fn reset_target_portfolio_direct_answer_proofs(
+    domain: &str,
+    direct_answer_targets: &std::collections::BTreeMap<String, Vec<String>>,
+    stats: &mut std::collections::BTreeMap<String, TargetPortfolioStats>,
+) -> usize {
+    let mut reset = 0usize;
+    for target in direct_answer_targets.keys() {
+        let key = target_portfolio_key(domain, target);
+        if let Some(row) = stats.get_mut(&key) {
+            if row.proved {
+                row.proved = false;
+                reset += 1;
+            }
+        }
+    }
+    reset
+}
+
 fn target_portfolio_ema_alpha() -> f64 {
     std::env::var("NASRUDIN_TARGET_RL_EMA_ALPHA")
         .ok()
@@ -2047,6 +2237,17 @@ async fn main() {
     let mut active_target_selector_policy: Option<String> = None;
     let target_name = if auto_targets {
         let candidates = target_candidates_for_domain(&domain);
+        let direct_answer_targets = direct_answer_targets_in_store(&store, &candidates);
+        let reset_proved = reset_target_portfolio_direct_answer_proofs(
+            &domain,
+            &direct_answer_targets,
+            &mut worker_rl_state.target_portfolio,
+        );
+        if reset_proved > 0 {
+            println!(
+                "▶ Target no-cheat portfolio reset: cleared {reset_proved} proved flag(s) backed by direct answer axioms"
+            );
+        }
         let target_now = now_unix_secs();
         let target_corpus_len = store.len();
         let selector_policy = select_target_selector_policy(
@@ -2121,6 +2322,24 @@ async fn main() {
             }
         }
     };
+    let target_answer_canonical = target_spec
+        .as_ref()
+        .map(|spec| spec.final_target.to_canonical());
+    if let Some(spec) = target_spec.as_ref() {
+        let excluded_target_axioms = target_answer_axiom_names(&store, &target_name, spec);
+        if !excluded_target_axioms.is_empty() {
+            println!(
+                "▶ Target no-cheat filter: excluding {} direct answer axiom(s) for `{target_name}`: {}",
+                excluded_target_axioms.len(),
+                excluded_target_axioms.join(", ")
+            );
+            store = store.excluding_names(excluded_target_axioms);
+            nasrudin_derive::no_cheat_audit::audit_or_panic(
+                &store,
+                "worker target no-cheat filter",
+            );
+        }
+    }
 
     // Pull the cluster's rejected-canonicals memo. Any chain whose
     // final canonical matches one of these has already been
@@ -2467,15 +2686,15 @@ async fn main() {
     if let Some(ref elite) = config.permanent_elite {
         println!(
             "▶ Milestone 1: permanent elite installed ({} steps) for target={:?} — \
-             upstream seed chain locked into every generation. \
-             Unset NASRUDIN_M1_SEED_ELITE or pass NASRUDIN_M1_SEED_ELITE=0 to disable.",
+             upstream smoke-test seed chain locked into every generation. \
+             This only happens when NASRUDIN_M1_SEED_ELITE=1.",
             elite.len(),
             target_name_for_elite
         );
     } else {
         println!(
             "▶ Milestone 1: no permanent elite (target={:?}, NASRUDIN_M1_SEED_ELITE check). \
-             Pure-random GA from random_chain_seed.",
+             Production no-cheat mode: GA/RL must rediscover without a hard-coded target chain.",
             target_name_for_elite
         );
     }
@@ -2606,6 +2825,18 @@ async fn main() {
         .get(&worker_rl_scope_key)
         .cloned()
         .unwrap_or_default();
+    if let Some(target_canonical) = target_answer_canonical.as_deref() {
+        let before = worker_rl_scope_state.replay_elites.len();
+        worker_rl_scope_state
+            .replay_elites
+            .retain(|elite| elite.canonical != target_canonical);
+        let removed = before.saturating_sub(worker_rl_scope_state.replay_elites.len());
+        if removed > 0 {
+            println!(
+                "▶ replay archive target no-cheat filter: removed {removed} direct-answer replay elite(s)"
+            );
+        }
+    }
     decay_worker_rl_scope_state(
         &mut worker_rl_scope_state,
         now_unix_secs(),
@@ -3218,7 +3449,8 @@ async fn main() {
                 "updated strategy genome evaluator stats"
             );
         }
-        let ga_policy_reward = strategy_genome_reward(&report);
+        let reward_components = discovery_reward_components(&report);
+        let ga_policy_reward = reward_components.total;
         let ga_policy_key = ga_workhorse_policy_key(&worker_rl_scope_key, ga_policy);
         let ga_policy_stats = worker_rl_state
             .ga_workhorse_policies
@@ -3280,6 +3512,7 @@ async fn main() {
                     .map(|d| d.canonical.clone())
                     .collect(),
                 reward: ga_policy_reward,
+                reward_components: Some(reward_components),
             };
             let episode_path = worker_rl_episode_log_path(&worker_rl_state_path);
             if let Err(e) = append_worker_rl_episode(&episode_path, &episode) {
@@ -4037,7 +4270,7 @@ fn arg_value<T: std::str::FromStr>(args: &[String], flag: &str) -> Option<T> {
 /// Milestone 1: map a target spec name to the hand-coded "known-good"
 /// chain that hits it. Returns `None` when no such chain is registered
 /// for the given target, or when the user has set
-/// `NASRUDIN_M1_SEED_ELITE=0` to opt out (M1.d acceptance run).
+/// `NASRUDIN_M1_SEED_ELITE=1` to opt in for smoke tests.
 ///
 /// Registered seed chains:
 /// - `sr_rest_energy`            → `Chain::rest_energy_from_upstream`
@@ -4064,7 +4297,11 @@ fn m1_seed_elite_for(target_name: Option<&str>) -> Option<Chain> {
                 "0" | "false" | "no" | "off"
             )
         })
-        .unwrap_or(true);
+        .unwrap_or(false);
+    m1_seed_elite_for_enabled(target_name, enabled)
+}
+
+fn m1_seed_elite_for_enabled(target_name: Option<&str>, enabled: bool) -> Option<Chain> {
     if !enabled {
         return None;
     }
@@ -4950,6 +5187,7 @@ mod mutation_rl_state_tests {
             verified_count: 1,
             verified_canonicals: vec!["canon-a".into()],
             reward: 0.86,
+            reward_components: None,
         };
 
         append_worker_rl_episode(&path, &episode).unwrap();
@@ -4998,6 +5236,7 @@ mod mutation_rl_state_tests {
                 verified_count: 0,
                 verified_canonicals: vec![],
                 reward: i as f64,
+                reward_components: None,
             };
             append_worker_rl_episode(&path, &episode).unwrap();
         }
@@ -5260,6 +5499,8 @@ mod mutation_rl_state_tests {
                 },
                 mean_reward: 0.75,
                 weighted_mean_reward: 0.77,
+                reward_stddev: 0.0,
+                reward_std_error: 0.0,
                 ucb_score: 1.0,
                 conservative_score: 0.90,
                 lake_pass_rate: 0.625,
@@ -5311,7 +5552,13 @@ mod mutation_rl_state_tests {
             ..Default::default()
         };
 
-        assert!((strategy_genome_reward(&report) - 0.86).abs() < 1e-12);
+        let components = discovery_reward_components(&report);
+        assert_eq!(components.verified, 1.0);
+        assert_eq!(components.lake_pass, 0.75);
+        assert!((components.executable_diversity - 0.8).abs() < 1e-12);
+        assert_eq!(components.target_progress, 1.0);
+        assert_eq!(components.efficiency, 1.0);
+        assert!((strategy_genome_reward(&report) - 0.90).abs() < 1e-12);
     }
 
     const TEST_CORPUS_LEN: usize = 100;
@@ -5578,6 +5825,8 @@ mod mutation_rl_state_tests {
                     },
                     mean_reward: 0.50,
                     weighted_mean_reward: if *policy == "stall_rescue" { 1.0 } else { 0.50 },
+                    reward_stddev: 0.0,
+                    reward_std_error: 0.0,
                     ucb_score: if *policy == "stall_rescue" { 1.2 } else { 0.70 },
                     conservative_score: if *policy == "stall_rescue" {
                         0.95
@@ -5712,6 +5961,8 @@ mod mutation_rl_state_tests {
                     },
                     mean_reward: 0.38,
                     weighted_mean_reward: 0.38,
+                    reward_stddev: 0.0,
+                    reward_std_error: 0.0,
                     ucb_score: 0.50,
                     conservative_score: 0.10,
                     lake_pass_rate: 0.10,
@@ -5730,6 +5981,8 @@ mod mutation_rl_state_tests {
                     },
                     mean_reward: 0.90,
                     weighted_mean_reward: 0.88,
+                    reward_stddev: 0.0,
+                    reward_std_error: 0.0,
                     ucb_score: 1.0,
                     conservative_score: 0.95,
                     lake_pass_rate: 0.75,
@@ -5842,6 +6095,8 @@ mod mutation_rl_state_tests {
                     },
                     mean_reward: 0.50,
                     weighted_mean_reward: if *policy == "lake_focus" { 1.0 } else { 0.50 },
+                    reward_stddev: 0.0,
+                    reward_std_error: 0.0,
                     ucb_score: if *policy == "lake_focus" { 1.2 } else { 0.70 },
                     conservative_score: if *policy == "lake_focus" { 0.95 } else { 0.20 },
                     lake_pass_rate: if *policy == "lake_focus" { 1.0 } else { 0.0 },
@@ -5882,6 +6137,8 @@ mod mutation_rl_state_tests {
                 },
                 mean_reward: 0.70,
                 weighted_mean_reward: 0.73,
+                reward_stddev: 0.0,
+                reward_std_error: 0.0,
                 ucb_score: 1.0,
                 conservative_score: 0.62,
                 lake_pass_rate: 0.50,
@@ -5900,6 +6157,8 @@ mod mutation_rl_state_tests {
                 },
                 mean_reward: 0.71,
                 weighted_mean_reward: 0.69,
+                reward_stddev: 0.0,
+                reward_std_error: 0.0,
                 ucb_score: 0.9,
                 conservative_score: 0.55,
                 lake_pass_rate: 0.57,
@@ -6328,13 +6587,57 @@ mod mutation_rl_state_tests {
             "gr_einstein_field_equation",
         ] {
             assert!(
-                m1_seed_elite_for(Some(target)).is_some(),
+                m1_seed_elite_for_enabled(Some(target), true).is_some(),
                 "featured target {target} should have a seed elite"
             );
         }
         assert!(
-            m1_seed_elite_for(Some("em_gauss_law")).is_none(),
+            m1_seed_elite_for(Some("newton_second")).is_none(),
+            "production/default mode must not install target-answer seed elites"
+        );
+        assert!(
+            m1_seed_elite_for_enabled(Some("em_gauss_law"), true).is_none(),
             "Gauss law has no current upstream div_E/rho/epsilon_0 postulate seed"
+        );
+    }
+
+    #[test]
+    fn target_answer_axiom_names_detects_direct_target_axiom() {
+        let mut store = AxiomStore::new();
+        store.load_classical_mechanics_postulates();
+        let spec = nasrudin_ga::target::TargetSpec::lookup("newton_second").unwrap();
+
+        let names = target_answer_axiom_names(&store, "newton_second", &spec);
+
+        assert!(names.iter().any(|name| name == "newton_second"));
+    }
+
+    #[test]
+    fn target_portfolio_reset_clears_direct_answer_proved_flags() {
+        let mut stats = std::collections::BTreeMap::new();
+        stats.insert(
+            target_portfolio_key("all", "newton_second"),
+            TargetPortfolioStats {
+                proved: true,
+                pulls: 3,
+                total_reward: 2.0,
+                ..Default::default()
+            },
+        );
+        let mut direct = std::collections::BTreeMap::new();
+        direct.insert(
+            "newton_second".to_string(),
+            vec!["newton_second".to_string()],
+        );
+
+        let reset = reset_target_portfolio_direct_answer_proofs("all", &direct, &mut stats);
+
+        assert_eq!(reset, 1);
+        assert!(
+            !stats
+                .get(&target_portfolio_key("all", "newton_second"))
+                .unwrap()
+                .proved
         );
     }
 

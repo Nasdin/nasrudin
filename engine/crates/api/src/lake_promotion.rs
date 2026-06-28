@@ -148,6 +148,38 @@ impl LakePromotion {
         )
     }
 
+    fn is_retryable_lake_failure(reason: &str, stderr_tail: &str) -> bool {
+        if matches!(
+            reason,
+            "toolchain_error" | "verify_timeout" | "lake_promotion_dispatch_error"
+        ) {
+            return true;
+        }
+        if reason != "lake_build_failed" {
+            return false;
+        }
+        let tail = stderr_tail.to_ascii_lowercase();
+        tail.contains("proofwidgets not up-to-date")
+            || tail.contains("lake exe cache get")
+            || tail.contains("failed to acquire")
+            || tail.contains("resource temporarily unavailable")
+            || tail.contains("no such file or directory")
+            || tail.contains("permission denied")
+    }
+
+    fn is_retryable_historical_rejection(reason: Option<&str>) -> bool {
+        let Some(reason) = reason else {
+            return false;
+        };
+        reason.starts_with("worker_claim_disagreement: server_lake_failed: lake_build_failed")
+            && (reason.contains("ProofWidgets not up-to-date")
+                || reason.contains("lake exe cache get")
+                || reason.contains("failed to acquire")
+                || reason.contains("resource temporarily unavailable")
+                || reason.contains("no such file or directory")
+                || reason.contains("permission denied"))
+    }
+
     /// Wake every waiter for a theorem and clean up the notifier.
     async fn notify_done(&self, id: &TheoremId) {
         let mut map = self.notifiers.lock().await;
@@ -171,9 +203,26 @@ impl LakePromotion {
             // build is the expensive thing.
             if let Ok(Some(t)) = self.rocks.get_theorem(&theorem_id) {
                 if Self::is_terminal(&t.verified) {
-                    self.rocks.ack_lake_promotion(&queue_key).ok();
-                    self.notify_done(&theorem_id).await;
-                    continue;
+                    let retry_historical = match &t.verified {
+                        nasrudin_core::VerificationStatus::Rejected { .. } => {
+                            match theorem_q::get_by_id(&self.pg, &theorem_id).await {
+                                Ok(Some(row)) => {
+                                    row.status == "Rejected"
+                                        && row.worker_verified
+                                        && Self::is_retryable_historical_rejection(
+                                            row.rejected_reason.as_deref(),
+                                        )
+                                }
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    };
+                    if !retry_historical {
+                        self.rocks.ack_lake_promotion(&queue_key).ok();
+                        self.notify_done(&theorem_id).await;
+                        continue;
+                    }
                 }
             }
             // Fetch lean_source from PG (RocksDB Theorem doesn't carry it).
@@ -218,6 +267,17 @@ impl LakePromotion {
                     reason,
                     stderr_tail,
                 } => {
+                    if Self::is_retryable_lake_failure(&reason, &stderr_tail) {
+                        tracing::warn!(
+                            theorem_id = %hex::encode(&row.id),
+                            reason = %reason,
+                            stderr_tail = %stderr_tail,
+                            "lake_promotion: transient Lake infrastructure failure; requeueing without cascade or worker penalty"
+                        );
+                        self.rocks.ack_lake_promotion(&queue_key).ok();
+                        self.rocks.enqueue_lake_promotion(&theorem_id, 1).ok();
+                        continue;
+                    }
                     let full_reason = if was_worker_claim {
                         format!(
                             "worker_claim_disagreement: server_lake_failed: {reason}: {stderr_tail}"
@@ -433,30 +493,80 @@ pub async fn drain_loop(promotion: Arc<LakePromotion>) {
 /// guarantees they all eventually pass the server's own lake build.
 pub async fn crawler_loop(promotion: Arc<LakePromotion>) {
     loop {
-        tokio::time::sleep(CRAWLER_INTERVAL).await;
         let rocks = Arc::clone(&promotion.rocks);
-        let enqueued = tokio::task::spawn_blocking(move || -> Result<usize> {
-            let mut count = 0usize;
-            for theorem in rocks.list_theorems()?.into_iter().take(CRAWLER_BATCH) {
-                if let nasrudin_core::VerificationStatus::Verified { tactic_used, .. } =
-                    &theorem.verified
-                {
-                    if tactic_used == "chain_replay" || tactic_used == "worker_claim" {
-                        rocks.enqueue_lake_promotion(&theorem.id, 2).ok();
-                        count += 1;
+        let (enqueued, retryable_rejected) =
+            tokio::task::spawn_blocking(move || -> Result<(usize, Vec<TheoremId>)> {
+                let mut count = 0usize;
+                let mut retryable_rejected = Vec::new();
+                for theorem in rocks.list_theorems()?.into_iter().take(CRAWLER_BATCH) {
+                    match &theorem.verified {
+                        nasrudin_core::VerificationStatus::Verified { tactic_used, .. } => {
+                            if tactic_used == "chain_replay" || tactic_used == "worker_claim" {
+                                rocks.enqueue_lake_promotion(&theorem.id, 2).ok();
+                                count += 1;
+                            }
+                        }
+                        nasrudin_core::VerificationStatus::Rejected { .. } => {
+                            retryable_rejected.push(theorem.id);
+                        }
+                        _ => {}
                     }
                 }
-            }
-            Ok(count)
-        })
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or(0);
+                Ok((count, retryable_rejected))
+            })
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or((0, Vec::new()));
         if enqueued > 0 {
             tracing::info!(
                 "lake_promotion: background crawler enqueued {enqueued} ChainVerified rows"
             );
         }
+        let mut retry_enqueued = 0usize;
+        for id in retryable_rejected {
+            let Ok(Some(row)) = theorem_q::get_by_id(&promotion.pg, &id).await else {
+                continue;
+            };
+            if row.status == "Rejected"
+                && row.worker_verified
+                && LakePromotion::is_retryable_historical_rejection(row.rejected_reason.as_deref())
+            {
+                promotion.rocks.enqueue_lake_promotion(&id, 1).ok();
+                retry_enqueued += 1;
+            }
+        }
+        if retry_enqueued > 0 {
+            tracing::warn!(
+                "lake_promotion: requeued {retry_enqueued} historical infrastructure rejection(s)"
+            );
+        }
+        tokio::time::sleep(CRAWLER_INTERVAL).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LakePromotion;
+
+    #[test]
+    fn historical_retry_rejects_real_lean_source_errors() {
+        let reason = "worker_claim_disagreement: server_lake_failed: lake_build_failed: \
+            error: PhysicsGenerator/Derived/Submission_deadbeef.lean:37:89: unexpected token '.'; expected ')'\
+            \nerror: build failed";
+
+        assert!(!LakePromotion::is_retryable_historical_rejection(Some(
+            reason
+        )));
+    }
+
+    #[test]
+    fn historical_retry_accepts_proofwidgets_cache_failures() {
+        let reason = "worker_claim_disagreement: server_lake_failed: lake_build_failed: \
+            ProofWidgets not up-to-date; run lake exe cache get";
+
+        assert!(LakePromotion::is_retryable_historical_rejection(Some(
+            reason
+        )));
     }
 }

@@ -1323,6 +1323,10 @@ async fn main() -> anyhow::Result<()> {
             get(handlers::admin::steering::steering_recent),
         )
         .route(
+            "/api/admin/steering/budget",
+            get(handlers::admin::steering::steering_budget),
+        )
+        .route(
             "/api/admin/steering/force",
             post(handlers::admin::steering::steering_force),
         )

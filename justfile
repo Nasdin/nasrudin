@@ -26,7 +26,7 @@ up:
     export NASRUDIN_WORKER_DOMAIN="${NASRUDIN_WORKER_DOMAIN:-all}"
     export NASRUDIN_RL_HALF_LIFE_HOURS="${NASRUDIN_RL_HALF_LIFE_HOURS:-168}"
     API_PORT="${API_PORT:-3001}"
-    echo "[up] laptop-origin mode: Cloudflare should route nasrudin.org -> localhost:5173 and api.nasrudin.org -> localhost:${API_PORT}"
+    echo "[up] laptop-origin mode: Cloudflare should route nasrudin.org -> localhost:3000 and api.nasrudin.org -> localhost:${API_PORT}"
     echo "[up] low-LLM defaults: strategy_interval=${LLM_STEER_INTERVAL_SECONDS}s max_total_tokens=${LLM_STEER_MAX_TOTAL_TOKENS} naming=${LLM_NAMING_ENABLED} no_paid_jobs=${NASRUDIN_NO_PAID_JOBS} auto_targets=${NASRUDIN_AUTO_TARGETS} worker_domain=${NASRUDIN_WORKER_DOMAIN}"
     echo "[up] starting postgres..."
     docker compose up -d postgres
@@ -39,15 +39,20 @@ up:
     done
     echo "[up] running migrations..."
     (cd engine && cargo run --quiet --bin migrate -- up)
-    # Mint a local worker bearer key on first boot. The worker authenticates
-    # POST /api/workers/heartbeat with `nsk_worker_…`; without one the
-    # dashboard shows the worker "Inactive" forever (see worker.rs L174-178).
-    if ! grep -q '^NASRUDIN_WORKER_KEY=' .env; then
-      echo "[up] minting local worker key..."
-      key=$(cd engine && cargo run --release --quiet --bin issue_worker_key -- local-dev-worker | tail -n 1)
+    # Mint a local worker bearer key on every boot. The token is DB-backed,
+    # so a stale .env value after a local Postgres reset causes 401s on
+    # /api/ingest even though NASRUDIN_WORKER_KEY is present. Re-issuing is
+    # cheap and keeps laptop-origin mode fully automatic.
+    echo "[up] minting local worker key..."
+    key=$(cd engine && cargo run --release --quiet --bin issue_worker_key -- local-dev-worker | tail -n 1)
+    if grep -q '^NASRUDIN_WORKER_KEY=' .env; then
+      tmp=$(mktemp)
+      sed "s|^NASRUDIN_WORKER_KEY=.*|NASRUDIN_WORKER_KEY=${key}|" .env > "$tmp"
+      mv "$tmp" .env
+    else
       printf 'NASRUDIN_WORKER_KEY=%s\n' "$key" >> .env
-      export NASRUDIN_WORKER_KEY="$key"
     fi
+    export NASRUDIN_WORKER_KEY="$key"
     echo "[up] building worker binary..."
     (cd engine && cargo build --release --quiet -p nasrudin-ga --bin worker)
     echo "[up] launching api + frontend + worker (Ctrl+C to stop all)"
@@ -82,11 +87,11 @@ local-origin-check:
     echo "Nasrudin local-origin checklist"
     echo
     echo "Expected local services:"
-    echo "  frontend: http://localhost:5173"
+    echo "  frontend: http://localhost:3000"
     echo "  api:      http://localhost:${API_PORT:-3001}"
     echo
     echo "Expected Cloudflare Tunnel routes:"
-    echo "  nasrudin.org     -> http://localhost:5173"
+    echo "  nasrudin.org     -> http://localhost:3000"
     echo "  api.nasrudin.org -> http://localhost:${API_PORT:-3001}"
     echo
     echo "Local worker defaults from just up:"

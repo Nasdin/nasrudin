@@ -1,0 +1,108 @@
+{
+  "version": 4,
+  "scopes": {
+    "domain=qm|target=qm_planck_einstein": {
+      "updated_at_unix_secs": 1782625556,
+      "corpus_len": 195762,
+      "mutation_operator": {
+        "pulls": [
+          1,
+          1,
+          1,
+          1,
+          2,
+          0
+        ],
+        "total_reward": [
+          0.3004421004752107,
+          0.3766134371258343,
+          0.18426827853144034,
+          0.9314030893617014,
+          1.273969984044887,
+          0.0
+        ]
+      },
+      "qd_archive": {
+        "cells": [
+          {
+            "chain_len_bin": 0,
+            "axiom_count_bin": 0,
+            "target_progress_bin": 0,
+            "best_score": 2.0250000000000004
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 1,
+            "target_progress_bin": 0,
+            "best_score": 4.225
+          },
+          {
+            "chain_len_bin": 1,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 5.708333333333333
+          },
+          {
+            "chain_len_bin": 2,
+            "axiom_count_bin": 2,
+            "target_progress_bin": 0,
+            "best_score": 6.078571428571428
+          },
+          {
+            "chain_len_bin": 2,
+            "axiom_count_bin": 3,
+            "target_progress_bin": 0,
+            "best_score": 6.45
+          },
+          {
+            "chain_len_bin": 3,
+            "axiom_count_bin": 3,
+            "target_progress_bin": 0,
+            "best_score": 6.818181818181818
+          },
+          {
+            "chain_len_bin": 4,
+            "axiom_count_bin": 4,
+            "target_progress_bin": 0,
+            "best_score": 6.800123685837971
+          }
+        ]
+      },
+      "strategy_genomes": {},
+      "replay_elites": []
+    }
+  },
+  "target_portfolio": {
+    "domain=qm|target=qm_planck_einstein": {
+      "pulls": 1,
+      "total_reward": 0.00328125,
+      "last_reward": 0.00328125,
+      "best_reward": 0.00328125,
+      "reward_ema": 0.00328125,
+      "lake_pass_ema": 0.0,
+      "novelty_ema": 0.0,
+      "failure_streak": 1,
+      "proved": false,
+      "last_attempt_unix_secs": 1782625556,
+      "corpus_len_at_last_attempt": 195762
+    }
+  },
+  "target_selector_policies": {
+    "domain=qm|policy=verifier_ucb": {
+      "pulls": 1,
+      "total_reward": 0.00328125,
+      "last_reward": 0.00328125,
+      "best_reward": 0.00328125,
+      "reward_ema": 0.00328125
+    }
+  },
+  "ga_workhorse_policies": {
+    "scope=domain=qm|target=qm_planck_einstein|policy=steady_verify": {
+      "pulls": 1,
+      "total_reward": 0.00328125,
+      "last_reward": 0.00328125,
+      "best_reward": 0.00328125,
+      "reward_ema": 0.00328125
+    }
+  }
+}
