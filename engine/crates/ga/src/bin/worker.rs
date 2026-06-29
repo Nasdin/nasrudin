@@ -4118,8 +4118,23 @@ async fn run_seed_driven_chunk(
 
     let target_spec = nasrudin_ga::target::TargetSpec::lookup(target_name);
 
+    let mut pop_size = 32;
+    let mut chunk_gens = 25;
+
+    if let Some(knobs) = job.seed.get("mutation_knobs") {
+        if let Some(p) = knobs.get("population_size").and_then(|v| v.as_u64()) {
+            pop_size = p as usize;
+            chunk_gens = if pop_size > 32 { 50 } else { 25 };
+            println!("    ▶ Loaded manual steering knobs; population_size={}, chunk_gens={}", pop_size, chunk_gens);
+        }
+    } else if job.seed.get("axiom_set").is_some() {
+        // Autonomous LLM steered job fallback: scale up to peak performance!
+        pop_size = 128;
+        chunk_gens = 50;
+        println!("    ▶ Autonomous LLM steered job detected; auto-scaling GA capacity to population_size=128, chunk_gens=50");
+    }
+
     let chunk_seconds: u64 = 30; // bounded heartbeat cadence
-    let chunk_gens: usize = 25; // small enough that one chunk runs in ~chunk_seconds
 
     let started = std::time::Instant::now();
     let mut total_attempted: u64 = 0;
@@ -4144,7 +4159,7 @@ async fn run_seed_driven_chunk(
 
     while started.elapsed().as_secs() < wall_seconds && total_attempted < max_candidates {
         let chunk_config = DiscoveryConfig {
-            population_size: 32,
+            population_size: pop_size,
             generations: chunk_gens,
             crossover_rate: 0.6,
             mutation_rate: 0.7,
